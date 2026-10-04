@@ -103,7 +103,7 @@ Copy those files off the VPS as well. A backup that lives on the same machine do
 ## The web app (Vercel)
 
 `api/` holds the Vercel functions and `public/` the installable-app files (manifest, icons, service worker).
-Set `DATABASE_URL`, `DASHBOARD_PASSWORD` and `ANTHROPIC_API_KEY` in the Vercel project. Optional: `JARVIS_CHAT_MODEL` (default `claude-sonnet-5-5`).
+Set `DATABASE_URL`, `DASHBOARD_PASSWORD` and `ANTHROPIC_API_KEY` in the Vercel project. Optional: `JARVIS_CHAT_MODEL` (default `claude-sonnet-5-5`), and `GITHUB_TOKEN`, a read-only fine-grained token (Contents, Issues, Pull requests and Metadata: read) that lets Synaut chat see your private repos. The Agents tab shows which tools are connected.
 
 - Sign in once with `DASHBOARD_PASSWORD`; the session lasts 30 days. Changing the password signs everyone out.
 - Install it: on iPhone, Safari → Share → Add to Home Screen. On Android or desktop Chrome/Edge, use Install in the address bar or menu.
