@@ -293,6 +293,43 @@ export const PAGE = `<!doctype html>
               background: linear-gradient(90deg, var(--panel) 0%, rgba(62,224,255,0.06) 50%, var(--panel) 100%);
               background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
   @keyframes shimmer { to { background-position: -200% 0; } }
+  /* documents */
+  .doc-row { cursor: pointer; }
+  .doc-row:hover, .doc-row:focus-visible { border-color: var(--cyan-glow); outline: none; }
+  .doc-bar .more { margin-top: 0; }
+  .doc-bar .spacer { flex: 1; }
+  .doc-paper h1.doc-title { font-size: 22px; line-height: 1.3; margin: 0 0 4px; }
+  .doc-paper .doc-meta { font: 12px/1.6 var(--mono); color: var(--dim); margin-bottom: 18px; }
+  .md { font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+  .md h2, .md h3, .md h4, .md h5 { display: block; font: 600 15px/1.4 var(--sans); text-transform: none; letter-spacing: 0; color: var(--cyan); margin: 22px 0 8px; }
+  .md h2 { font-size: 18px; } .md h3 { font-size: 16px; }
+  .md > :first-child { margin-top: 0; }
+  .md p { margin: 0 0 12px; }
+  .md ul, .md ol { margin: 0 0 12px; padding-left: 24px; }
+  .md li { margin: 3px 0; }
+  .md li > ul, .md li > ol { margin: 4px 0 0; }
+  .md ul.checks { list-style: none; padding-left: 4px; }
+  .md ul.checks > li { padding-left: 1.6em; text-indent: -1.6em; }
+  .md .box { color: var(--cyan); display: inline-block; width: 1.6em; text-indent: 0; }
+  .md strong { color: var(--ink); }
+  .md .tbl { overflow-x: auto; margin: 0 0 14px; }
+  .md table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .md th, .md td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  .md th { font: 600 11px/1.4 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: rgba(62,224,255,0.04); }
+  .md hr { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
+  .doc-edit textarea[name="body"] { min-height: 60vh; font: 13px/1.55 var(--mono); }
+  .notice { color: var(--green); font: 12px/1.6 var(--mono); margin: 0 0 12px; }
+  @media print {
+    body.printing { background: #fff; color: #000; }
+    body.printing::before, body.printing .bar, body.printing .dock, body.printing .chat, body.printing .doc-bar { display: none !important; }
+    body.printing main { max-width: none; padding: 0; }
+    body.printing .rise { animation: none; opacity: 1; transform: none; }
+    body.printing .doc-paper { background: #fff; border: 0; box-shadow: none; padding: 0; color: #000; }
+    body.printing .doc-paper .doc-meta { display: none; }
+    body.printing .md h2, body.printing .md h3, body.printing .md h4, body.printing .md h5, body.printing .md strong, body.printing .md .box { color: #000; }
+    body.printing .md th, body.printing .md td { border-color: #999; color: #000; background: none; }
+    body.printing .md table, body.printing .md li { break-inside: avoid; }
+  }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } .rise { opacity: 1; transform: none; } }
   @media (max-width: 600px) {
     .hello { font-size: 22px; }
@@ -386,7 +423,7 @@ const emptyCard = (text) => card($('p', 'empty', text));
 /* ---------- tabs ---------- */
 const TABS = [
   ['overview', 'Overview'], ['approvals', 'Approvals'], ['tasks', 'Tasks'], ['projects', 'Projects'],
-  ['clients', 'Clients'], ['agents', 'Agents'], ['journal', 'Journal'],
+  ['clients', 'Clients'], ['documents', 'Documents'], ['agents', 'Agents'], ['journal', 'Journal'],
 ];
 let data = null;
 let current = (location.hash || '#overview').slice(1);
@@ -852,7 +889,179 @@ function viewJournal(root) {
   });
 }
 
-const VIEWS = { overview: viewOverview, approvals: viewApprovals, tasks: viewTasks, projects: viewProjects, clients: viewClients, agents: viewAgents, journal: viewJournal };
+/* ---------- documents ---------- */
+// A small Markdown reader for the business documents: headings, paragraphs, **bold**, bullet, numbered and
+// checkbox lists (nested by indentation) and | tables |. Everything goes in through textContent, never as HTML.
+function mdInline(el, text) {
+  String(text).split('**').forEach((part, i) => { if (part) el.append(i % 2 ? $('strong', null, part) : document.createTextNode(part)); });
+  return el;
+}
+function mdListItem(line) {
+  const indent = line.length - line.trimStart().length; const t = line.trimStart();
+  if (t.startsWith('- [ ] ') || t.startsWith('- [x] ') || t.startsWith('- [X] ')) return { indent, kind: 'check', checked: t[3] !== ' ', text: t.slice(6) };
+  if (t.startsWith('- ') || t.startsWith('* ')) return { indent, kind: 'ul', text: t.slice(2) };
+  let n = 0; while (t[n] >= '0' && t[n] <= '9') n++;
+  if (n && t[n] === '.' && t[n + 1] === ' ') return { indent, kind: 'ol', start: Number(t.slice(0, n)), text: t.slice(n + 2) };
+  return null;
+}
+const mdHeading = (t) => { let n = 0; while (t[n] === '#') n++; return n && n <= 4 && t[n] === ' ' ? n : 0; };
+const mdCells = (row) => { let r = row.trim(); if (r.startsWith('|')) r = r.slice(1); if (r.endsWith('|')) r = r.slice(0, -1); return r.split('|').map((c) => c.trim()); };
+const mdRule = (cells) => cells.every((c) => c && c.split('').every((ch) => ch === '-' || ch === ':'));
+function mdRender(src) {
+  const out = $('div', 'md'); const lines = String(src || '').split('\\n'); let i = 0;
+  const startsBlock = (line) => { const t = line.trim(); return !t || mdHeading(t) || t.startsWith('|') || t === '---' || mdListItem(line); };
+  while (i < lines.length) {
+    const t = lines[i].trim();
+    if (!t) { i++; continue; }
+    const h = mdHeading(t);
+    if (h) { out.append(mdInline($('h' + (h + 1)), t.slice(h + 1))); i++; continue; }
+    if (t === '---') { out.append($('hr')); i++; continue; }
+    if (t.startsWith('|')) {
+      const rows = []; while (i < lines.length && lines[i].trim().startsWith('|')) rows.push(mdCells(lines[i++]));
+      const wrap = $('div', 'tbl'); const table = $('table');
+      const head = rows.length > 1 && mdRule(rows[1]);
+      rows.forEach((cells, r) => {
+        if (head && r === 1) return;
+        const tr = $('tr'); cells.forEach((c) => tr.append(mdInline($(head && r === 0 ? 'th' : 'td'), c))); table.append(tr);
+      });
+      wrap.append(table); out.append(wrap); continue;
+    }
+    if (mdListItem(lines[i])) {
+      const stack = [];
+      while (i < lines.length) {
+        const m = mdListItem(lines[i]);
+        if (!m) {
+          // A blank line between items keeps the list going; anything else ends it.
+          let j = i; while (j < lines.length && !lines[j].trim()) j++;
+          if (j > i && j < lines.length && mdListItem(lines[j])) { i = j; continue; }
+          break;
+        }
+        let top = stack[stack.length - 1];
+        while (top && m.indent < top.indent) { stack.pop(); top = stack[stack.length - 1]; }
+        if (top && m.indent === top.indent && m.kind !== top.kind) { stack.pop(); top = stack[stack.length - 1]; }
+        if (!top || m.indent > top.indent) {
+          const list = $(m.kind === 'ol' ? 'ol' : 'ul', m.kind === 'check' ? 'checks' : null);
+          if (m.kind === 'ol' && m.start > 1) list.start = m.start;
+          (top?.li || out).append(list);
+          stack.push(top = { indent: m.indent, kind: m.kind, el: list, li: null });
+        }
+        const li = $('li');
+        if (m.kind === 'check') li.append($('span', 'box', m.checked ? '☑' : '☐'));
+        top.el.append(mdInline(li, m.text)); top.li = li; i++;
+      }
+      continue;
+    }
+    const para = []; while (i < lines.length && (!para.length || !startsBlock(lines[i]))) para.push(lines[i++].trim());
+    out.append(mdInline($('p'), para.join(' ')));
+  }
+  return out;
+}
+
+let docs = null, docsError = null, docOpen = null, docEdit = null, docImport = false, docNotice = '';
+async function loadDocs() {
+  try {
+    const r = await fetch('/api/documents', { cache: 'no-store' });
+    if (r.status === 401) return location.reload();
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || 'Could not load documents (' + r.status + ')');
+    docs = out.documents; docsError = null;
+  } catch (e) { docs = docs || []; docsError = e.message; }
+  if (current === 'documents') draw();
+}
+const DOC_KINDS = [['all', 'All'], ['contract', 'Contracts'], ['form', 'Forms'], ['checklist', 'Checklists'], ['guide', 'Guides']];
+
+function viewDocuments(root) {
+  if (docs === null) { root.append($('div', 'skeleton'), $('div', 'skeleton')); loadDocs(); return; }
+  if (docEdit) return docEditor(root);
+  const open = docOpen && docs.find((d) => d.slug === docOpen);
+  if (open) return docReader(root, open);
+  const bar = rise($('div', 'toolbar'));
+  const add = $('button', 'more', '+ New document'); add.onclick = () => { docEdit = { slug: null, title: '', body: '' }; draw(); };
+  bar.append(add);
+  if (docs.length) { const imp = $('button', 'more', docImport ? 'Close import' : 'Import pack'); imp.onclick = () => { docImport = !docImport; draw(); }; bar.append(imp); }
+  root.append(bar);
+  if (docNotice) { root.append($('p', 'notice', docNotice)); docNotice = ''; }
+  if (docsError) root.append(rise(card($('p', 'error', docsError))));
+  if (docImport || !docs.length) root.append(section(docs.length ? 'Import' : 'Bring in your documents', importCard()));
+  if (!docs.length) return;
+  filtered(root, 'Documents', docs, DOC_KINDS, (d, k) => d.category === k, (d) => {
+    const c = $('div', 'card row doc-row'); c.tabIndex = 0; c.setAttribute('role', 'button');
+    const t = $('div', 'item-title', d.title); t.append($('span', 'tag', d.category));
+    c.append(t, $('div', 'meta', 'edited ' + ago(d.updated_at)));
+    const firstLine = (d.body || '').split('\\n').find((l) => l.trim() && !mdHeading(l.trim()) && !l.trim().startsWith('|')) || '';
+    if (firstLine) c.append($('div', 'desc', firstLine.split('**').join('').replace('- ', '').slice(0, 160)));
+    c.onclick = () => { docOpen = d.slug; draw(); window.scrollTo({ top: 0 }); };
+    c.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); c.onclick(); } };
+    return c;
+  });
+}
+
+function importCard() {
+  const f = $('div', 'card form');
+  f.append($('p', 'detail wide', 'Paste a pack written in Markdown, or pick the .md file. Each document starts with a "## Title" line. A document with the same title is replaced; the rest are kept.'));
+  f.firstChild.style.gridColumn = '1 / -1'; f.firstChild.style.margin = '0';
+  const lf = $('label', 'wide', 'File'); const file = $('input'); file.type = 'file'; file.accept = '.md,.markdown,.txt,text/markdown,text/plain'; lf.append(file);
+  const lt = $('label', 'wide', 'Or paste'); const ta = $('textarea'); ta.placeholder = '## 1. Master Services Agreement' + '\\n' + '…'; lt.append(ta);
+  file.onchange = async () => { const x = file.files[0]; if (x) ta.value = await x.text(); };
+  const actions = $('div', 'actions'); const go = $('button', 'act approve', 'Import'); const hint = $('span', 'hint');
+  go.onclick = async () => {
+    if (!ta.value.trim()) { hint.className = 'error'; hint.textContent = 'Pick a file or paste the pack first.'; return; }
+    go.disabled = true; hint.className = 'hint'; hint.textContent = 'Importing…';
+    try {
+      const out = await post('/api/documents', { markdown: ta.value });
+      docImport = false; docNotice = 'Imported ' + out.total + ' documents: ' + out.added + ' new, ' + out.updated + ' updated.';
+      docs = null; draw();
+    } catch (e) { hint.className = 'error'; hint.textContent = e.message; go.disabled = false; }
+  };
+  actions.append(go, hint); f.append(lf, lt, actions);
+  return f;
+}
+
+function docReader(root, d) {
+  const bar = rise($('div', 'toolbar doc-bar'));
+  const back = $('button', 'more', '← All documents'); back.onclick = () => { docOpen = null; draw(); };
+  const paper = $('div', 'card doc-paper');
+  const body = mdRender(d.body);
+  paper.append($('h1', 'doc-title', d.title), $('div', 'doc-meta', d.category + ' · edited ' + ago(d.updated_at) + (d.updated_by && d.updated_by !== 'owner' ? ' by ' + d.updated_by : '')), body);
+  const hint = $('span', 'hint');
+  const copy = $('button', 'mini', 'Copy');
+  copy.title = 'Copies with headings and tables, ready to paste into Word, Google Docs or an email';
+  copy.onclick = async () => {
+    const ser = new XMLSerializer();   // reads our own rendered nodes back out; nothing is inserted as HTML
+    const html = ser.serializeToString(paper.querySelector('.doc-title')) + ser.serializeToString(body);
+    const text = d.title + '\\n\\n' + body.innerText;
+    try {
+      if (window.ClipboardItem) await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([text], { type: 'text/plain' }) })]);
+      else await navigator.clipboard.writeText(text);
+      hint.className = 'hint'; hint.textContent = 'Copied.';
+    } catch { hint.className = 'error'; hint.textContent = 'This browser blocked copying. Select the text instead.'; }
+  };
+  const print = $('button', 'mini', 'Print / PDF'); print.title = 'Print it, or choose Save as PDF in the print dialog';
+  print.onclick = () => { document.body.classList.add('printing'); window.print(); };
+  const edit = $('button', 'mini', 'Edit'); edit.onclick = () => { docEdit = { slug: d.slug, title: d.title, body: d.body }; draw(); };
+  const fill = $('button', 'mini go', 'Prepare with Synaut');
+  fill.title = 'Synaut fills in what it knows for a client and lists what only you can fill';
+  fill.onclick = () => openChat('assistant', 'Prepare the "' + d.title + '" for ');
+  bar.append(back, $('span', 'spacer'), copy, print, edit, fill, hint);
+  root.append(bar, rise(paper));
+}
+
+function docEditor(root) {
+  const e = docEdit;
+  root.append(section(e.slug ? 'Edit document' : 'New document', (() => {
+    const f = formCard([
+      ['title', 'Title', 'text', null, { required: true, wide: true, value: e.title, placeholder: 'e.g. 14. Website Maintenance Schedule' }],
+      ['body', 'Text: ## heading, - list, 1. numbered, - [ ] checkbox, | table |, **bold**', 'textarea', null, { required: true, value: e.body }],
+    ], 'Save', async (v) => {
+      const out = await post('/api/documents', { slug: e.slug, ...v });
+      docEdit = null; docOpen = out.slug; docNotice = ''; docs = null; draw();
+    }, () => { docEdit = null; draw(); });
+    f.classList.add('doc-edit'); return f;
+  })()));
+}
+window.addEventListener('afterprint', () => document.body.classList.remove('printing'));
+
+const VIEWS = { overview: viewOverview, approvals: viewApprovals, tasks: viewTasks, projects: viewProjects, clients: viewClients, agents: viewAgents, journal: viewJournal, documents: viewDocuments };
 function draw() {
   if (!data) return;
   delay = 0;
@@ -875,7 +1084,7 @@ async function load() {
   } catch (e) { status.className = 'status bad'; statusText.textContent = e.message; }
   finally { btn.disabled = false; }
 }
-document.getElementById('refresh').onclick = load;
+document.getElementById('refresh').onclick = () => { if (current === 'documents' && !docEdit) docs = null; load(); };
 setInterval(() => { if (!document.hidden && !document.querySelector('button.confirm, form.form')) load(); }, 5 * 60 * 1000);
 
 /* ---------- chat ---------- */
