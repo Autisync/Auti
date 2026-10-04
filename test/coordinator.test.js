@@ -149,6 +149,62 @@ await check('the real Claude client sends a forced tool call and parses the answ
   assert.deepEqual(run, { model: 'claude-sonnet-5-5', input_tokens: 1200, output_tokens: 300 });
 });
 
+// The web dashboard (Vercel functions in api/, logic in src/web.js).
+const web = await import('../src/web.js');
+
+await check('the dashboard is locked without the right password', async () => {
+  const basic = (pw) => 'Basic ' + Buffer.from(`owner:${pw}`).toString('base64');
+  assert.equal(web.isAuthorized(basic('right horse'), 'right horse'), true);
+  assert.equal(web.isAuthorized(basic('wrong'), 'right horse'), false);
+  assert.equal(web.isAuthorized(undefined, 'right horse'), false);
+  assert.equal(web.isAuthorized(basic(''), ''), false);          // no password configured = closed
+  const { guard } = await import('../api/_shared.js');
+  const res = { headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, send(b) { this.body = b; return this; } };
+  const saved = process.env.DASHBOARD_PASSWORD;
+  process.env.DASHBOARD_PASSWORD = 'right horse';
+  assert.equal(guard({ headers: {} }, res), false);
+  assert.equal(res.code, 401);
+  assert.match(res.headers['WWW-Authenticate'], /^Basic/);
+  if (saved === undefined) delete process.env.DASHBOARD_PASSWORD; else process.env.DASHBOARD_PASSWORD = saved;
+});
+
+await check('the dashboard shows the latest brief and the plans waiting for approval', async () => {
+  const d = await web.getDashboard(db);
+  assert.equal(d.latest.brief.one_thing_today, answer.one_thing_today);
+  assert.equal(d.approvals.length, 1);
+  assert.equal(d.approvals[0].title, 'Client contact rhythm');
+  assert.equal(d.approvals[0].project, 'Company operations');
+  assert.equal(d.approvals[0].plan.length, 2);
+});
+
+await check('the owner can approve a plan from the dashboard, once', async () => {
+  const { id } = (await web.getDashboard(db)).approvals[0];
+  await assert.rejects(web.decide(db, id, 'approve-everything'), /decision must be/);
+  await assert.rejects(web.decide(db, "1' OR 1=1", 'approve'), /bad initiative id/);
+  assert.deepEqual(await web.decide(db, id, 'approve'), { id, status: 'approved' });
+  const row = (await db.query(`SELECT status, approved_at FROM initiatives WHERE id = $1`, [id])).rows[0];
+  assert.equal(row.status, 'approved');
+  assert.ok(row.approved_at);
+  assert.equal(await web.decide(db, id, 'drop'), null);      // already decided: nothing changes
+  const j = (await db.query(`SELECT author, body FROM journal WHERE initiative_id = $1 AND kind = 'decision'`, [id])).rows;
+  assert.equal(j.length, 1);
+  assert.equal(j[0].author, 'owner');
+  assert.equal((await web.getDashboard(db)).approvals.length, 0);
+});
+
+await check('dropping a plan takes it off the dashboard without approving it', async () => {
+  const id = (await db.query(`INSERT INTO initiatives (title, status, created_by_agent) VALUES ('Side quest', 'awaiting_approval', 'coordinator') RETURNING id`)).rows[0].id;
+  assert.deepEqual(await web.decide(db, id, 'drop'), { id, status: 'dropped' });
+  const row = (await db.query(`SELECT status, approved_at FROM initiatives WHERE id = $1`, [id])).rows[0];
+  assert.deepEqual(row, { status: 'dropped', approved_at: null });
+});
+
+await check('the page escapes nothing into HTML: data goes in through textContent only', async () => {
+  const { PAGE } = await import('../src/page.js');
+  assert.match(PAGE, /<title>Jarvis<\/title>/);
+  assert.doesNotMatch(PAGE, /innerHTML|insertAdjacentHTML|document\.write/);
+});
+
 // Only where the private seed exists (your machine, never public CI).
 const { DEFAULT_SEED } = await import('../src/seed.js');
 const fs = await import('node:fs');
