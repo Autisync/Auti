@@ -3,7 +3,7 @@ import { gatherContext } from './context.js';
 import { BRIEF_TOOL, systemPrompt, userPrompt } from './prompt.js';
 import { applyActions, autonomyEnabled } from './autonomy.js';
 
-export async function runCoordinator({ db, brain, mode = 'nightly', timezone = 'Europe/Lisbon', now = new Date() }) {
+export async function runCoordinator({ db, brain, mode = 'nightly', timezone = 'Europe/Lisbon', now = new Date(), crm = null }) {
   if (!['nightly', 'standup'].includes(mode)) throw new Error(`Unknown mode '${mode}'. Use nightly or standup.`);
 
   const run = (await db.query(
@@ -11,7 +11,7 @@ export async function runCoordinator({ db, brain, mode = 'nightly', timezone = '
   )).rows[0];
 
   try {
-    const context = await gatherContext(db, { timezone, now });
+    const context = await gatherContext(db, { timezone, now, crm });
     const { output, model, usage } = await brain.think({
       system: systemPrompt(context.config),
       user: userPrompt(context, mode),

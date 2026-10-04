@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { agentsSummary } from './agents.js';
 import { normaliseRepo } from './github.js';
 import { repairWeakestLink } from './coordinator.js';
+import { crmConfigured } from './crm.js';
 
 // Two ways in, both checked against DASHBOARD_PASSWORD:
 //   - a session cookie set by the login page (what the browser and the installed app use)
@@ -98,10 +99,15 @@ export async function getDashboard(db) {
     .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows.map((r) => r.target_id));
   for (const t of tasks) t.by_synaut = bySynaut.has(t.id);
   const autonomy = (await db.query(`SELECT enabled FROM coordinator_config WHERE key = 'autonomy'`)).rows[0] || null;
+  // CRM changes Synaut proposed, waiting for the owner. Missing until migration 007 runs.
+  const crmRequests = (await db.query(`
+    SELECT id, kind, summary, reason, proposed_by, error, created_at FROM crm_request
+     WHERE status = 'awaiting_approval' ORDER BY created_at`).catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;
   const agents = await agentsSummary(db);
   return {
     latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools(),
     actions, autonomy: autonomy ? autonomy.enabled : null,   // null: not set up yet
+    crmRequests,
   };
 }
 
@@ -294,7 +300,9 @@ export function connectedTools(env = process.env) {
     { id: 'github', name: 'GitHub', connected: Boolean(env.GITHUB_TOKEN), access: 'read-only',
       detail: env.GITHUB_TOKEN ? 'Synaut chat can list your repos, see commits, pull requests and issues, and read files.'
         : 'Public repos only. Add a read-only GITHUB_TOKEN in Vercel to let Synaut chat see your private repos.' },
-    { id: 'crm', name: 'CRM', connected: false, access: 'planned', detail: 'Your client list, once connected, replaces typing clients in by hand.' },
+    { id: 'crm', name: 'CRM', connected: crmConfigured(env), access: crmConfigured(env) ? 'reads; changes on your approval' : 'not connected',
+      detail: crmConfigured(env) ? 'Synaut reads clients, subscriptions, invoices, the dashboard and the pipeline, and proposes changes for you to approve.'
+        : 'Create a CRM user for Synaut, then set CRM_API_URL, CRM_EMAIL and CRM_PASSWORD in Vercel and as GitHub secrets.' },
     { id: 'tasks', name: 'Task list', connected: false, access: 'planned', detail: 'Your existing task list, once connected, syncs with the Tasks tab.' },
   ];
 }

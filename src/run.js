@@ -6,6 +6,7 @@ import { claudeBrain } from './llm.js';
 import { runCoordinator } from './coordinator.js';
 import { syncGithub } from './github.js';
 import { runRetention } from './retention.js';
+import { crmClient, crmConfigured, crmSnapshot } from './crm.js';
 
 const mode = process.argv[2] || 'nightly';
 const quiet = process.env.CI === 'true' || process.env.JARVIS_QUIET === '1';
@@ -19,7 +20,18 @@ async function coordinator() {
   } catch (err) {
     console.error(`github sync skipped: ${err.message}`);
   }
+  // The CRM is read before thinking. A failure never blocks the run; only whether it worked is printed, never data.
+  let crm = null;
+  if (crmConfigured()) {
+    try {
+      crm = await crmSnapshot(crmClient());
+      console.log(`crm: read, ${crm.unavailable.length} part(s) unavailable`);
+    } catch (err) {
+      console.error(`crm skipped: ${err.message}`);
+    }
+  }
   const { runId, brief } = await runCoordinator({
+    crm,
     db,
     brain: claudeBrain(),
     mode,

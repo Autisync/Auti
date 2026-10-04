@@ -40,6 +40,10 @@ jobs:
       # Reads each project's latest push. The built-in token sees this repo and public ones;
       # add a SYNAUT_GITHUB_TOKEN secret (read-only, fine-grained) to include your other private repos.
       GITHUB_TOKEN: ${{ secrets.SYNAUT_GITHUB_TOKEN || github.token }}
+      # The company CRM, read before each run as Synaut's own CRM user. Optional; leave unset to skip.
+      CRM_API_URL: ${{ secrets.CRM_API_URL }}
+      CRM_EMAIL: ${{ secrets.CRM_EMAIL }}
+      CRM_PASSWORD: ${{ secrets.CRM_PASSWORD }}
     steps:
       - name: Check secrets are set
         run: |
