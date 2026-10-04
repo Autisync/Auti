@@ -2,6 +2,7 @@
 // with a stand-in for Claude so it runs offline and costs nothing.
 import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
+import fs0 from 'node:fs';
 import { migrate } from '../src/migrate.js';
 import { seed } from '../src/seed.js';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +18,8 @@ await migrate(db, () => {});
 await check('migrations apply and are idempotent', async () => {
   await migrate(db, () => {});
   const n = (await db.query(`SELECT count(*)::int AS n FROM schema_migrations`)).rows[0].n;
-  assert.equal(n, 4);
+  const files = (await import('node:fs')).readdirSync(new URL('../db/', import.meta.url)).filter((f) => f.endsWith('.sql'));
+  assert.equal(n, files.length);
 });
 
 await check('seed loads once', async () => {
@@ -453,7 +455,7 @@ await check('consulting Synaut sends the company state, uses no forced tool, and
   assert.equal(out.reply, 'Brief the organisation project first.');
   assert.equal(sent.body.model, 'claude-sonnet-5-5');
   assert.equal(sent.body.tool_choice, undefined);
-  assert.deepEqual(sent.body.tools.map((t) => t.name), ['github_list_repos', 'github_repo_activity', 'github_read_file']);
+  assert.deepEqual(sent.body.tools.map((t) => t.name), ['github_list_repos', 'github_repo_activity', 'github_read_file', 'documents_list', 'documents_read']);
   assert.match(sent.body.system[0].text, /Example Client/);
   assert.match(sent.body.system[0].text, /cannot approve/);
   const u = (await db.query(`SELECT * FROM agent_usage WHERE agent = 'assistant'`)).rows;
@@ -602,6 +604,119 @@ await check('voice failures are explained instead of failing silently', async ()
   assert.match(PAGE, /Microsoft Edge could not reach its voice service/); // Edge on a Mac answers 'network'
   assert.match(PAGE, /fn \(Globe\) key twice/);
   new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);       // the page script still parses
+});
+
+
+// Business documents: imported from a Markdown pack, kept in the database (never in the public repo).
+const docsMod = await import('../src/documents.js');
+const PACK = `# Example Pack
+
+Intro text that belongs to no document.
+
+## How to use this pack
+
+Fill in anything in [SQUARE BRACKETS].
+
+## 1. Master Services Agreement
+
+### 1. Definitions
+
+1. "Services" means the services in each Service Schedule.
+
+| Item | Term |
+|---|---|
+| Payment due | [14] days |
+
+## 10. Client Onboarding Checklist (internal)
+
+- [ ] Proposal accepted in writing
+`;
+
+await check('a document pack splits into one document per "## " heading', async () => {
+  const docs = docsMod.splitPack(PACK);
+  assert.deepEqual(docs.map((d) => d.slug), ['how-to-use-this-pack', 'master-services-agreement', 'client-onboarding-checklist-internal']);
+  assert.deepEqual(docs.map((d) => d.category), ['guide', 'contract', 'checklist']);
+  assert.equal(docs[1].title, '1. Master Services Agreement');
+  assert.match(docs[1].body, /^### 1\. Definitions/);
+  assert.match(docs[1].body, /\| Payment due \| \[14\] days \|/);
+  assert.doesNotMatch(docs[0].body, /Intro text/);
+  assert.throws(() => docsMod.splitPack('just text'), /no documents found/);
+  assert.throws(() => docsMod.splitPack('  '), /empty/);
+  assert.equal(docsMod.slugify('6. Data Processing Agreement'), 'data-processing-agreement');
+  assert.equal(docsMod.slugify('Política de Privacidade'), 'politica-de-privacidade');
+});
+
+await check('documents import, re-import, edit and add, and read as empty before the first import', async () => {
+  const fresh = new PGlite();
+  await migrate(fresh, () => {});
+  await fresh.query('DROP TABLE documents');                       // as on Vercel before the next run migrates
+  assert.deepEqual(await docsMod.listDocuments(fresh), []);
+  assert.equal(await docsMod.getDocument(fresh, 'anything'), null);
+  assert.deepEqual(await docsMod.importPack(fresh, PACK), { added: 3, updated: 0, total: 3 });   // creates the table itself
+  assert.deepEqual(await docsMod.importPack(fresh, PACK.replace('[14] days', '[30] days')), { added: 0, updated: 3, total: 3 });
+  const msa = await docsMod.getDocument(fresh, 'master-services-agreement');
+  assert.match(msa.body, /\[30\] days/);
+  const list = await docsMod.listDocuments(fresh);
+  assert.deepEqual(list.map((d) => d.slug), ['how-to-use-this-pack', 'master-services-agreement', 'client-onboarding-checklist-internal']);
+
+  const edited = await docsMod.saveDocument(fresh, { slug: 'master-services-agreement', title: '1. Master Services Agreement', body: 'New text.' });
+  assert.equal(edited.slug, 'master-services-agreement');
+  assert.equal((await docsMod.getDocument(fresh, 'master-services-agreement')).body, 'New text.');
+  assert.equal(await docsMod.saveDocument(fresh, { slug: 'nope', title: 'X', body: 'y' }), null);
+  const added = await docsMod.saveDocument(fresh, { title: 'How to use this pack', body: 'A second one.' });
+  assert.equal(added.slug, 'how-to-use-this-pack-2');                   // never overwrites by accident
+  assert.equal((await docsMod.listDocuments(fresh)).at(-1).slug, 'how-to-use-this-pack-2');
+  await assert.rejects(docsMod.saveDocument(fresh, { title: '', body: 'x' }), /title is required/);
+  await assert.rejects(docsMod.saveDocument(fresh, { title: 'x', body: ' ' }), /empty/);
+
+  // The migration and the dashboard's own create statement stay the same table.
+  const sql = fs0.readFileSync(new URL('../db/005_documents.sql', import.meta.url), 'utf8');
+  const norm = (x) => x.replace(/--.*$/gm, '').replace(/\s+/g, ' ').trim();
+  assert.ok(norm(sql).includes(norm(docsMod.DOCUMENTS_DDL)));
+});
+
+await check('the documents API lists, imports and saves behind the password', async () => {
+  const handler = (await import('../api/documents.js')).default;
+  const { getDb } = await import('../api/_shared.js');
+  void getDb;
+  const pw = 'doc pass'; const saved = process.env.DASHBOARD_PASSWORD; process.env.DASHBOARD_PASSWORD = pw;
+  const auth = { authorization: 'Basic ' + Buffer.from('o:' + pw).toString('base64') };
+  const call = async (req) => {
+    const res = { headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; } };
+    await handler(req, res); return res;
+  };
+  assert.equal((await call({ method: 'GET', headers: {} })).code, 401);
+  assert.equal((await call({ method: 'POST', headers: { ...auth, 'content-type': 'text/plain' }, body: {} })).code, 415);
+  if (saved === undefined) delete process.env.DASHBOARD_PASSWORD; else process.env.DASHBOARD_PASSWORD = saved;
+});
+
+await check('Synaut sees the document titles, and its chat can open a document', async () => {
+  await docsMod.importPack(db, PACK);
+  const { gatherContext } = await import('../src/context.js');
+  const ctx = await gatherContext(db);
+  assert.deepEqual(ctx.documents.map((d) => d.title), ['How to use this pack', '1. Master Services Agreement', '10. Client Onboarding Checklist (internal)']);
+  assert.equal(ctx.documents[0].body, undefined);                     // titles only in the brief's context
+  const tools = docsMod.combineTools(docsMod.documentTools(db));
+  const list = await tools.call('documents_list', {});
+  assert.equal(list.length, 3);
+  const doc = await tools.call('documents_read', { slug: 'master-services-agreement' });
+  assert.match(doc.body, /Definitions/);
+  assert.match((await tools.call('documents_read', { slug: 'nope' })).error, /no document/);
+  assert.match((await tools.call('github_read_file', {})).error, /unknown tool/);
+  const sys = await chatMod.systemFor('assistant', db);
+  assert.match(sys, /documents_ tools/);
+  assert.match(sys, /Master Services Agreement/);
+});
+
+await check('the Documents tab renders Markdown without ever inserting HTML', async () => {
+  const { PAGE } = await import('../src/page.js');
+  assert.match(PAGE, /\['documents', 'Documents'\]/);
+  assert.match(PAGE, /function mdRender/);
+  assert.match(PAGE, /\/api\/documents/);
+  assert.match(PAGE, /@media print/);
+  const script = PAGE.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const mdBlock = script.slice(script.indexOf('/* ---------- documents'), script.indexOf('let docs = null'));
+  assert.doesNotMatch(mdBlock, /innerHTML/);
 });
 
 // Only where the private seed exists (your machine, never public CI).

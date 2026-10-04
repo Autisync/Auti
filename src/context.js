@@ -1,3 +1,5 @@
+import { listDocuments } from './documents.js';
+
 // Reads everything the coordinator needs to think, in one snapshot.
 // Kept as plain data so it can be logged, tested and sent to the model as JSON.
 
@@ -38,6 +40,9 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
         ORDER BY t.happened_at DESC LIMIT 30`),
   ]);
 
+  // Titles only: the full text is one chat tool call away, and it would crowd out the company state here.
+  const documents = (await listDocuments(db, { bodies: false })).map((d) => ({ title: d.title, category: d.category, updated_at: d.updated_at }));
+
   const today = new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   }).format(now);
@@ -56,5 +61,6 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     journal: journal.reverse(),          // oldest first reads more naturally
     recentSuggestions,
     recentContacts,                      // logged client touchpoints, last 30 days
+    documents,                           // the company's contract templates, policies and checklists
   };
 }
