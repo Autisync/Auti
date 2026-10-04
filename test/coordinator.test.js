@@ -582,6 +582,14 @@ await check('a brief whose nested parts arrive as JSON strings is still accepted
   assert.equal((await runCoordinator({ db, brain: b3, mode: 'standup' })).brief.weakest_link.headline, 'Just a sentence.');
 });
 
+await check('voice failures are explained instead of failing silently', async () => {
+  const { PAGE } = await import('../src/page.js');
+  assert.match(PAGE, /service-not-allowed/);                        // iPhone refusing recognition
+  assert.match(PAGE, /Microphone access is blocked/);
+  assert.match(PAGE, /tap the microphone on your keyboard/);         // the fallback that always works
+  new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);       // the page script still parses
+});
+
 // Only where the private seed exists (your machine, never public CI).
 const { DEFAULT_SEED } = await import('../src/seed.js');
 const fs = await import('node:fs');
