@@ -77,8 +77,22 @@ export async function runCoordinator({ db, brain, mode = 'nightly', timezone = '
 
 // The tool schema already shapes the output; this guards against missing
 // arrays so one sloppy answer can never break the dashboard.
-function normalise(o) {
+// Models sometimes send a nested object or list as a JSON string; accept that instead of failing the run.
+function unstring(x) {
+  if (typeof x !== 'string') return x;
+  const t = x.trim();
+  if (!/^[[{]/.test(t)) return x;
+  try { return JSON.parse(t); } catch { return x; }
+}
+
+function normalise(raw) {
+  const o = unstring(raw);
   if (!o || typeof o !== 'object') throw new Error('Brief was empty.');
+  for (const k of ['weakest_link', 'priorities', 'suggestions', 'proposed_initiatives', 'questions_for_owner']) o[k] = unstring(o[k]);
+  if (typeof o.weakest_link === 'string' && o.weakest_link.trim()) o.weakest_link = { headline: o.weakest_link.trim(), why: '' };
+  for (const i of Array.isArray(o.proposed_initiatives) ? o.proposed_initiatives : []) {
+    if (i && typeof i === 'object') { i.steps = unstring(i.steps); i.risks = unstring(i.risks); }
+  }
   if (!o.weakest_link?.headline) throw new Error('Brief has no weakest_link.headline.');
   if (!o.one_thing_today) throw new Error('Brief has no one_thing_today.');
   const arr = (x) => (Array.isArray(x) ? x : []);

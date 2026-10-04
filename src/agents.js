@@ -16,7 +16,7 @@ export const AGENTS = [
   {
     id: 'assistant',
     name: 'Synaut (chat)',
-    role: 'Answers your questions about the company, with the same view of it as the coordinator. It can advise but never approve or change anything.',
+    role: 'Answers your questions about the company, with the same view of it as the coordinator, and can look at your GitHub repos. It can advise but never approve or change anything.',
     schedule: 'On demand, from the chat button',
   },
   {

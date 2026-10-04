@@ -453,7 +453,7 @@ await check('consulting Synaut sends the company state, uses no forced tool, and
   assert.equal(out.reply, 'Brief the organisation project first.');
   assert.equal(sent.body.model, 'claude-sonnet-5-5');
   assert.equal(sent.body.tool_choice, undefined);
-  assert.equal(sent.body.tools, undefined);
+  assert.deepEqual(sent.body.tools.map((t) => t.name), ['github_list_repos', 'github_repo_activity', 'github_read_file']);
   assert.match(sent.body.system[0].text, /Example Client/);
   assert.match(sent.body.system[0].text, /cannot approve/);
   const u = (await db.query(`SELECT * FROM agent_usage WHERE agent = 'assistant'`)).rows;
@@ -461,6 +461,60 @@ await check('consulting Synaut sends the company state, uses no forced tool, and
   assert.equal(u[0].input_tokens, 1000);
   assert.equal(u[0].output_tokens, 120);
   assert.deepEqual(Object.keys(u[0]).sort(), ['agent', 'created_at', 'id', 'input_tokens', 'model', 'output_tokens', 'web_searches']);
+});
+
+await check('Synaut chat can look at GitHub repos through read-only tools', async () => {
+  const gh = await import('../src/github.js');
+  const ghCalls = [];
+  const ghFetch = async (url, init) => {
+    ghCalls.push({ url, auth: init.headers.Authorization, method: init.method || 'GET' });
+    const u = new URL(url);
+    if (u.pathname === '/repos/example/app') return Response.json({ full_name: 'example/app', default_branch: 'main', pushed_at: '2026-10-03T10:00:00Z' });
+    if (u.pathname === '/repos/example/app/commits') return Response.json([{ commit: { author: { name: 'Sam', date: '2026-10-03T10:00:00Z' }, message: 'Add booking form\n\nlong body' } }]);
+    if (u.pathname === '/repos/example/app/pulls') return Response.json([{ number: 7, title: 'Payments', user: { login: 'sam' }, draft: true }]);
+    if (u.pathname === '/repos/example/app/issues') return Response.json([{ number: 7, pull_request: {} }, { number: 8, title: 'Bug in dates', labels: [{ name: 'bug' }] }]);
+    if (u.pathname === '/repos/example/app/contents/README.md') return Response.json({ type: 'file', encoding: 'base64', path: 'README.md', size: 5, content: Buffer.from('Hello').toString('base64') });
+    if (u.pathname === '/user/repos') return Response.json([{ full_name: 'example/app', owner: { login: 'example' }, private: true, pushed_at: 'x' }, { full_name: 'other/x', owner: { login: 'other' } }]);
+    return new Response('{}', { status: 404 });
+  };
+  const tools = gh.githubTools({ token: 'ro-token', fetch: ghFetch });
+  assert.equal(tools.connected, true);
+  const act = await tools.call('github_repo_activity', { repo: 'https://github.com/example/app' });
+  assert.equal(act.recent_commits[0].message, 'Add booking form');
+  assert.deepEqual(act.open_issues.map((i) => i.number), [8]);          // pull requests are not counted as issues
+  assert.equal((await tools.call('github_read_file', { repo: 'example/app', path: 'README.md' })).content, 'Hello');
+  assert.deepEqual((await tools.call('github_list_repos', { owner: 'example' })).map((r) => r.repo), ['example/app']);
+  assert.match((await tools.call('github_read_file', { repo: 'example/app', path: '../secrets' })).error, /bad path/);
+  assert.match((await tools.call('github_repo_activity', { repo: 'example/missing' })).error, /not found/);
+  assert.match((await tools.call('github_delete_repo', {})).error, /unknown tool/);
+  assert.ok(ghCalls.every((c) => c.method === 'GET' && c.auth === 'Bearer ro-token'));   // read-only, always
+  assert.match((await gh.githubTools({ token: '', fetch: ghFetch }).call('github_list_repos', {})).note, /No GITHUB_TOKEN/);
+
+  // The model asks for a tool, gets the result, then answers.
+  const bodies = [];
+  const replies = [
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu_1', name: 'github_repo_activity', input: { repo: 'example/app' } }], usage: { input_tokens: 300, output_tokens: 30 } },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Sam shipped the booking form yesterday; payments is still a draft.' }], usage: { input_tokens: 600, output_tokens: 40 } },
+  ];
+  const fakeFetch = async (url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return Response.json({ id: 'm', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', stop_sequence: null, ...replies.shift() });
+  };
+  const brain = chatMod.chatBrain({ apiKey: 'test-key', fetch: fakeFetch });
+  const out = await chatMod.chat(db, brain, { agent: 'assistant', tools, messages: [{ role: 'user', content: 'What happened on the app?' }] });
+  assert.match(out.reply, /booking form/);
+  assert.equal(bodies.length, 2);
+  const last = bodies[1].messages.at(-1);
+  assert.equal(last.content[0].type, 'tool_result');
+  assert.equal(last.content[0].tool_use_id, 'tu_1');
+  assert.match(last.content[0].content, /Add booking form/);
+  assert.equal(out.usage.toolCalls, 1);
+
+  const shown = (await web.getDashboard(db)).tools;
+  assert.deepEqual(shown.map((t) => t.id), ['github', 'crm', 'tasks']);
+  assert.equal(web.connectedTools({ GITHUB_TOKEN: 'x' })[0].connected, true);
+  assert.equal(web.connectedTools({})[0].connected, false);
+  assert.doesNotMatch(JSON.stringify(web.connectedTools({ GITHUB_TOKEN: 'secret-value' })), /secret-value/);
 });
 
 await check('the road companion talks for the ear, can search the web, and keeps going after a pause', async () => {
@@ -509,6 +563,23 @@ await check('the companion plays the mood the owner picks, and refuses made-up m
 
 await check('an unknown agent is refused', async () => {
   await assert.rejects(chatMod.systemFor('root', db), /unknown agent/);
+});
+
+await check('a brief whose nested parts arrive as JSON strings is still accepted', async () => {
+  const stringly = {
+    ...answer,
+    weakest_link: JSON.stringify(answer.weakest_link),
+    priorities: JSON.stringify(answer.priorities),
+    proposed_initiatives: JSON.stringify([{ ...answer.proposed_initiatives[0], title: 'Stringly plan', steps: JSON.stringify(answer.proposed_initiatives[0].steps) }]),
+  };
+  const b2 = { model: 'fake', async think() { return { output: stringly, model: 'fake-model', usage: { input: 1, output: 1 } }; } };
+  const { brief } = await runCoordinator({ db, brain: b2, mode: 'standup' });
+  assert.equal(brief.weakest_link.headline, answer.weakest_link.headline);
+  assert.equal(brief.priorities.length, 1);
+  assert.deepEqual(brief.created_initiatives.map((i) => i.title), ['Stringly plan']);
+  await db.query(`DELETE FROM initiatives WHERE title = 'Stringly plan'`);
+  const b3 = { model: 'fake', async think() { return { output: { ...answer, weakest_link: 'Just a sentence.' }, model: 'f', usage: {} }; } };
+  assert.equal((await runCoordinator({ db, brain: b3, mode: 'standup' })).brief.weakest_link.headline, 'Just a sentence.');
 });
 
 // Only where the private seed exists (your machine, never public CI).

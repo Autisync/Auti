@@ -782,6 +782,16 @@ function viewAgents(root) {
   tot.append(left, $('div', 'detail', fmtTok(tokens) + ' tokens · estimate from list prices'));
   root.append(section('Spend', tot));
   const max = Math.max(1, ...data.agents.map((a) => a.usage.month.input + a.usage.month.output));
+  if (data.tools?.length) {
+    const ul = $('ul', 'list');
+    data.tools.forEach((t) => {
+      const li = $('li'); const body = $('div'); const title = $('div', 'item-title', t.name);
+      title.append($('span', 'tag' + (t.connected ? ' ok' : t.access === 'planned' ? '' : ' warn'), t.connected ? 'connected · ' + t.access : t.access === 'planned' ? 'coming later' : 'limited'));
+      body.append(title, $('div', 'detail', t.detail));
+      li.append($('span', 'bullet'), body); ul.append(li);
+    });
+    root.append(section('Connected tools', card(ul)));
+  }
   root.append(section('Agents', ...data.agents.map((a) => {
     const c = $('div', 'card agent');
     const head = $('div', 'agent-head');

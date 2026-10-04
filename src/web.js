@@ -86,7 +86,7 @@ export async function getDashboard(db) {
       throw err;
     })).rows;
   const agents = await agentsSummary(db);
-  return { latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps };
+  return { latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools() };
 }
 
 // The owner's decision on one plan. Only plans still awaiting approval can change.
@@ -270,4 +270,15 @@ export async function decideFollowUp(db, { id, decision, body, next_contact_due 
     }
     return { id: f.id, status: decision === 'sent' ? 'sent' : 'dropped' };
   });
+}
+
+// What Synaut can reach beyond its own database. Only whether a key is set is shown, never the key.
+export function connectedTools(env = process.env) {
+  return [
+    { id: 'github', name: 'GitHub', connected: Boolean(env.GITHUB_TOKEN), access: 'read-only',
+      detail: env.GITHUB_TOKEN ? 'Synaut chat can list your repos, see commits, pull requests and issues, and read files.'
+        : 'Public repos only. Add a read-only GITHUB_TOKEN in Vercel to let Synaut chat see your private repos.' },
+    { id: 'crm', name: 'CRM', connected: false, access: 'planned', detail: 'Your client list, once connected, replaces typing clients in by hand.' },
+    { id: 'tasks', name: 'Task list', connected: false, access: 'planned', detail: 'Your existing task list, once connected, syncs with the Tasks tab.' },
+  ];
 }

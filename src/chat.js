@@ -4,6 +4,7 @@
 // Only token counts are stored (agent_usage). The conversation lives in the browser, never in the database.
 import Anthropic from '@anthropic-ai/sdk';
 import { gatherContext } from './context.js';
+import { githubTools } from './github.js';
 
 const MAX_TURNS = 30;
 const MAX_CHARS = 4000;
@@ -67,6 +68,7 @@ How to talk:
 - Answer the question first, then the reason, grounded in the company state below. If the data doesn't say, say so; never invent clients, numbers or dates.
 - Be direct and disagree when the evidence says so. Small, doable next steps beat big plans.
 - You cannot approve, change or send anything. If the owner wants something done, say what you'd propose and that it goes through approval on the dashboard.
+- You can look at the owner's GitHub repositories with the github_ tools (read-only): list repos, see recent commits, open pull requests and issues, and read files. Use them when a question is about code, a project's progress or what the team shipped, and say which repo you looked at. If a tool says a repo is not visible, tell the owner a read-only GITHUB_TOKEN in Vercel would let you see it.
 ${voice ? `\n${VOICE}\n` : ''}
 Latest brief (JSON):
 ${JSON.stringify(brief)}
@@ -102,12 +104,12 @@ export function chatBrain({
   const client = new Anthropic({ apiKey, ...(fetch ? { fetch } : {}) });
   return {
     model,
-    async reply({ agent, system, messages }) {
-      const tools = agent === 'companion' ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }] : [];
+    async reply({ agent, system, messages, clientTools }) {
+      const tools = agent === 'companion' ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }] : [...(clientTools?.defs || [])];
       let convo = messages;
-      let input = 0, output = 0, searches = 0, res;
-      // A web search can pause the turn; continue it a couple of times at most.
-      for (let i = 0; i < 3; i++) {
+      let input = 0, output = 0, searches = 0, toolCalls = 0, res;
+      // A web search can pause the turn, and the assistant's own tools need a round trip each; cap both.
+      for (let i = 0; i < 8; i++) {
         const body = {
           model,
           max_tokens: agent === 'companion' ? 2000 : 4000,
@@ -126,23 +128,33 @@ export function chatBrain({
         input += (res.usage?.input_tokens || 0) + (res.usage?.cache_read_input_tokens || 0) + (res.usage?.cache_creation_input_tokens || 0);
         output += res.usage?.output_tokens || 0;
         searches += res.usage?.server_tool_use?.web_search_requests || 0;
-        if (res.stop_reason !== 'pause_turn') break;
-        convo = [...messages, { role: 'assistant', content: res.content }];
+        if (res.stop_reason === 'pause_turn') { convo = [...convo, { role: 'assistant', content: res.content }]; continue; }
+        if (res.stop_reason !== 'tool_use' || !clientTools) break;
+        const calls = res.content.filter((b) => b.type === 'tool_use');
+        const results = [];
+        for (const c of calls) {
+          toolCalls++;
+          const out = await clientTools.call(c.name, c.input);
+          results.push({ type: 'tool_result', tool_use_id: c.id, content: JSON.stringify(out).slice(0, 20000), ...(out?.error ? { is_error: true } : {}) });
+        }
+        convo = [...convo, { role: 'assistant', content: res.content }, { role: 'user', content: results }];
       }
       if (res.stop_reason === 'refusal') {
-        return { text: "I can't help with that one. Ask me something else?", model: res.model, usage: { input, output, searches } };
+        return { text: "I can't help with that one. Ask me something else?", model: res.model, usage: { input, output, searches, toolCalls } };
       }
       const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-      return { text: text || 'Sorry, I lost my train of thought. Say that again?', model: res.model || model, usage: { input, output, searches } };
+      return { text: text || 'Sorry, I lost my train of thought. Say that again?', model: res.model || model, usage: { input, output, searches, toolCalls } };
     },
   };
 }
 
-export async function chat(db, brain, { agent, messages, voice = false, mood = 'witty', now }) {
+export async function chat(db, brain, { agent, messages, voice = false, mood = 'witty', now, tools }) {
   if (!MOODS[mood]) throw new Error('unknown mood');
   const history = cleanHistory(messages);
   const system = await systemFor(agent, db, { voice, mood, now });
-  const out = await brain.reply({ agent, system, messages: history });
+  // Only the assistant gets the owner's tools; the companion never sees company data or repos.
+  const clientTools = agent === 'assistant' ? (tools ?? githubTools()) : undefined;
+  const out = await brain.reply({ agent, system, messages: history, clientTools });
   await db.query(
     `INSERT INTO agent_usage (agent, model, input_tokens, output_tokens, web_searches) VALUES ($1, $2, $3, $4, $5)`,
     [agent, out.model, out.usage.input, out.usage.output, out.usage.searches || 0]);
