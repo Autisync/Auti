@@ -168,4 +168,18 @@ await check('the dashboard works before migration 007 has run', async () => {
   assert.deepEqual((await web.getDashboard(fresh)).crmRequests, []);
 });
 
+await check('Vercel deploys at most 12 functions, and every folded endpoint is routed', async () => {
+  const fs = await import('node:fs');
+  const fns = fs.readdirSync(new URL('../api/', import.meta.url)).filter((f) => f.endsWith('.js') && !f.startsWith('_'));
+  assert.ok(fns.length <= 12, `api/ has ${fns.length} functions; the Hobby plan deploys at most 12 (fold new ones into api/ops.js)`);
+  const vercel = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
+  const ops = await import('../api/ops.js');
+  const src = fs.readFileSync(new URL('../api/ops.js', import.meta.url), 'utf8');
+  const names = src.match(/const OPS = \{([^}]*)\}/)[1].split(',').map((x) => x.trim()).filter(Boolean);
+  for (const n of names) assert.ok(vercel.rewrites.some((r) => r.source === '/api/' + n && r.destination === '/api/ops?op=' + n), 'no rewrite for /api/' + n);
+  let status; const res = { status(c) { status = c; return this; }, json() { return this; } };
+  await ops.default({ query: { op: 'nope' } }, res);
+  assert.equal(status, 404);
+});
+
 console.log(`\n${passed} passed`);
