@@ -1,13 +1,15 @@
 name: Coordinator
 
 # Runs Synaut's thinking loop. Times are UTC (GitHub has no time zones):
-#   04:17 UTC daily        = 05:17 Lisbon in summer, 04:17 in winter (overnight study)
-#   12:23 and 16:23 UTC    = early and late afternoon stand-up refreshes, weekdays
+#   04:17 UTC daily               = 05:17 Lisbon in summer, 04:17 in winter (overnight study)
+#   every 2 hours, 06:23 to 18:23 = stand-up refreshes through the working day, weekdays
+# Each refresh also lets Synaut take its small automatic steps, so work keeps moving between your visits.
 # Odd minutes on purpose: on-the-hour schedules are the most delayed on GitHub.
+# keepalive.yml stops GitHub pausing this schedule after 60 days without a commit.
 on:
   schedule:
     - cron: '17 4 * * *'
-    - cron: '23 12,16 * * 1-5'
+    - cron: '23 6-18/2 * * 1-5'
   workflow_dispatch:
     inputs:
       mode:

@@ -28,10 +28,12 @@ async function coordinator() {
   console.log(`[${new Date().toISOString()}] ${mode} run ${runId} done.`);
   if (quiet) {
     console.log(`priorities=${brief.priorities.length} suggestions=${brief.suggestions.length} ` +
-      `new_initiatives=${brief.created_initiatives.length} questions=${brief.questions_for_owner.length}`);
+      `new_initiatives=${brief.created_initiatives.length} questions=${brief.questions_for_owner.length} ` +
+      `actions_taken=${brief.actions_taken.length} actions_skipped=${brief.actions_skipped.length}`);
   } else {
     console.log(`Weakest link: ${brief.weakest_link.headline}`);
     console.log(`One thing today: ${brief.one_thing_today}`);
+    for (const a of brief.actions_taken) console.log(`Done on its own: ${a.summary}`);
     if (brief.created_initiatives.length) {
       console.log(`Awaiting your approval: ${brief.created_initiatives.map((i) => i.title).join('; ')}`);
     }

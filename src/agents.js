@@ -4,8 +4,8 @@ export const AGENTS = [
   {
     id: 'coordinator',
     name: 'Coordinator',
-    role: 'Studies the whole company on a schedule and writes the brief.',
-    schedule: 'Daily 04:17 UTC, weekdays 12:23 and 16:23 UTC',
+    role: 'Studies the whole company on a schedule and writes the brief. Between your visits it also takes small internal steps on its own (adds tasks, sets first contact dates, reviews its own suggestions), each one logged on the Overview with an Undo. Plans, client messages, documents and money still wait for you.',
+    schedule: 'Daily 04:17 UTC, and every 2 hours on weekdays from 06:23 to 18:23 UTC',
   },
   {
     id: 'retention',

@@ -12,7 +12,7 @@ The coordinator is the part of Synaut that thinks. On a schedule it:
    - plans that need your approval,
    - questions for you.
 
-Nothing it proposes takes effect until you approve it. The database itself refuses to mark a plan as approved without your sign-off.
+Plans, client messages, documents and anything that costs money wait for your approval. The database itself refuses to mark a plan as approved without your sign-off. Between your visits Synaut does take small internal steps on its own (see Autonomy below), and each one can be undone.
 
 ## Two ways to run it
 
@@ -110,6 +110,7 @@ Set `DATABASE_URL`, `DASHBOARD_PASSWORD` and `ANTHROPIC_API_KEY` in the Vercel p
 - Tasks tab: approved plans arrive as one task per step. Start, finish, block or reopen them, or add your own. Finishing a plan's last task marks the plan done.
 - Clients tab: add clients and leads with a contact rhythm, log each call, email or meeting, and pick the next contact date. Marking a client lost asks why and saves the reason as a lesson in the journal. The coordinator sees the last 30 days of logged contacts.
 - Journal tab: log a stand-up, decision or lesson by typing or dictating (Chrome and Safari). The next coordinator run reads it.
+- Autonomy: on every run (nightly, and every 2 hours on weekdays from 06:23 to 18:23 UTC) the coordinator may take small internal steps itself: add a task for a next step nobody captured (at most 3 a run, 10 open at once), give a lead or active client with no next contact date a first one, and review its own suggestions from three or more days ago. Every step is checked in code, listed under "Done on its own" on the Overview with an Undo, and fed back to the next run. It never contacts clients, sends documents, spends money, moves an existing date or approves a plan. Switch it off from the Agents tab (it is the `autonomy` row in `coordinator_config`). `keepalive.yml` re-enables the schedule twice a month so GitHub never pauses it for inactivity.
 - Projects tab: link each project to its GitHub repository. Before every coordinator run, Synaut reads each repo's latest push into `last_activity_at`, so "going cold" reflects real work. The workflow's built-in token reads this repo and public ones; add a read-only `SYNAUT_GITHUB_TOKEN` secret for your other private repos.
 - Retention agent: after every coordinator run it drafts one follow-up (email, WhatsApp or call notes) per client due or overdue for contact, in Portuguese for Portugal and Angola. Drafts wait on the Approvals tab. Synaut never sends anything: you edit, send it yourself, then tap Mark sent, which logs the contact and sets the next date. No Claude call happens when nobody is due.
 - Chat stores only token counts (`agent_usage`), never what was said.

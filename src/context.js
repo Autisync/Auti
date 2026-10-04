@@ -28,7 +28,7 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
          FROM clients ORDER BY status, name`),
     q(`SELECT kind, author, body, acted_on, outcome, created_at
          FROM journal ORDER BY created_at DESC LIMIT 40`),
-    q(`SELECT body, acted_on, outcome, created_at FROM journal
+    q(`SELECT id, body, acted_on, outcome, created_at FROM journal
         WHERE kind = 'suggestion' AND author = 'coordinator'
           AND created_at > now() - interval '21 days'
         ORDER BY created_at DESC`),
@@ -37,6 +37,12 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
         WHERE t.happened_at > now() - interval '30 days'
         ORDER BY t.happened_at DESC LIMIT 30`),
   ]);
+
+  // What Synaut did on its own lately, and what the owner undid. Missing until migration 006 runs
+  // (the dashboard's chat can be deployed before that), so a missing table reads as none.
+  const recentActions = await q(`SELECT kind, summary, reason, created_at, undone_at IS NOT NULL AS undone_by_owner
+      FROM coordinator_action WHERE created_at > now() - interval '14 days' ORDER BY created_at DESC LIMIT 30`)
+    .catch((err) => { if (err.code === '42P01') return []; throw err; });
 
   const today = new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -56,5 +62,6 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     journal: journal.reverse(),          // oldest first reads more naturally
     recentSuggestions,
     recentContacts,                      // logged client touchpoints, last 30 days
+    recentActions,                       // steps Synaut took on its own, last 14 days
   };
 }

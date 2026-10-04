@@ -1,6 +1,7 @@
 // One coordinator run: read the company, think, write the brief back.
 import { gatherContext } from './context.js';
 import { BRIEF_TOOL, systemPrompt, userPrompt } from './prompt.js';
+import { applyActions, autonomyEnabled } from './autonomy.js';
 
 export async function runCoordinator({ db, brain, mode = 'nightly', timezone = 'Europe/Lisbon', now = new Date() }) {
   if (!['nightly', 'standup'].includes(mode)) throw new Error(`Unknown mode '${mode}'. Use nightly or standup.`);
@@ -55,10 +56,18 @@ export async function runCoordinator({ db, brain, mode = 'nightly', timezone = '
           `INSERT INTO journal (kind, author, body) VALUES ('suggestion', 'coordinator', $1)`, [body],
         );
       }
-      return { created, skipped };
+
+      // Small internal steps it may take itself, each checked, logged and undoable. Off when the owner switches autonomy off.
+      const auto = await autonomyEnabled(tx)
+        ? await applyActions(tx, brief.actions, { runId: run.id })
+        : { taken: [], skipped: brief.actions.map((a) => ({ type: a?.type ?? 'unknown', why: 'automatic steps are switched off' })) };
+      return { created, skipped, auto };
     });
 
-    const stored = { ...brief, created_initiatives: written.created, skipped_duplicates: written.skipped };
+    const stored = {
+      ...brief, created_initiatives: written.created, skipped_duplicates: written.skipped,
+      actions_taken: written.auto.taken, actions_skipped: written.auto.skipped,
+    };
     await db.query(
       `UPDATE coordinator_run
           SET finished_at = now(), model = $2, input_tokens = $3, output_tokens = $4, brief = $5::jsonb
@@ -105,7 +114,7 @@ export function repairWeakestLink(w) {
 function normalise(raw) {
   const o = unstring(raw);
   if (!o || typeof o !== 'object') throw new Error('Brief was empty.');
-  for (const k of ['weakest_link', 'priorities', 'suggestions', 'proposed_initiatives', 'questions_for_owner']) o[k] = unstring(o[k]);
+  for (const k of ['weakest_link', 'priorities', 'suggestions', 'proposed_initiatives', 'questions_for_owner', 'actions']) o[k] = unstring(o[k]);
   if (typeof o.weakest_link === 'string' && o.weakest_link.trim()) o.weakest_link = { headline: o.weakest_link.trim(), why: '' };
   o.weakest_link = repairWeakestLink(o.weakest_link);
   for (const i of Array.isArray(o.proposed_initiatives) ? o.proposed_initiatives : []) {
@@ -123,6 +132,7 @@ function normalise(raw) {
       .filter((i) => i?.title && Array.isArray(i.steps) && i.steps.length)
       .map((i) => ({ ...i, risks: arr(i.risks) })),
     questions_for_owner: arr(o.questions_for_owner).slice(0, 3),
+    actions: arr(o.actions).slice(0, 6),
   };
 }
 
