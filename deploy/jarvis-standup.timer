@@ -1,0 +1,10 @@
+[Unit]
+Description=Jarvis stand-up refresh, 13:00 and 17:00 Lisbon time on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 13:00:00 Europe/Lisbon
+OnCalendar=Mon..Fri *-*-* 17:00:00 Europe/Lisbon
+Persistent=true
+
+[Install]
+WantedBy=timers.target

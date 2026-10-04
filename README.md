@@ -1,0 +1,105 @@
+# Jarvis v1: the coordinator
+
+The coordinator is the part of Jarvis that thinks. On a schedule it:
+
+1. Reads the company's state from Postgres: projects, initiatives, tasks, clients, the journal, and its own standing instructions.
+2. Sends that state to the Claude API and asks for the brief.
+3. Writes the brief back to the database:
+   - the weakest link,
+   - the one thing to do today,
+   - priorities,
+   - suggestions,
+   - plans that need your approval,
+   - questions for you.
+
+Nothing it proposes takes effect until you approve it. The database itself refuses to mark a plan as approved without your sign-off.
+
+## Two ways to run it
+
+- **Free:** GitHub Actions runs the schedule and Neon's free plan hosts the database. Follow `DEPLOY.md`, which is written so Claude Code can execute it step by step.
+- **Your own server:** systemd timers on a VPS. See "Set up on a VPS" below.
+
+Both use the same code and database schema, so you can start free and move later with `pg_dump` and `pg_restore`.
+
+## What's in here
+
+| Path | What it is |
+|---|---|
+| `db/001_core.sql` | The backbone: projects, initiatives, tasks, clients (+ touchpoints), journal, people, and the views the morning screen reads |
+| `db/002_coordinator_config.sql` | The settings that control how Jarvis thinks, plus a log of every run |
+| `seed/example.sql` | Made-up example data; the tests use it |
+| `seed/private.sql` | Your real company data and settings. **Never committed** (`.gitignore`); create it from the example |
+| `src/` | The service: `run.js` (entry), `coordinator.js`, `context.js`, `prompt.js`, `llm.js` |
+| `deploy/` | systemd timers: overnight at 05:00, plus refreshes at 13:00 and 17:00 on weekdays, all in Lisbon time |
+| `test/` | End-to-end checks against real Postgres; no API key needed |
+| `.github/workflows/` | CI (tests + privacy gate) and the scheduled coordinator runs |
+| `scripts/check-private.js` | Fails if anything about to be published contains private data or secrets |
+
+## Set up on a VPS
+
+You'll need Node 22.9 or newer and PostgreSQL 13 or newer.
+
+```bash
+# 1. Database
+sudo -u postgres createuser jarvis -P          # choose a password
+sudo -u postgres createdb jarvis -O jarvis
+
+# 2. Code
+sudo useradd --system --home /opt/jarvis jarvis
+sudo mkdir -p /opt/jarvis && sudo cp -r . /opt/jarvis && sudo chown -R jarvis: /opt/jarvis
+cd /opt/jarvis
+sudo -u jarvis npm install --omit=dev
+sudo -u jarvis cp .env.example .env && sudo -u jarvis nano .env   # DATABASE_URL + ANTHROPIC_API_KEY
+sudo chmod 600 .env
+
+# 3. Tables and starting data
+sudo -u jarvis npm run migrate
+sudo -u jarvis npm run seed
+
+# 4. First run by hand, then read the brief
+sudo -u jarvis npm run nightly
+sudo -u jarvis npm run brief
+
+# 5. Schedule it
+sudo cp deploy/*.service deploy/*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jarvis-nightly.timer jarvis-standup.timer
+systemctl list-timers 'jarvis*'               # confirm next run times
+journalctl -u jarvis-nightly -n 50            # see the output of past runs
+```
+
+## Change how Jarvis thinks
+
+The standing instructions are rows in `coordinator_config`. Editing them takes effect on the next run, with no code changes:
+
+```sql
+-- shift this month's focus
+INSERT INTO coordinator_config (key, value)
+VALUES ('focus.this_month', 'Close one paying UK client before 31 October.');
+
+-- pause an instruction without deleting it
+UPDATE coordinator_config SET enabled = false WHERE key = 'focus.markets';
+```
+
+## Cost
+
+Each run is one Claude API call. It sends your company state, a few thousand tokens at today's size, and gets back a short brief. Check current pricing at https://www.anthropic.com/pricing, and set a monthly spend limit in the Anthropic console. Every run's token usage is recorded in `coordinator_run`, so you can see the real cost. Set `JARVIS_MODEL=claude-opus-5-5` if you want deeper reasoning for strategy sessions.
+
+## Backups (do this on day one)
+
+Jarvis's database becomes the memory of the company, so back it up. On Neon, you can run `pg_dump` with your connection string from any machine. On a VPS, back up nightly:
+
+```bash
+# /etc/cron.d/jarvis-backup
+30 4 * * * postgres pg_dump jarvis | gzip > /var/backups/jarvis-$(date +\%F).sql.gz && find /var/backups -name 'jarvis-*.sql.gz' -mtime +14 -delete
+```
+
+Copy those files off the VPS as well. A backup that lives on the same machine doesn't protect you if the machine is lost.
+
+## Not built yet (next steps)
+
+- **Dashboard and iPhone app.** These read `v_latest_brief`, `v_needs_approval` and `v_client_watch`, and add the Approve button. The screens are already designed.
+- **Approve → Linear.** On approval, turn each step of the plan into a task and create it in Linear.
+- **GitHub sync.** A nightly job that fills `projects.last_activity_at` from your repositories.
+- **Voice.** Stand-ups by speech, on the phone and the Mac.
+- **Retention agent.** Its first job: a daily check of `v_client_watch` that drafts follow-up messages for your approval.

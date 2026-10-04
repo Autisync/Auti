@@ -1,0 +1,14 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# private company data: only the example seed is public
+seed/*
+!seed/example.sql
+
+# build and local junk
+node_modules/
+*.zip
+*.log
+.DS_Store

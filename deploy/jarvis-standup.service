@@ -1,0 +1,11 @@
+[Unit]
+Description=Jarvis coordinator (standup run)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jarvis
+WorkingDirectory=/opt/jarvis
+ExecStart=/usr/bin/node --env-file=/opt/jarvis/.env src/run.js standup
+TimeoutStartSec=300

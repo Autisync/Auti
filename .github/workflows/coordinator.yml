@@ -1,0 +1,62 @@
+name: Coordinator
+
+# Runs Jarvis's thinking loop. Times are UTC (GitHub has no time zones):
+#   04:17 UTC daily        = 05:17 Lisbon in summer, 04:17 in winter (overnight study)
+#   12:23 and 16:23 UTC    = early and late afternoon stand-up refreshes, weekdays
+# Odd minutes on purpose: on-the-hour schedules are the most delayed on GitHub.
+on:
+  schedule:
+    - cron: '17 4 * * *'
+    - cron: '23 12,16 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Which run
+        type: choice
+        options: [nightly, standup]
+        default: nightly
+
+# Never two runs at once; a late run waits instead of overlapping.
+concurrency:
+  group: coordinator
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: 'true'
+      JARVIS_QUIET: '1'          # logs are public: never print the brief itself
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      JARVIS_MODEL: ${{ vars.JARVIS_MODEL || 'claude-sonnet-5-5' }}
+      JARVIS_TIMEZONE: Europe/Lisbon
+    steps:
+      - name: Check secrets are set
+        run: |
+          [ -n "$DATABASE_URL" ] || { echo "::error::Secret DATABASE_URL is not set"; exit 1; }
+          [ -n "$ANTHROPIC_API_KEY" ] || { echo "::error::Secret ANTHROPIC_API_KEY is not set"; exit 1; }
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=dev
+      - name: Pick mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "17 4 * * *" ]; then
+            echo "mode=nightly" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=standup" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Apply any new migrations
+        run: node src/migrate.js
+      - name: Run coordinator
+        run: node src/run.js "${{ steps.mode.outputs.mode }}"
