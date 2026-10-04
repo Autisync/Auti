@@ -582,11 +582,25 @@ await check('a brief whose nested parts arrive as JSON strings is still accepted
   assert.equal((await runCoordinator({ db, brain: b3, mode: 'standup' })).brief.weakest_link.headline, 'Just a sentence.');
 });
 
+await check('leaked tool-call markup in the weakest link is cleaned, in new runs and on the dashboard', async () => {
+  const leaked = '<parameter name="headline">Zero clients tracked.</parameter>\n<parameter name="why">Example Client was lost to silence.';
+  const b4 = { model: 'fake', async think() { return { output: { ...answer, weakest_link: leaked }, model: 'f', usage: {} }; } };
+  const { brief } = await runCoordinator({ db, brain: b4, mode: 'standup' });
+  assert.deepEqual(brief.weakest_link, { headline: 'Zero clients tracked.', why: 'Example Client was lost to silence.' });
+  // A brief already stored with the markup is repaired when the dashboard reads it.
+  await db.query(`UPDATE coordinator_run SET brief = jsonb_set(brief, '{weakest_link}', $1::jsonb)
+                   WHERE id = (SELECT id FROM v_latest_brief)`,
+    [JSON.stringify({ headline: leaked, why: '' })]);
+  assert.equal((await web.getDashboard(db)).latest.brief.weakest_link.headline, 'Zero clients tracked.');
+});
+
 await check('voice failures are explained instead of failing silently', async () => {
   const { PAGE } = await import('../src/page.js');
   assert.match(PAGE, /service-not-allowed/);                        // iPhone refusing recognition
   assert.match(PAGE, /Microphone access is blocked/);
   assert.match(PAGE, /tap the microphone on your keyboard/);         // the fallback that always works
+  assert.match(PAGE, /Microsoft Edge could not reach its voice service/); // Edge on a Mac answers 'network'
+  assert.match(PAGE, /fn \(Globe\) key twice/);
   new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);       // the page script still parses
 });
 

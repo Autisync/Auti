@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import { agentsSummary } from './agents.js';
 import { normaliseRepo } from './github.js';
+import { repairWeakestLink } from './coordinator.js';
 
 // Two ways in, both checked against DASHBOARD_PASSWORD:
 //   - a session cookie set by the login page (what the browser and the installed app use)
@@ -43,6 +44,7 @@ export function isAuthorized(headers = {}, password = process.env.DASHBOARD_PASS
 
 export async function getDashboard(db) {
   const latest = (await db.query(`SELECT mode, finished_at, brief FROM v_latest_brief`)).rows[0] || null;
+  if (latest?.brief?.weakest_link) latest.brief.weakest_link = repairWeakestLink(latest.brief.weakest_link);
   const approvals = (await db.query(`
     SELECT i.id, i.title, i.objective, i.expected_result, i.plan, i.risks, i.created_at, p.name AS project
       FROM initiatives i LEFT JOIN projects p ON p.id = i.project_id

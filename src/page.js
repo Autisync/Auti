@@ -975,8 +975,11 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const synth = window.speechSynthesis;
 let rec = null;
 const drive = { on: false };
-let srBroken = !SR;     // set when the browser refuses speech recognition, e.g. some installed iPhone apps
+let srBroken = SR ? '' : 'missing';     // the error code once the browser refuses speech recognition, e.g. some installed iPhone apps
 const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const EDGE = /Edg\\\//.test(navigator.userAgent);
+const DICTATE = /Mac/.test(navigator.userAgent) && !/iPhone|iPad/.test(navigator.userAgent) && navigator.maxTouchPoints < 2
+  ? 'press the fn (Globe) key twice' : /Windows/.test(navigator.userAgent) ? 'press Windows + H' : 'tap the microphone on your keyboard';
 // Plain words for why voice failed, and what to do instead.
 function voiceProblem(code) {
   if (code === 'not-allowed') return 'Microphone access is blocked for Synaut. Allow the microphone for this site in your browser settings, then try again.';
@@ -984,12 +987,15 @@ function voiceProblem(code) {
   if (code === 'service-not-allowed' || code === 'unsupported' || code === 'missing') return STANDALONE
     ? 'Voice recognition is not available inside the installed app on this device. Open Synaut in Safari or Chrome for voice, or tap the microphone on your keyboard to dictate here.'
     : 'Voice recognition is turned off on this device. On iPhone, turn on Siri or Dictation in Settings, or tap the microphone on your keyboard to dictate.';
-  if (code === 'network') return 'Voice recognition needs an internet connection. Check your signal and try again.';
+  if (code === 'network' && navigator.onLine === false) return 'Voice recognition needs an internet connection. Check your signal and try again.';
+  if (code === 'network' && EDGE) return 'Microsoft Edge could not reach its voice service, which often fails in Edge. For voice, open Synaut in Chrome or Safari. To speak here instead, ' + DICTATE + ' and talk into the box.';
+  if (code === 'network') return 'The browser\u2019s voice service did not answer. Try again, or ' + DICTATE + ' and talk into the box.';
   if (code === 'audio-capture') return 'No microphone was found. Check that one is connected and not used by another app.';
   return 'Voice stopped working (' + code + '). Try again, or type instead.';
 }
 function showVoiceProblem(code) {
-  if (code === 'service-not-allowed' || code === 'unsupported') srBroken = true;
+  // These don't recover by retrying, so the mic button switches to keyboard dictation for this visit.
+  if (code === 'service-not-allowed' || code === 'unsupported' || (code === 'network' && EDGE && navigator.onLine !== false)) srBroken = code;
   const text = voiceProblem(code);
   if (drive.on) { setDrive('error', text); return; }
   msgs.append($('div', 'msg err', text)); msgs.scrollTop = msgs.scrollHeight;
@@ -1041,7 +1047,7 @@ function afterSpeak() { if (drive.on) listen(); }
 
 function listen() {
   if (busy) return;
-  if (srBroken) return showVoiceProblem(SR ? 'unsupported' : 'missing');
+  if (srBroken) return showVoiceProblem(srBroken);
   try { rec?.abort(); } catch {}
   rec = new SR();
   rec.lang = navigator.language || 'en-GB'; rec.interimResults = true; rec.continuous = false;
@@ -1081,7 +1087,7 @@ function setDrive(state, text) {
   document.getElementById('drive-heard').textContent = text || (state === 'idle' ? (agent === 'companion' ? 'Pick a mood up top, or say "unhinged mode". Say "stop" to end.' : 'Say "stop" any time to end.') : '');
 }
 function startDrive() {
-  if (srBroken) { showVoiceProblem(SR ? 'unsupported' : 'missing'); return; }
+  if (srBroken) { showVoiceProblem(srBroken); return; }
   unlockSpeech();
   drive.on = true; document.getElementById('drive').hidden = false;
   listen();

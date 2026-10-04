@@ -85,11 +85,29 @@ function unstring(x) {
   try { return JSON.parse(t); } catch { return x; }
 }
 
+// Models occasionally leak their raw tool-call markup into a field, e.g.
+// '<parameter name="headline">…</parameter><parameter name="why">…'. Recover the parts.
+export function untag(s) {
+  if (typeof s !== 'string' || !s.includes('<parameter name=')) return null;
+  const out = {};
+  for (const m of s.matchAll(/<parameter name="(\w+)">([\s\S]*?)(?=<\/parameter>|<parameter name=|$)/g)) out[m[1]] = m[2].trim();
+  return Object.keys(out).length ? out : null;
+}
+
+export function repairWeakestLink(w) {
+  if (typeof w === 'string') w = { headline: w, why: '' };
+  if (!w || typeof w !== 'object') return w;
+  const t = untag(w.headline);
+  if (!t) return w;
+  return { headline: t.headline || Object.values(t)[0], why: t.why || w.why || '' };
+}
+
 function normalise(raw) {
   const o = unstring(raw);
   if (!o || typeof o !== 'object') throw new Error('Brief was empty.');
   for (const k of ['weakest_link', 'priorities', 'suggestions', 'proposed_initiatives', 'questions_for_owner']) o[k] = unstring(o[k]);
   if (typeof o.weakest_link === 'string' && o.weakest_link.trim()) o.weakest_link = { headline: o.weakest_link.trim(), why: '' };
+  o.weakest_link = repairWeakestLink(o.weakest_link);
   for (const i of Array.isArray(o.proposed_initiatives) ? o.proposed_initiatives : []) {
     if (i && typeof i === 'object') { i.steps = unstring(i.steps); i.risks = unstring(i.risks); }
   }
