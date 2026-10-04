@@ -56,11 +56,14 @@ export async function getDashboard(db) {
            EXISTS (SELECT 1 FROM v_projects_going_cold c WHERE c.id = p.id) AS going_cold
       FROM projects p WHERE p.phase <> 'closed' ORDER BY p.name`)).rows;
   const clients = (await db.query(`
-    SELECT name, market, sector, status, last_contact_at, next_contact_due, lost_reason,
-           CASE WHEN status NOT IN ('lead', 'active') THEN NULL
-                WHEN next_contact_due IS NULL THEN 'no_next_contact'
-                WHEN next_contact_due < current_date THEN 'overdue' ELSE 'ok' END AS flag
-      FROM clients ORDER BY status, name`)).rows;
+    SELECT c.id, c.name, c.market, c.sector, c.status, c.last_contact_at, c.next_contact_due, c.lost_reason, c.notes,
+           extract(day FROM c.contact_interval)::int AS contact_every_days, pe.name AS owner,
+           CASE WHEN c.status NOT IN ('lead', 'active') THEN NULL
+                WHEN c.next_contact_due IS NULL THEN 'no_next_contact'
+                WHEN c.next_contact_due < current_date THEN 'overdue' ELSE 'ok' END AS flag,
+           COALESCE((SELECT json_agg(t ORDER BY t.happened_at DESC) FROM (
+             SELECT happened_at, channel, summary FROM client_touchpoint WHERE client_id = c.id ORDER BY happened_at DESC LIMIT 3) t), '[]') AS contacts
+      FROM clients c LEFT JOIN people pe ON pe.id = c.owner_id ORDER BY c.status, c.name`)).rows;
   const journal = (await db.query(`
     SELECT kind, author, body, acted_on, created_at FROM journal ORDER BY created_at DESC LIMIT 50`)).rows;
   const tasks = (await db.query(`
@@ -142,4 +145,67 @@ export async function addTask(db, { title, project_id, owner_id, due_date, detai
   return (await db.query(
     `INSERT INTO tasks (title, detail, project_id, owner_id, due_date) VALUES ($1, $2, $3, $4, $5) RETURNING id, title, state`,
     [title, String(detail ?? '').trim() || null, project_id || null, owner_id || null, due_date || null])).rows[0];
+}
+
+const MARKETS = ['portugal', 'uk', 'angola', 'namibia', 'other'];
+const CLIENT_STATUSES = ['lead', 'active', 'paused', 'lost'];
+const CHANNELS = ['call', 'email', 'meeting', 'whatsapp', 'other'];
+const days = (v) => {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 365) throw new Error('contact rhythm must be 1 to 365 days');
+  return n;
+};
+
+// The owner records a client or lead. A contact rhythm makes Synaut watch for the next contact.
+export async function addClient(db, { name, market, status = 'lead', sector, contact_every_days, next_contact_due, owner_id, notes } = {}) {
+  name = String(name ?? '').trim();
+  if (!name) throw new Error('name is required');
+  if (name.length > 120) throw new Error('name is too long');
+  if (!MARKETS.includes(market)) throw new Error('market must be one of ' + MARKETS.join(', '));
+  if (!CLIENT_STATUSES.includes(status || 'lead')) throw new Error('status must be one of ' + CLIENT_STATUSES.join(', '));
+  if (owner_id && !UUID.test(String(owner_id))) throw new Error('bad owner id');
+  if (next_contact_due && !DAY.test(String(next_contact_due))) throw new Error('next contact must be YYYY-MM-DD');
+  const every = days(contact_every_days);
+  return (await db.query(
+    `INSERT INTO clients (name, market, status, sector, contact_interval, next_contact_due, owner_id, notes)
+     VALUES ($1, $2::market, $3::client_status, $4, make_interval(days => $5::int), COALESCE($6::date, current_date + $5::int), $7, $8) RETURNING id, name, status`,
+    [name, market, status || 'lead', String(sector ?? '').trim() || null, every, next_contact_due || null, owner_id || null, String(notes ?? '').trim() || null])).rows[0];
+}
+
+// Log a contact with a client. The database trigger moves last_contact_at, and next_contact_due when a rhythm is set;
+// a date given here wins, so a contact always clears an overdue flag when the owner picks the next date.
+export async function logContact(db, { client_id, channel, summary, next_contact_due } = {}) {
+  if (!UUID.test(String(client_id))) throw new Error('bad client id');
+  summary = String(summary ?? '').trim();
+  if (!summary) throw new Error('summary is required');
+  if (summary.length > 2000) throw new Error('summary is too long');
+  if (channel && !CHANNELS.includes(channel)) throw new Error('channel must be one of ' + CHANNELS.join(', '));
+  if (next_contact_due && !DAY.test(String(next_contact_due))) throw new Error('next contact must be YYYY-MM-DD');
+  return db.transaction(async (tx) => {
+    const c = (await tx.query(`SELECT id FROM clients WHERE id = $1`, [client_id])).rows[0];
+    if (!c) return null;
+    await tx.query(`INSERT INTO client_touchpoint (client_id, channel, summary) VALUES ($1, $2, $3)`, [client_id, channel || null, summary]);
+    if (next_contact_due) await tx.query(`UPDATE clients SET next_contact_due = $2::date WHERE id = $1`, [client_id, next_contact_due]);
+    return (await tx.query(`SELECT id, last_contact_at, next_contact_due FROM clients WHERE id = $1`, [client_id])).rows[0];
+  });
+}
+
+// Change a client's status. Losing one asks for the reason and keeps it as a lesson in the journal,
+// because the coordinator learns from why clients were lost.
+export async function setClientStatus(db, { id, status, lost_reason } = {}) {
+  if (!UUID.test(String(id))) throw new Error('bad client id');
+  if (!CLIENT_STATUSES.includes(status)) throw new Error('status must be one of ' + CLIENT_STATUSES.join(', '));
+  lost_reason = String(lost_reason ?? '').trim();
+  if (status === 'lost' && !lost_reason) throw new Error('say why the client was lost');
+  return db.transaction(async (tx) => {
+    const c = (await tx.query(
+      `UPDATE clients SET status = $2::client_status, lost_reason = CASE WHEN $2::text = 'lost' THEN $3 ELSE lost_reason END
+        WHERE id = $1 RETURNING id, name, status`, [id, status, lost_reason || null])).rows[0];
+    if (c && status === 'lost') {
+      await tx.query(`INSERT INTO journal (kind, body, author, client_id) VALUES ('lesson', $1, 'owner', $2)`,
+        [`Lost ${c.name}: ${lost_reason}`, c.id]);
+    }
+    return c || null;
+  });
 }

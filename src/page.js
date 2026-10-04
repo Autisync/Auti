@@ -194,6 +194,10 @@ export const PAGE = `<!doctype html>
   .mini:hover { color: var(--cyan); border-color: var(--cyan-glow); }
   .mini.go { color: var(--green); border-color: rgba(77,255,158,0.35); }
   .row.finished { opacity: 0.6; }
+  .row > .form { grid-column: 1 / -1; margin-top: 8px; background: rgba(5,8,13,0.35); }
+  .contacts { grid-column: 1 / -1; list-style: none; margin: 4px 0 0; padding: 0; font-size: 14px; color: var(--muted); }
+  .contacts li { padding: 4px 0; border-top: 1px solid var(--line); }
+  .contacts .when { font: 11px/1.6 var(--mono); color: var(--dim); margin-right: 8px; }
   .row.finished .item-title { text-decoration: line-through; text-decoration-color: var(--dim); }
 
   footer { margin-top: 48px; text-align: center; font: 11px/1.6 var(--mono); color: var(--dim); letter-spacing: 0.1em; }
@@ -644,7 +648,31 @@ function viewProjects(root) {
     });
 }
 
+const MARKETS = [['uk', 'UK'], ['portugal', 'Portugal'], ['angola', 'Angola'], ['namibia', 'Namibia'], ['other', 'Other']];
+const CHANNELS = [['call', 'Call'], ['email', 'Email'], ['meeting', 'Meeting'], ['whatsapp', 'WhatsApp'], ['other', 'Other']];
+const isoDay = (d) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
+const inDays = (n) => isoDay(Date.now() + n * 864e5);
+const CLIENT_MOVES = {
+  lead: [['active', 'Won: make active']], active: [['paused', 'Pause']], paused: [['active', 'Reactivate']], lost: [['lead', 'Back to lead']],
+};
+let addingClient = false;
+let clientForm = null;   // { id, mode: 'contact' | 'lost' }
+
 function viewClients(root) {
+  const bar = rise($('div', 'toolbar'));
+  const add = $('button', 'more', addingClient ? 'Close' : '+ New client');
+  add.onclick = () => { addingClient = !addingClient; draw(); };
+  bar.append(add); root.append(bar);
+  if (addingClient) {
+    root.append(rise(formCard([
+      ['name', 'Name', 'text', null, { required: true, placeholder: 'Company or person' }],
+      ['market', 'Market', 'select', MARKETS], ['status', 'Status', 'select', [['lead', 'Lead'], ['active', 'Active'], ['paused', 'Paused']]],
+      ['sector', 'Sector', 'text', null, { placeholder: 'e.g. energy' }],
+      ['contact_every_days', 'Contact every (days)', 'number', null, { value: 14 }],
+      ['owner_id', 'Owner', 'select', [['', 'Nobody yet'], ...data.people.map((p) => [p.id, p.name])]],
+      ['notes', 'Notes', 'textarea'],
+    ], 'Add client', async (v) => { await post('/api/client', v); addingClient = false; await load(); }, () => { addingClient = false; draw(); })));
+  }
   filtered(root, 'Clients', data.clients,
     [['all', 'All'], ['attention', 'Needs contact'], ['active', 'Active & leads'], ['lost', 'Lost']],
     (c, k) => k === 'attention' ? c.flag && c.flag !== 'ok' : k === 'active' ? ['active', 'lead'].includes(c.status) : c.status === k,
@@ -656,10 +684,39 @@ function viewClients(root) {
       if (c.flag === 'no_next_contact') t.append($('span', 'tag warn', 'no next contact'));
       const meta = $('div', 'meta', 'last contact ' + ago(c.last_contact_at));
       if (c.next_contact_due) meta.append($('div', null, 'next ' + day(c.next_contact_due)));
-      el.append(t, meta, $('div', 'desc', [human(c.market), c.sector, c.lost_reason ? 'lost: ' + c.lost_reason : null].filter(Boolean).join(' · ')));
+      if (c.contact_every_days) meta.append($('div', null, 'every ' + c.contact_every_days + ' d'));
+      el.append(t, meta, $('div', 'desc', [human(c.market), c.sector, c.owner, c.lost_reason ? 'lost: ' + c.lost_reason : null].filter(Boolean).join(' · ')));
+      if (c.contacts?.length) {
+        const ul = $('ul', 'contacts');
+        c.contacts.forEach((x) => { const li = $('li'); li.append($('span', 'when', day(x.happened_at) + (x.channel ? ' · ' + x.channel : '')), document.createTextNode(x.summary)); ul.append(li); });
+        el.append(ul);
+      }
+      const acts = $('div', 'acts');
+      const open = (mode) => { clientForm = clientForm?.id === c.id && clientForm.mode === mode ? null : { id: c.id, mode }; draw(); };
+      if (c.status !== 'lost') { const b = $('button', 'mini go', 'Log contact'); b.onclick = () => open('contact'); acts.append(b); }
+      (CLIENT_MOVES[c.status] || []).forEach(([status, label]) => {
+        const b = $('button', 'mini', label);
+        b.onclick = async () => { b.disabled = true; try { await post('/api/client', { id: c.id, status }); await load(); } catch (e) { b.disabled = false; acts.append($('span', 'error', e.message)); } };
+        acts.append(b);
+      });
+      if (c.status !== 'lost') { const b = $('button', 'mini', 'Lost…'); b.onclick = () => open('lost'); acts.append(b); }
+      el.append(acts);
+      const done = async () => { clientForm = null; await load(); };
+      const cancel = () => { clientForm = null; draw(); };
+      if (clientForm?.id === c.id && clientForm.mode === 'contact') {
+        el.append(formCard([
+          ['summary', 'What happened', 'textarea', null, { required: true }],
+          ['channel', 'How', 'select', CHANNELS],
+          ['next_contact_due', 'Next contact', 'date', null, { value: inDays(c.contact_every_days || 14) }],
+        ], 'Save contact', async (v) => { await post('/api/client', { client_id: c.id, ...v }); await done(); }, cancel));
+      }
+      if (clientForm?.id === c.id && clientForm.mode === 'lost') {
+        el.append(formCard([['lost_reason', 'Why was it lost?', 'textarea', null, { required: true }]],
+          'Mark lost', async (v) => { await post('/api/client', { id: c.id, status: 'lost', ...v }); await done(); }, cancel));
+      }
       return el;
     });
-  if (!data.clients.length) root.append(emptyCard('No clients recorded yet. Synaut needs them to watch retention.'));
+  if (!data.clients.length) root.append(emptyCard('No clients recorded yet. Add them so Synaut can watch retention.'));
 }
 
 function viewAgents(root) {

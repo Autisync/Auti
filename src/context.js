@@ -6,7 +6,7 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
 
   const [
     config, projects, goingCold, initiatives, needsApproval,
-    overdue, openTasksByProject, clientWatch, clients, journal, recentSuggestions,
+    overdue, openTasksByProject, clientWatch, clients, journal, recentSuggestions, recentContacts,
   ] = await Promise.all([
     q(`SELECT key, value FROM coordinator_config WHERE enabled ORDER BY key`),
     q(`SELECT name, description, markets::text[] AS markets, phase, github_repo,
@@ -32,6 +32,10 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
         WHERE kind = 'suggestion' AND author = 'coordinator'
           AND created_at > now() - interval '21 days'
         ORDER BY created_at DESC`),
+    q(`SELECT c.name AS client, t.happened_at, t.channel, t.summary
+         FROM client_touchpoint t JOIN clients c ON c.id = t.client_id
+        WHERE t.happened_at > now() - interval '30 days'
+        ORDER BY t.happened_at DESC LIMIT 30`),
   ]);
 
   const today = new Intl.DateTimeFormat('en-GB', {
@@ -51,5 +55,6 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     clients,
     journal: journal.reverse(),          // oldest first reads more naturally
     recentSuggestions,
+    recentContacts,                      // logged client touchpoints, last 30 days
   };
 }
