@@ -76,11 +76,15 @@ export async function getDashboard(db) {
      WHERE t.state NOT IN ('done', 'cancelled') OR t.completed_at > now() - interval '7 days'
      ORDER BY (t.state IN ('done', 'cancelled')), t.due_date NULLS LAST, t.created_at`)).rows;
   const people = (await db.query(`SELECT id, name FROM people ORDER BY is_partner DESC, name`)).rows;
+  // Tolerates the follow_up table not existing yet: Vercel can deploy before the next run applies migration 004.
   const followUps = (await db.query(`
     SELECT f.id, f.channel, f.subject, f.body, f.rationale, f.created_at, c.id AS client_id, c.name AS client, c.market,
            extract(day FROM c.contact_interval)::int AS contact_every_days
       FROM follow_up f JOIN clients c ON c.id = f.client_id
-     WHERE f.status = 'awaiting_approval' ORDER BY f.created_at`)).rows;
+     WHERE f.status = 'awaiting_approval' ORDER BY f.created_at`).catch((err) => {
+      if (err.code === '42P01') return { rows: [] };
+      throw err;
+    })).rows;
   const agents = await agentsSummary(db);
   return { latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps };
 }

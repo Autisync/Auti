@@ -377,6 +377,15 @@ await check('the retention agent drafts follow-ups for clients due, and only the
   assert.deepEqual(await runRetention({ db, brain: silent }), { considered: 0, drafted: 0 });
 });
 
+await check('the dashboard still loads before migration 004 has been applied', async () => {
+  const old = new PGlite();
+  await old.exec((await import('node:fs')).readFileSync(new URL('../db/001_core.sql', import.meta.url), 'utf8'));
+  await old.exec((await import('node:fs')).readFileSync(new URL('../db/002_coordinator_config.sql', import.meta.url), 'utf8'));
+  await old.exec((await import('node:fs')).readFileSync(new URL('../db/003_agent_usage.sql', import.meta.url), 'utf8'));
+  const d = await web.getDashboard(old);
+  assert.deepEqual(d.followUps, []);
+});
+
 await check('dropping a plan takes it off the dashboard without approving it', async () => {
   const id = (await db.query(`INSERT INTO initiatives (title, status, created_by_agent) VALUES ('Side quest', 'awaiting_approval', 'coordinator') RETURNING id`)).rows[0].id;
   assert.deepEqual(await web.decide(db, id, 'drop'), { id, status: 'dropped', tasks: 0 });
