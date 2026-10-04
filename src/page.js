@@ -174,6 +174,8 @@ export const PAGE = `<!doctype html>
   /* journal */
   .entry { display: grid; grid-template-columns: 92px 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
   .entry:first-child { border-top: 0; padding-top: 0; }
+  .card.entry, .card.entry:first-child { border-top: 1px solid var(--line); padding: 14px 18px; }
+  .entry .body { white-space: pre-wrap; }
   .entry .when { font: 12px/1.6 var(--mono); color: var(--dim); }
   .entry .who { font: 600 11px/1.6 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 
@@ -749,18 +751,42 @@ function viewAgents(root) {
   })));
 }
 
+const JOURNAL_KINDS = [['standup', 'Stand-up'], ['decision', 'Decision'], ['lesson', 'Lesson']];
+let dictation = null;
+
+// Dictate into a textarea with the browser's speech recognition; tap again to stop.
+function micButton(target) {
+  const b = $('button', 'act', '🎙 Dictate'); b.type = 'button';
+  if (!SR) { b.disabled = true; b.title = 'This browser has no speech recognition. Try Chrome or Safari.'; return b; }
+  b.onclick = () => {
+    if (dictation) { dictation.stop(); return; }
+    const before = target.value ? target.value.replace(/\\s*$/, ' ') : '';
+    const r = new SR(); r.lang = navigator.language || 'en-GB'; r.interimResults = true; r.continuous = true;
+    r.onresult = (e) => { let said = ''; for (const x of e.results) said += x[0].transcript; target.value = before + said.trim(); };
+    r.onend = () => { dictation = null; b.textContent = '🎙 Dictate'; b.classList.remove('confirm'); };
+    r.onerror = (e) => { if (e.error === 'not-allowed') b.title = 'Microphone access was blocked.'; };
+    dictation = r; b.textContent = '■ Stop'; b.classList.add('confirm'); r.start();
+  };
+  return b;
+}
+
 function viewJournal(root) {
-  if (!data.journal.length) return root.append(section('Journal', emptyCard('The journal is empty.')));
-  const c = $('div', 'card');
-  data.journal.forEach((j) => {
-    const e = $('div', 'entry');
+  const f = formCard([
+    ['kind', 'Type', 'select', JOURNAL_KINDS], ['project_id', 'Project', 'select', [['', 'Whole company'], ...data.projects.map((p) => [p.id, p.name])]],
+    ['body', 'What happened, what is next, what is in the way?', 'textarea', null, { required: true, placeholder: 'Type, or tap Dictate and talk.' }],
+  ], 'Save to journal', async (v) => { dictation?.stop(); await post('/api/journal', v); f.reset(); await load(); });
+  f.querySelector('.actions .act').after(micButton(f.elements.body));
+  root.append(section('Stand-up', f));
+  const chips = [['all', 'All'], ['standup', 'Stand-ups'], ['decision', 'Decisions'], ['suggestion', 'Suggestions'], ['lesson', 'Lessons']];
+  filtered(root, 'Journal', data.journal, chips, (j, k) => j.kind === k, (j) => {
+    const e = $('div', 'card entry');
     const left = $('div'); left.append($('div', 'when', when(j.created_at)));
-    const right = $('div'); const who = $('div', 'who', j.kind + ' · ' + j.author);
+    const right = $('div'); const who = $('div', 'who', human(j.kind) + ' · ' + j.author);
+    if (j.project) who.append($('span', 'tag', j.project));
     if (j.acted_on === true) who.append($('span', 'tag ok', 'acted on'));
     if (j.acted_on === false) who.append($('span', 'tag warn', 'not acted on'));
-    right.append(who, $('div', null, j.body)); e.append(left, right); c.append(e);
+    right.append(who, $('div', 'body', j.body)); e.append(left, right); return e;
   });
-  root.append(section('Journal', c));
 }
 
 const VIEWS = { overview: viewOverview, approvals: viewApprovals, tasks: viewTasks, projects: viewProjects, clients: viewClients, agents: viewAgents, journal: viewJournal };

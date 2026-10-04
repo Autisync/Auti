@@ -100,7 +100,6 @@ Copy those files off the VPS as well. A backup that lives on the same machine do
 
 - **Linear mirror.** Approved plans already become tasks on the Tasks tab; mirror them to Linear too.
 - **GitHub sync.** A nightly job that fills `projects.last_activity_at` from your repositories.
-- **Voice.** Stand-ups by speech, on the phone and the Mac.
 - **Retention agent.** Its first job: a daily check of `v_client_watch` that drafts follow-up messages for your approval.
 
 ## The web app (Vercel)
@@ -112,5 +111,6 @@ Set `DATABASE_URL`, `DASHBOARD_PASSWORD` and `ANTHROPIC_API_KEY` in the Vercel p
 - Install it: on iPhone, Safari → Share → Add to Home Screen. On Android or desktop Chrome/Edge, use Install in the address bar or menu.
 - Tasks tab: approved plans arrive as one task per step. Start, finish, block or reopen them, or add your own. Finishing a plan's last task marks the plan done.
 - Clients tab: add clients and leads with a contact rhythm, log each call, email or meeting, and pick the next contact date. Marking a client lost asks why and saves the reason as a lesson in the journal. The coordinator sees the last 30 days of logged contacts.
+- Journal tab: log a stand-up, decision or lesson by typing or dictating (Chrome and Safari). The next coordinator run reads it.
 - Chat stores only token counts (`agent_usage`), never what was said.
 - Icons are drawn by `python3 scripts/make-icons.py`.
