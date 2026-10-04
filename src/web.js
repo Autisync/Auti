@@ -1,6 +1,7 @@
 // The web dashboard's logic: who may see it, what it shows, and the owner's approve/drop.
 // The Vercel functions in api/ are thin wrappers around these, so the tests can drive them with PGlite.
 import crypto from 'node:crypto';
+import { agentsSummary } from './agents.js';
 
 // HTTP Basic auth against DASHBOARD_PASSWORD. Any username; the password is what counts.
 export function isAuthorized(header, password = process.env.DASHBOARD_PASSWORD) {
@@ -24,7 +25,21 @@ export async function getDashboard(db) {
   const lastRun = (await db.query(`
     SELECT mode, started_at, finished_at, error IS NOT NULL AS failed
       FROM coordinator_run ORDER BY started_at DESC LIMIT 1`)).rows[0] || null;
-  return { latest, approvals, lastRun };
+  const projects = (await db.query(`
+    SELECT p.name, p.description, p.phase, p.markets::text[] AS markets, p.last_activity_at, p.target_date,
+           (SELECT count(*)::int FROM tasks t WHERE t.project_id = p.id AND t.state NOT IN ('done', 'cancelled')) AS open_tasks,
+           EXISTS (SELECT 1 FROM v_projects_going_cold c WHERE c.id = p.id) AS going_cold
+      FROM projects p WHERE p.phase <> 'closed' ORDER BY p.name`)).rows;
+  const clients = (await db.query(`
+    SELECT name, market, sector, status, last_contact_at, next_contact_due, lost_reason,
+           CASE WHEN status NOT IN ('lead', 'active') THEN NULL
+                WHEN next_contact_due IS NULL THEN 'no_next_contact'
+                WHEN next_contact_due < current_date THEN 'overdue' ELSE 'ok' END AS flag
+      FROM clients ORDER BY status, name`)).rows;
+  const journal = (await db.query(`
+    SELECT kind, author, body, acted_on, created_at FROM journal ORDER BY created_at DESC LIMIT 50`)).rows;
+  const agents = await agentsSummary(db);
+  return { latest, approvals, lastRun, projects, clients, journal, agents };
 }
 
 // The owner's decision on one plan. Only plans still awaiting approval can change.
