@@ -2,6 +2,7 @@
 // The Vercel functions in api/ are thin wrappers around these, so the tests can drive them with PGlite.
 import crypto from 'node:crypto';
 import { agentsSummary } from './agents.js';
+import { normaliseRepo } from './github.js';
 
 // Two ways in, both checked against DASHBOARD_PASSWORD:
 //   - a session cookie set by the login page (what the browser and the installed app use)
@@ -51,7 +52,7 @@ export async function getDashboard(db) {
     SELECT mode, started_at, finished_at, error IS NOT NULL AS failed
       FROM coordinator_run ORDER BY started_at DESC LIMIT 1`)).rows[0] || null;
   const projects = (await db.query(`
-    SELECT p.id, p.name, p.description, p.phase, p.markets::text[] AS markets, p.last_activity_at, p.target_date,
+    SELECT p.id, p.name, p.description, p.phase, p.github_repo, p.markets::text[] AS markets, p.last_activity_at, p.target_date,
            (SELECT count(*)::int FROM tasks t WHERE t.project_id = p.id AND t.state NOT IN ('done', 'cancelled')) AS open_tasks,
            EXISTS (SELECT 1 FROM v_projects_going_cold c WHERE c.id = p.id) AS going_cold
       FROM projects p WHERE p.phase <> 'closed' ORDER BY p.name`)).rows;
@@ -224,4 +225,14 @@ export async function addJournal(db, { kind = 'standup', body, project_id } = {}
   return (await db.query(
     `INSERT INTO journal (kind, body, author, project_id) VALUES ($1::journal_kind, $2, 'owner', $3) RETURNING id, kind, created_at`,
     [kind, body, project_id || null])).rows[0];
+}
+
+// Link a project to its GitHub repository ("owner/repo" or a github.com URL); blank unlinks it.
+// The next coordinator run reads the repository's latest push into last_activity_at.
+export async function setProjectRepo(db, { id, github_repo } = {}) {
+  if (!UUID.test(String(id))) throw new Error('bad project id');
+  const blank = !String(github_repo ?? '').trim();
+  const repo = blank ? null : normaliseRepo(github_repo);
+  if (!blank && !repo) throw new Error('repository must look like owner/repo');
+  return (await db.query(`UPDATE projects SET github_repo = $2 WHERE id = $1 RETURNING id, github_repo`, [id, repo])).rows[0] || null;
 }

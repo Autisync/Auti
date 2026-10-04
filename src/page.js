@@ -195,6 +195,7 @@ export const PAGE = `<!doctype html>
   .mini { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
   .mini:hover { color: var(--cyan); border-color: var(--cyan-glow); }
   .mini.go { color: var(--green); border-color: rgba(77,255,158,0.35); }
+  .mini.repo { text-transform: none; letter-spacing: 0; }
   .row.finished { opacity: 0.6; }
   .row > .form { grid-column: 1 / -1; margin-top: 8px; background: rgba(5,8,13,0.35); }
   .contacts { grid-column: 1 / -1; list-style: none; margin: 4px 0 0; padding: 0; font-size: 14px; color: var(--muted); }
@@ -632,6 +633,7 @@ function viewTasks(root) {
     }, 'open');
 }
 
+let repoForm = null;
 function viewProjects(root) {
   filtered(root, 'Projects', data.projects,
     [['all', 'All'], ['cold', 'Going cold'], ['not_briefed', 'Not briefed'], ['active', 'Moving']],
@@ -646,6 +648,15 @@ function viewProjects(root) {
       if (p.target_date) meta.append($('div', null, 'due ' + day(p.target_date)));
       c.append(t, meta);
       c.append($('div', 'desc', [p.description || 'No brief yet.', p.markets?.length ? p.markets.join(', ') : null].filter(Boolean).join(' · ')));
+      const acts = $('div', 'acts');
+      const link = $('button', 'mini' + (p.github_repo ? ' repo' : ''), p.github_repo ? '⎇ ' + p.github_repo : 'Link GitHub repo');
+      link.title = p.github_repo ? 'Change the linked repository' : 'Synaut reads its latest push to tell if the project is moving';
+      link.onclick = () => { repoForm = repoForm === p.id ? null : p.id; draw(); };
+      acts.append(link); c.append(acts);
+      if (repoForm === p.id) {
+        c.append(formCard([['github_repo', 'Repository', 'text', null, { value: p.github_repo || '', placeholder: 'owner/repo or a github.com link', wide: true }]],
+          'Save', async (v) => { await post('/api/project', { id: p.id, ...v }); repoForm = null; await load(); }, () => { repoForm = null; draw(); }));
+      }
       return c;
     });
 }
