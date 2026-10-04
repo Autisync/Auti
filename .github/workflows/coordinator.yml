@@ -63,3 +63,7 @@ jobs:
         run: node src/migrate.js
       - name: Run coordinator
         run: node src/run.js "${{ steps.mode.outputs.mode }}"
+      # Then draft follow-ups for clients due for contact. No call to Claude when nobody is due,
+      # and at most one draft waits per client. Drafts wait on the owner; nothing is ever sent from here.
+      - name: Retention agent
+        run: node src/run.js retention

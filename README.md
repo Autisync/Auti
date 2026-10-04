@@ -99,7 +99,6 @@ Copy those files off the VPS as well. A backup that lives on the same machine do
 ## Not built yet (next steps)
 
 - **Linear mirror.** Approved plans already become tasks on the Tasks tab; mirror them to Linear too.
-- **Retention agent.** Its first job: a daily check of `v_client_watch` that drafts follow-up messages for your approval.
 
 ## The web app (Vercel)
 
@@ -112,5 +111,6 @@ Set `DATABASE_URL`, `DASHBOARD_PASSWORD` and `ANTHROPIC_API_KEY` in the Vercel p
 - Clients tab: add clients and leads with a contact rhythm, log each call, email or meeting, and pick the next contact date. Marking a client lost asks why and saves the reason as a lesson in the journal. The coordinator sees the last 30 days of logged contacts.
 - Journal tab: log a stand-up, decision or lesson by typing or dictating (Chrome and Safari). The next coordinator run reads it.
 - Projects tab: link each project to its GitHub repository. Before every coordinator run, Synaut reads each repo's latest push into `last_activity_at`, so "going cold" reflects real work. The workflow's built-in token reads this repo and public ones; add a read-only `SYNAUT_GITHUB_TOKEN` secret for your other private repos.
+- Retention agent: after every coordinator run it drafts one follow-up (email, WhatsApp or call notes) per client due or overdue for contact, in Portuguese for Portugal and Angola. Drafts wait on the Approvals tab. Synaut never sends anything: you edit, send it yourself, then tap Mark sent, which logs the contact and sets the next date. No Claude call happens when nobody is due.
 - Chat stores only token counts (`agent_usage`), never what was said.
 - Icons are drawn by `python3 scripts/make-icons.py`.

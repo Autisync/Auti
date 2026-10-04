@@ -17,7 +17,7 @@ await migrate(db, () => {});
 await check('migrations apply and are idempotent', async () => {
   await migrate(db, () => {});
   const n = (await db.query(`SELECT count(*)::int AS n FROM schema_migrations`)).rows[0].n;
-  assert.equal(n, 3);
+  assert.equal(n, 4);
 });
 
 await check('seed loads once', async () => {
@@ -332,6 +332,60 @@ await check('GitHub sync moves project activity forward from each linked repo', 
   await web.setProjectRepo(db, { id: a.id, github_repo: '' });
 });
 
+await check('the retention agent drafts follow-ups for clients due, and only the owner marks them sent', async () => {
+  const { runRetention, FOLLOW_UP_TOOL } = await import('../src/retention.js');
+  const a = await web.addClient(db, { name: 'Overdue Oil', market: 'angola', status: 'active', contact_every_days: '14' });
+  await web.logContact(db, { client_id: a.id, channel: 'email', summary: 'Sent the Q3 proposal.' });
+  await db.query(`UPDATE clients SET next_contact_due = current_date - 2 WHERE id = $1`, [a.id]);
+  const seenBy = [];
+  const brain = { async think(args) {
+    seenBy.push(args);
+    return { model: 'claude-sonnet-5', usage: { input: 900, output: 120 }, output: { drafts: [
+      { client: 'overdue oil', channel: 'email', subject: 'Proposta Q3', message: 'Olá, ...', why: 'Two days overdue after the Q3 proposal.' },
+      { client: 'Overdue Oil', channel: 'email', subject: 'dup', message: 'second draft for the same client', why: 'x' },
+      { client: 'Made Up Ltd', channel: 'call', subject: 'x', message: 'not on the list', why: 'x' },
+    ] } };
+  } };
+  const out = await runRetention({ db, brain, now: new Date('2026-10-04T04:00:00Z') });
+  assert.equal(out.drafted, 1);
+  assert.equal(seenBy[0].tool.name, FOLLOW_UP_TOOL.name);
+  assert.match(seenBy[0].user, /Sent the Q3 proposal/);              // it sees the last contact
+  assert.match(seenBy[0].user, /Chose a cheaper studio/);            // and the lessons from lost clients
+  assert.doesNotMatch(seenBy[0].user, /Example Client/);             // lost clients are not chased
+  const d = await web.getDashboard(db);
+  const draft = d.followUps.find((f) => f.client === 'Overdue Oil');
+  assert.equal(draft.subject, 'Proposta Q3');
+  assert.equal(d.followUps.filter((f) => f.client === 'Overdue Oil').length, 1);
+  assert.equal(d.agents.find((x) => x.id === 'retention').usage.day.calls, 1);
+
+  // A second run does not pile up another draft for the same client.
+  await runRetention({ db, brain, now: new Date() });
+  assert.equal((await db.query(`SELECT count(*)::int AS n FROM follow_up WHERE client_id = $1`, [a.id])).rows[0].n, 1);
+
+  await assert.rejects(web.decideFollowUp(db, { id: draft.id, decision: 'send-it-yourself' }), /decision must be/);
+  assert.deepEqual(await web.decideFollowUp(db, { id: draft.id, decision: 'sent', body: 'Olá, edited.', next_contact_due: '2099-01-01' }),
+    { id: draft.id, status: 'sent' });
+  assert.equal(await web.decideFollowUp(db, { id: draft.id, decision: 'drop' }), null);   // already decided
+  const c = (await web.getDashboard(db)).clients.find((x) => x.id === a.id);
+  assert.equal(c.flag, 'ok');
+  assert.match(c.contacts[0].summary, /^Sent follow-up "Proposta Q3": Olá, edited\./);
+  await assert.rejects(db.query(`UPDATE follow_up SET status = 'sent', decided_at = NULL`));   // a decision is always dated
+
+  // Nobody due: no call to Claude at all.
+  const silent = { async think() { throw new Error('should not be called'); } };
+  await db.query(`UPDATE clients SET next_contact_due = current_date + 30 WHERE status IN ('lead', 'active')`);
+  assert.deepEqual(await runRetention({ db, brain: silent }), { considered: 0, drafted: 0 });
+});
+
+await check('the dashboard still loads before migration 004 has been applied', async () => {
+  const old = new PGlite();
+  await old.exec((await import('node:fs')).readFileSync(new URL('../db/001_core.sql', import.meta.url), 'utf8'));
+  await old.exec((await import('node:fs')).readFileSync(new URL('../db/002_coordinator_config.sql', import.meta.url), 'utf8'));
+  await old.exec((await import('node:fs')).readFileSync(new URL('../db/003_agent_usage.sql', import.meta.url), 'utf8'));
+  const d = await web.getDashboard(old);
+  assert.deepEqual(d.followUps, []);
+});
+
 await check('dropping a plan takes it off the dashboard without approving it', async () => {
   const id = (await db.query(`INSERT INTO initiatives (title, status, created_by_agent) VALUES ('Side quest', 'awaiting_approval', 'coordinator') RETURNING id`)).rows[0].id;
   assert.deepEqual(await web.decide(db, id, 'drop'), { id, status: 'dropped', tasks: 0 });
@@ -366,11 +420,11 @@ await check('the dashboard tabs get projects, clients, the journal and every age
   assert.ok(d.projects.every((p) => typeof p.going_cold === 'boolean' && Number.isInteger(p.open_tasks)));
   assert.ok(d.clients.some((c) => c.name === 'Example Client'));
   assert.ok(d.journal.length > 0);
-  assert.deepEqual(d.agents.map((a) => a.id), ['coordinator', 'assistant', 'companion']);
+  assert.deepEqual(d.agents.map((a) => a.id), ['coordinator', 'retention', 'assistant', 'companion']);
   const coord = d.agents[0];
   assert.ok(coord.usage.month.calls >= 1);
   assert.ok(coord.usage.month.input >= 1200);               // the run the real-client test recorded
-  assert.equal(d.agents[2].status, 'not used yet');
+  assert.equal(d.agents.find((a) => a.id === 'assistant').status, 'not used yet');
 });
 
 const chatMod = await import('../src/chat.js');

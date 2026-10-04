@@ -1,16 +1,17 @@
-// Entry point for the scheduler:  node src/run.js nightly|standup
+// Entry point for the scheduler:  node src/run.js nightly|standup|retention
 // In CI (GitHub Actions) logs can be public, so the brief's content is never
 // printed there; only counts. Read the brief with `npm run brief` instead.
 import { connect } from './db.js';
 import { claudeBrain } from './llm.js';
 import { runCoordinator } from './coordinator.js';
 import { syncGithub } from './github.js';
+import { runRetention } from './retention.js';
 
 const mode = process.argv[2] || 'nightly';
 const quiet = process.env.CI === 'true' || process.env.JARVIS_QUIET === '1';
 const db = connect();
 
-try {
+async function coordinator() {
   // Fresh project activity first. Only counts are printed: repository names can be private.
   try {
     const gh = await syncGithub(db);
@@ -35,6 +36,16 @@ try {
       console.log(`Awaiting your approval: ${brief.created_initiatives.map((i) => i.title).join('; ')}`);
     }
   }
+}
+
+async function retention() {
+  // Drafts only; the owner sends. Counts only, never client names.
+  const out = await runRetention({ db, brain: claudeBrain() });
+  console.log(`[${new Date().toISOString()}] retention done. clients_due=${out.considered} drafts=${out.drafted}`);
+}
+
+try {
+  await (mode === 'retention' ? retention() : coordinator());
 } catch (err) {
   console.error(`[${new Date().toISOString()}] ${mode} run failed: ${err.message}`);
   process.exitCode = 1;
