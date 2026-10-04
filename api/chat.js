@@ -2,6 +2,9 @@
 import { guard, getDb } from './_shared.js';
 import { chat, chatBrain } from '../src/chat.js';
 
+// Replies that search the web can take a while.
+export const config = { maxDuration: 60 };
+
 let brain;
 
 export default async function handler(req, res) {
