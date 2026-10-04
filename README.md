@@ -1,6 +1,6 @@
-# Jarvis v1: the coordinator
+# Synaut v1: the coordinator
 
-The coordinator is the part of Jarvis that thinks. On a schedule it:
+The coordinator is the part of Synaut that thinks. On a schedule it:
 
 1. Reads the company's state from Postgres: projects, initiatives, tasks, clients, the journal, and its own standing instructions.
 2. Sends that state to the Claude API and asks for the brief.
@@ -26,7 +26,7 @@ Both use the same code and database schema, so you can start free and move later
 | Path | What it is |
 |---|---|
 | `db/001_core.sql` | The backbone: projects, initiatives, tasks, clients (+ touchpoints), journal, people, and the views the morning screen reads |
-| `db/002_coordinator_config.sql` | The settings that control how Jarvis thinks, plus a log of every run |
+| `db/002_coordinator_config.sql` | The settings that control how Synaut thinks, plus a log of every run |
 | `seed/example.sql` | Made-up example data; the tests use it |
 | `seed/private.sql` | Your real company data and settings. **Never committed** (`.gitignore`); create it from the example |
 | `src/` | The service: `run.js` (entry), `coordinator.js`, `context.js`, `prompt.js`, `llm.js` |
@@ -68,7 +68,7 @@ systemctl list-timers 'jarvis*'               # confirm next run times
 journalctl -u jarvis-nightly -n 50            # see the output of past runs
 ```
 
-## Change how Jarvis thinks
+## Change how Synaut thinks
 
 The standing instructions are rows in `coordinator_config`. Editing them takes effect on the next run, with no code changes:
 
@@ -87,7 +87,7 @@ Each run is one Claude API call. It sends your company state, a few thousand tok
 
 ## Backups (do this on day one)
 
-Jarvis's database becomes the memory of the company, so back it up. On Neon, you can run `pg_dump` with your connection string from any machine. On a VPS, back up nightly:
+Synaut's database becomes the memory of the company, so back it up. On Neon, you can run `pg_dump` with your connection string from any machine. On a VPS, back up nightly:
 
 ```bash
 # /etc/cron.d/jarvis-backup
@@ -103,3 +103,13 @@ Copy those files off the VPS as well. A backup that lives on the same machine do
 - **GitHub sync.** A nightly job that fills `projects.last_activity_at` from your repositories.
 - **Voice.** Stand-ups by speech, on the phone and the Mac.
 - **Retention agent.** Its first job: a daily check of `v_client_watch` that drafts follow-up messages for your approval.
+
+## The web app (Vercel)
+
+`api/` holds the Vercel functions and `public/` the installable-app files (manifest, icons, service worker).
+Set `DATABASE_URL`, `DASHBOARD_PASSWORD` and `ANTHROPIC_API_KEY` in the Vercel project. Optional: `JARVIS_CHAT_MODEL` (default `claude-sonnet-5-5`).
+
+- Sign in once with `DASHBOARD_PASSWORD`; the session lasts 30 days. Changing the password signs everyone out.
+- Install it: on iPhone, Safari → Share → Add to Home Screen. On Android or desktop Chrome/Edge, use Install in the address bar or menu.
+- Chat stores only token counts (`agent_usage`), never what was said.
+- Icons are drawn by `python3 scripts/make-icons.py`.

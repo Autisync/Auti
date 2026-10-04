@@ -1,5 +1,5 @@
 [Unit]
-Description=Jarvis overnight study, 05:00 Lisbon time
+Description=Synaut overnight study, 05:00 Lisbon time
 
 [Timer]
 OnCalendar=*-*-* 05:00:00 Europe/Lisbon

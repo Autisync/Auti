@@ -3,16 +3,41 @@
 import crypto from 'node:crypto';
 import { agentsSummary } from './agents.js';
 
-// HTTP Basic auth against DASHBOARD_PASSWORD. Any username; the password is what counts.
-export function isAuthorized(header, password = process.env.DASHBOARD_PASSWORD) {
+// Two ways in, both checked against DASHBOARD_PASSWORD:
+//   - a session cookie set by the login page (what the browser and the installed app use)
+//   - HTTP Basic auth, any username (handy for scripts)
+const SESSION_DAYS = 30;
+const same = (a, b) => {
+  const x = crypto.createHash('sha256').update(String(a)).digest();
+  const y = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(x, y);
+};
+const sign = (exp, password) => crypto.createHmac('sha256', `synaut-session:${password}`).update(String(exp)).digest('base64url');
+
+export function checkPassword(given, password = process.env.DASHBOARD_PASSWORD) {
+  return Boolean(password) && typeof given === 'string' && same(given, password);
+}
+
+// Changing DASHBOARD_PASSWORD signs everyone out, because the signature depends on it.
+export function sessionCookie(password = process.env.DASHBOARD_PASSWORD, now = Date.now()) {
+  const exp = now + SESSION_DAYS * 864e5;
+  return `synaut_session=${exp}.${sign(exp, password)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`;
+}
+export const LOGOUT_COOKIE = 'synaut_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
+
+function validSession(cookieHeader, password, now) {
+  const m = /(?:^|;\s*)synaut_session=(\d+)\.([\w-]+)/.exec(cookieHeader || '');
+  if (!m || Number(m[1]) < now) return false;
+  return same(m[2], sign(m[1], password));
+}
+
+export function isAuthorized(headers = {}, password = process.env.DASHBOARD_PASSWORD, now = Date.now()) {
   if (!password) return false;                       // no password set = nobody gets in
-  const m = /^Basic\s+(.+)$/i.exec(header || '');
+  if (validSession(headers.cookie, password, now)) return true;
+  const m = /^Basic\s+(.+)$/i.exec(headers.authorization || '');
   if (!m) return false;
   const decoded = Buffer.from(m[1], 'base64').toString('utf8');
-  const given = decoded.slice(decoded.indexOf(':') + 1);
-  const a = crypto.createHash('sha256').update(given).digest();
-  const b = crypto.createHash('sha256').update(password).digest();
-  return crypto.timingSafeEqual(a, b);
+  return same(decoded.slice(decoded.indexOf(':') + 1), password);
 }
 
 export async function getDashboard(db) {

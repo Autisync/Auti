@@ -2,7 +2,7 @@
   "name": "jarvis-coordinator",
   "version": "0.1.0",
   "private": true,
-  "description": "Jarvis v1 coordinator: reads a company's state from Postgres, thinks with the Claude API, writes the morning brief back.",
+  "description": "Synaut v1 coordinator: reads a company's state from Postgres, thinks with the Claude API, writes the morning brief back.",
   "type": "module",
   "engines": { "node": ">=22.9" },
   "scripts": {

@@ -41,7 +41,7 @@ const answer = {
     objective: 'No client without a planned next contact.',
     expected_result: 'All clients have a next contact date within 30 days.',
     steps: [{ action: 'List every client', owner: 'Sam' }, { action: 'Agree intervals', owner: 'All partners', due: '2026-10-10' }],
-    risks: [{ risk: 'Logging happens outside Jarvis', mitigation: 'Log by voice in stand-up' }],
+    risks: [{ risk: 'Logging happens outside Synaut', mitigation: 'Log by voice in stand-up' }],
   }],
   questions_for_owner: ['What is Project B?'],
 };
@@ -74,7 +74,7 @@ await check('proposed initiative is stored, linked to its project, and waits for
   assert.deepEqual(view, [{ title: 'Client contact rhythm', step_count: 2 }]);
 });
 
-await check('Jarvis cannot approve its own plan', async () => {
+await check('Synaut cannot approve its own plan', async () => {
   await assert.rejects(db.query(`UPDATE initiatives SET status = 'approved'`));
 });
 
@@ -117,7 +117,7 @@ await check('a failed run is recorded and changes nothing', async () => {
   assert.equal(latest, 'standup');                 // dashboard still shows the last good brief
 });
 
-await check('editing the config changes how Jarvis is instructed', async () => {
+await check('editing the config changes how Synaut is instructed', async () => {
   await db.query(`UPDATE coordinator_config SET enabled = false WHERE key = 'focus.markets'`);
   await db.query(`INSERT INTO coordinator_config (key, value) VALUES ('focus.this_month', 'Close one UK client.')`);
   await runCoordinator({ db, brain });
@@ -153,18 +153,41 @@ await check('the real Claude client sends a forced tool call and parses the answ
 const web = await import('../src/web.js');
 
 await check('the dashboard is locked without the right password', async () => {
-  const basic = (pw) => 'Basic ' + Buffer.from(`owner:${pw}`).toString('base64');
-  assert.equal(web.isAuthorized(basic('right horse'), 'right horse'), true);
-  assert.equal(web.isAuthorized(basic('wrong'), 'right horse'), false);
-  assert.equal(web.isAuthorized(undefined, 'right horse'), false);
-  assert.equal(web.isAuthorized(basic(''), ''), false);          // no password configured = closed
+  const pw = 'right horse';
+  const basic = (p) => ({ authorization: 'Basic ' + Buffer.from(`owner:${p}`).toString('base64') });
+  assert.equal(web.isAuthorized(basic(pw), pw), true);
+  assert.equal(web.isAuthorized(basic('wrong'), pw), false);
+  assert.equal(web.isAuthorized({}, pw), false);
+  assert.equal(web.isAuthorized(basic(''), ''), false);            // no password configured = closed
+  assert.equal(web.checkPassword(pw, pw), true);
+  assert.equal(web.checkPassword('nope', pw), false);
+  assert.equal(web.checkPassword(undefined, pw), false);
+
+  // The sign-in cookie works, expires, and dies when the password changes.
+  const now = Date.parse('2026-10-04T00:00:00Z');
+  const set = web.sessionCookie(pw, now);
+  assert.match(set, /HttpOnly/); assert.match(set, /Secure/); assert.match(set, /SameSite=Lax/);
+  const cookie = { cookie: 'other=1; ' + set.split(';')[0] };
+  assert.equal(web.isAuthorized(cookie, pw, now + 864e5), true);
+  assert.equal(web.isAuthorized(cookie, pw, now + 31 * 864e5), false);   // expired
+  assert.equal(web.isAuthorized(cookie, 'new password', now), false);
+  const forged = { cookie: set.split(';')[0].replace(/\.[\w-]+$/, '.AAAA') };
+  assert.equal(web.isAuthorized(forged, pw, now), false);
+
   const { guard } = await import('../api/_shared.js');
-  const res = { headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, send(b) { this.body = b; return this; } };
+  const res = { headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; } };
   const saved = process.env.DASHBOARD_PASSWORD;
-  process.env.DASHBOARD_PASSWORD = 'right horse';
+  process.env.DASHBOARD_PASSWORD = pw;
   assert.equal(guard({ headers: {} }, res), false);
   assert.equal(res.code, 401);
-  assert.match(res.headers['WWW-Authenticate'], /^Basic/);
+  assert.equal(res.headers['WWW-Authenticate'], undefined);         // the app shows its own sign-in screen
+
+  // GET / shows the sign-in screen until there's a session, then the app.
+  const page = (await import('../api/page.js')).default;
+  const html = (headers) => { const r = { ...res, headers: {}, send(b) { this.body = b; return this; } }; page({ headers }, r); return r.body; };
+  assert.match(html({}), /Sign in to your coordinator/);
+  assert.doesNotMatch(html({}), /api\/dashboard/);
+  assert.match(html({ cookie: web.sessionCookie(pw).split(';')[0] }), /api\/dashboard/);
   if (saved === undefined) delete process.env.DASHBOARD_PASSWORD; else process.env.DASHBOARD_PASSWORD = saved;
 });
 
@@ -201,8 +224,23 @@ await check('dropping a plan takes it off the dashboard without approving it', a
 
 await check('the page escapes nothing into HTML: data goes in through textContent only', async () => {
   const { PAGE } = await import('../src/page.js');
-  assert.match(PAGE, /<title>Jarvis<\/title>/);
-  assert.doesNotMatch(PAGE, /innerHTML|insertAdjacentHTML|document\.write/);
+  const { LOGIN } = await import('../src/page.js');
+  assert.match(PAGE, /<title>Synaut<\/title>/);
+  assert.doesNotMatch(PAGE + LOGIN, /innerHTML|insertAdjacentHTML|document\.write/);
+  assert.doesNotMatch(PAGE + LOGIN, /Jarvis/i);                         // renamed everywhere on screen
+  new Function(PAGE.match(/<script>([\s\S]*)<\/script>/)[1]);           // the page's script parses
+  new Function(LOGIN.match(/<script>([\s\S]*)<\/script>/)[1]);
+});
+
+await check('the app can be installed: manifest, icons and service worker are in place', async () => {
+  const fs = await import('node:fs');
+  const m = JSON.parse(fs.readFileSync(new URL('../public/manifest.webmanifest', import.meta.url)));
+  assert.equal(m.name, 'Synaut');
+  assert.equal(m.display, 'standalone');
+  for (const i of m.icons) assert.ok(fs.existsSync(new URL('../public' + i.src, import.meta.url)), i.src);
+  assert.ok(m.icons.some((i) => i.purpose === 'maskable' && i.sizes === '512x512'));
+  const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+  assert.match(sw, /startsWith\('\/api\/'\)/);                       // company data is never cached
 });
 
 await check('the dashboard tabs get projects, clients, the journal and every agent', async () => {
@@ -229,7 +267,7 @@ await check('chat history is checked before anything is sent', async () => {
   assert.equal(long[0].content.length, 4000);
 });
 
-await check('consulting Jarvis sends the company state, uses no forced tool, and logs only tokens', async () => {
+await check('consulting Synaut sends the company state, uses no forced tool, and logs only tokens', async () => {
   let sent;
   const fakeFetch = async (url, init) => {
     sent = { url: String(url), body: JSON.parse(init.body), headers: init.headers };

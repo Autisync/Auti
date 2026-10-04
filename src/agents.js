@@ -1,4 +1,4 @@
-// The agents Jarvis runs, and how much each one uses. The dashboard's Agents tab reads agentsSummary().
+// The agents Synaut runs, and how much each one uses. The dashboard's Agents tab reads agentsSummary().
 
 export const AGENTS = [
   {
@@ -9,7 +9,7 @@ export const AGENTS = [
   },
   {
     id: 'assistant',
-    name: 'Jarvis (chat)',
+    name: 'Synaut (chat)',
     role: 'Answers your questions about the company, with the same view of it as the coordinator. It can advise but never approve or change anything.',
     schedule: 'On demand, from the chat button',
   },

@@ -3,7 +3,7 @@
 
 export const BRIEF_TOOL = {
   name: 'write_morning_brief',
-  description: 'Record the brief the owner will see when they open Jarvis. Call exactly once.',
+  description: 'Record the brief the owner will see when they open Synaut. Call exactly once.',
   input_schema: {
     type: 'object',
     additionalProperties: false,
@@ -60,7 +60,7 @@ export const BRIEF_TOOL = {
                 type: 'object', additionalProperties: false, required: ['action', 'owner'],
                 properties: {
                   action: { type: 'string' },
-                  owner: { type: 'string', description: "The owner, a partner (by name if known), or 'Jarvis'." },
+                  owner: { type: 'string', description: "The owner, a partner (by name if known), or 'Synaut'." },
                   due: { type: 'string', description: 'YYYY-MM-DD if known.' },
                 },
               },
@@ -86,7 +86,7 @@ export const BRIEF_TOOL = {
 
 export function systemPrompt(config) {
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n');
-  return `You are Jarvis, the coordinator and strategic partner for the company described in the standing instructions below. You run on a schedule, read the company's current state, and write the brief the owner reads when they open the dashboard.
+  return `You are Synaut, the coordinator and strategic partner for the company described in the standing instructions below. You run on a schedule, read the company's current state, and write the brief the owner reads when they open the dashboard.
 
 Standing instructions (set by the owner, follow them):
 ${standing}

@@ -1,6 +1,6 @@
 name: Coordinator
 
-# Runs Jarvis's thinking loop. Times are UTC (GitHub has no time zones):
+# Runs Synaut's thinking loop. Times are UTC (GitHub has no time zones):
 #   04:17 UTC daily        = 05:17 Lisbon in summer, 04:17 in winter (overnight study)
 #   12:23 and 16:23 UTC    = early and late afternoon stand-up refreshes, weekdays
 # Odd minutes on purpose: on-the-hour schedules are the most delayed on GitHub.

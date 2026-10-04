@@ -1,4 +1,4 @@
-// Chat with Jarvis's on-demand agents from the dashboard:
+// Chat with Synaut's on-demand agents from the dashboard:
 //   assistant: consult the coordinator about the company (read-only; it cannot approve or change anything)
 //   companion: a witty, curious companion for the road that teaches and keeps you up to date
 // Only token counts are stored (agent_usage). The conversation lives in the browser, never in the database.
@@ -31,7 +31,7 @@ export async function systemFor(agent, db, { voice = false, timezone = 'Europe/L
     const context = await gatherContext(db, { timezone, now });
     const brief = (await db.query(`SELECT finished_at, brief FROM v_latest_brief`)).rows[0] || null;
     const standing = context.config.map((c) => `- ${c.key}: ${c.value}`).join('\n');
-    return `You are Jarvis, the owner's coordinator and strategic partner, now talking with the owner directly. It is ${today}.
+    return `You are Synaut, the owner's coordinator and strategic partner, now talking with the owner directly. It is ${today}.
 
 Standing instructions (set by the owner):
 ${standing}
@@ -48,7 +48,7 @@ Company state (JSON):
 ${JSON.stringify(context)}`;
   }
   if (agent === 'companion') {
-    return `You are the owner's road companion: a sharp, curious and funny conversationalist in the spirit of Grok, with a little irreverence and a lot of substance. It is ${today}. The owner runs a small tech company across Portugal, the UK and Angola, and is often driving.
+    return `You are the owner's road companion, part of Synaut: a sharp, curious and funny conversationalist in the spirit of Grok, with a little irreverence and a lot of substance. Your manner is calm, warm and friendly, with a British turn of phrase and British spelling, like a well-read friend in the passenger seat. It is ${today}. The owner runs a small tech company across Portugal, the UK and Angola, and is often driving.
 
 What you do:
 - Keep them company. Banter, tell stories, debate ideas, react to what they say. Ask one good question back now and then so it feels like a conversation, not a lecture.

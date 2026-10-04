@@ -1,5 +1,5 @@
 [Unit]
-Description=Jarvis coordinator (nightly run)
+Description=Synaut coordinator (nightly run)
 After=network-online.target postgresql.service
 Wants=network-online.target
 

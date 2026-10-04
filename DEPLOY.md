@@ -1,4 +1,4 @@
-# DEPLOY.md: get Jarvis running for $0 hosting
+# DEPLOY.md: get Synaut running for $0 hosting
 
 **Audience: Claude Code.** Execute this plan from top to bottom in the folder that holds this file.
 Steps marked **HUMAN** need the owner (Rex). For those, stop, tell him exactly what to do, and wait for him to confirm before you continue.
@@ -69,10 +69,10 @@ Ask Rex for the repository name. Default: `jarvis`. Then:
 
 ```bash
 gh repo create <name> --public --source . --remote origin \
-  --description "Jarvis: an AI coordinator that reads a company's state and writes a daily brief"
+  --description "Synaut: an AI coordinator that reads a company's state and writes a daily brief"
 git add -A
 npm run check:private          # run again on exactly what is staged
-git commit -m "Jarvis v1 coordinator"
+git commit -m "Synaut v1 coordinator"
 git push -u origin main
 gh run watch "$(gh run list --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId')"
 ```

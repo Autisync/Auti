@@ -1,6 +1,6 @@
-# Jarvis: notes for Claude Code
+# Synaut: notes for Claude Code
 
-Jarvis is a coordinator for a small company. On a schedule it reads the company's state from Postgres, asks Claude for a brief through one forced tool call, and writes the brief back. The owner approves anything it proposes.
+Synaut is a coordinator for a small company. On a schedule it reads the company's state from Postgres, asks Claude for a brief through one forced tool call, and writes the brief back. The owner approves anything it proposes.
 
 - **Deploying for the first time:** follow `DEPLOY.md` step by step.
 - **Running on a VPS later:** see README.md and `deploy/`.
