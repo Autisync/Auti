@@ -204,7 +204,7 @@ await check('the owner can approve a plan from the dashboard, once', async () =>
   const { id } = (await web.getDashboard(db)).approvals[0];
   await assert.rejects(web.decide(db, id, 'approve-everything'), /decision must be/);
   await assert.rejects(web.decide(db, "1' OR 1=1", 'approve'), /bad initiative id/);
-  assert.deepEqual(await web.decide(db, id, 'approve'), { id, status: 'approved' });
+  assert.deepEqual(await web.decide(db, id, 'approve'), { id, status: 'approved', tasks: 2 });
   const row = (await db.query(`SELECT status, approved_at FROM initiatives WHERE id = $1`, [id])).rows[0];
   assert.equal(row.status, 'approved');
   assert.ok(row.approved_at);
@@ -215,9 +215,28 @@ await check('the owner can approve a plan from the dashboard, once', async () =>
   assert.equal((await web.getDashboard(db)).approvals.length, 0);
 });
 
+await check('an approved plan becomes tasks, and finishing them finishes the plan', async () => {
+  const tasks = (await db.query(`SELECT t.id, t.title, t.due_date, t.owner_id, t.detail, i.status FROM tasks t JOIN initiatives i ON i.id = t.initiative_id
+                                 WHERE i.title = 'Client contact rhythm' ORDER BY t.created_at`)).rows;
+  assert.deepEqual(tasks.map((t) => t.title), ['List every client', 'Agree intervals']);
+  assert.ok(tasks[0].owner_id);                                   // 'Sam' matched a person
+  assert.equal(tasks[1].owner_id, null);
+  assert.equal(tasks[1].detail, 'Owner: All partners');
+  assert.ok(tasks[1].due_date);
+  await assert.rejects(web.setTaskState(db, tasks[0].id, 'vanished'), /state must be/);
+  await web.setTaskState(db, tasks[0].id, 'doing');
+  const status = async () => (await db.query(`SELECT status FROM initiatives WHERE title = 'Client contact rhythm'`)).rows[0].status;
+  assert.equal(await status(), 'in_progress');
+  await web.setTaskState(db, tasks[0].id, 'done');
+  assert.equal(await status(), 'in_progress');
+  await web.setTaskState(db, tasks[1].id, 'done');
+  assert.equal(await status(), 'done');
+  assert.equal((await web.getDashboard(db)).tasks.length, 2);   // recently finished tasks still show
+});
+
 await check('dropping a plan takes it off the dashboard without approving it', async () => {
   const id = (await db.query(`INSERT INTO initiatives (title, status, created_by_agent) VALUES ('Side quest', 'awaiting_approval', 'coordinator') RETURNING id`)).rows[0].id;
-  assert.deepEqual(await web.decide(db, id, 'drop'), { id, status: 'dropped' });
+  assert.deepEqual(await web.decide(db, id, 'drop'), { id, status: 'dropped', tasks: 0 });
   const row = (await db.query(`SELECT status, approved_at FROM initiatives WHERE id = $1`, [id])).rows[0];
   assert.deepEqual(row, { status: 'dropped', approved_at: null });
 });

@@ -63,8 +63,15 @@ export async function getDashboard(db) {
       FROM clients ORDER BY status, name`)).rows;
   const journal = (await db.query(`
     SELECT kind, author, body, acted_on, created_at FROM journal ORDER BY created_at DESC LIMIT 50`)).rows;
+  const tasks = (await db.query(`
+    SELECT t.id, t.title, t.detail, t.state, t.due_date, t.completed_at, p.name AS project, i.title AS plan, pe.name AS owner,
+           (t.due_date < current_date AND t.state NOT IN ('done', 'cancelled')) AS overdue
+      FROM tasks t LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN initiatives i ON i.id = t.initiative_id
+      LEFT JOIN people pe ON pe.id = t.owner_id
+     WHERE t.state NOT IN ('done', 'cancelled') OR t.completed_at > now() - interval '7 days'
+     ORDER BY (t.state IN ('done', 'cancelled')), t.due_date NULLS LAST, t.created_at`)).rows;
   const agents = await agentsSummary(db);
-  return { latest, approvals, lastRun, projects, clients, journal, agents };
+  return { latest, approvals, lastRun, projects, clients, journal, agents, tasks };
 }
 
 // The owner's decision on one plan. Only plans still awaiting approval can change.
@@ -76,14 +83,47 @@ export async function decide(db, id, decision) {
     const row = (await tx.query(
       decision === 'approve'
         ? `UPDATE initiatives SET status = 'approved', approved_at = now()
-            WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, title, project_id`
+            WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, title, project_id, plan`
         : `UPDATE initiatives SET status = 'dropped'
-            WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, title, project_id`,
+            WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, title, project_id, plan`,
       [id])).rows[0];
     if (!row) return null;
+    // An approved plan becomes tasks, one per step, matched to people by name where possible.
+    let tasks = 0;
+    if (decision === 'approve') {
+      for (const step of row.plan || []) {
+        if (!step?.action) continue;
+        const owner = step.owner ? (await tx.query(`SELECT id FROM people WHERE lower(name) = lower($1) LIMIT 1`, [step.owner])).rows[0] : null;
+        const due = /^\d{4}-\d{2}-\d{2}$/.test(step.due || '') ? step.due : null;
+        await tx.query(
+          `INSERT INTO tasks (title, detail, project_id, initiative_id, owner_id, due_date) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [step.action, step.owner && !owner ? `Owner: ${step.owner}` : null, row.project_id, row.id, owner?.id ?? null, due]);
+        tasks++;
+      }
+    }
     await tx.query(
       `INSERT INTO journal (kind, body, author, project_id, initiative_id) VALUES ('decision', $1, 'owner', $2, $3)`,
       [`${decision === 'approve' ? 'Approved' : 'Dropped'} the plan "${row.title}" from the dashboard.`, row.project_id, row.id]);
-    return { id: row.id, status: decision === 'approve' ? 'approved' : 'dropped' };
+    return { id: row.id, status: decision === 'approve' ? 'approved' : 'dropped', tasks };
+  });
+}
+
+const TASK_STATES = ['todo', 'doing', 'blocked', 'done', 'cancelled'];
+
+// The owner moves a task along. Finishing the last open task of an approved plan marks the plan done.
+export async function setTaskState(db, id, state) {
+  if (!TASK_STATES.includes(state)) throw new Error('state must be one of ' + TASK_STATES.join(', '));
+  if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw new Error('bad task id');
+  return db.transaction(async (tx) => {
+    const t = (await tx.query(
+      `UPDATE tasks SET state = $2::task_state, completed_at = CASE WHEN $2::text = 'done' THEN now() ELSE NULL END
+        WHERE id = $1 RETURNING id, state, initiative_id`, [id, state])).rows[0];
+    if (!t) return null;
+    if (t.initiative_id) {
+      const open = (await tx.query(`SELECT count(*)::int AS n FROM tasks WHERE initiative_id = $1 AND state NOT IN ('done', 'cancelled')`, [t.initiative_id])).rows[0].n;
+      if (open === 0) await tx.query(`UPDATE initiatives SET status = 'done' WHERE id = $1 AND status IN ('approved', 'in_progress')`, [t.initiative_id]);
+      else if (state === 'doing') await tx.query(`UPDATE initiatives SET status = 'in_progress' WHERE id = $1 AND status = 'approved'`, [t.initiative_id]);
+    }
+    return { id: t.id, state: t.state };
   });
 }
