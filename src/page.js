@@ -975,7 +975,26 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const synth = window.speechSynthesis;
 let rec = null;
 const drive = { on: false };
-if (!SR) { document.getElementById('mic').hidden = true; document.getElementById('drive-on').textContent = 'Voice needs Chrome or Safari'; document.getElementById('drive-on').disabled = true; }
+let srBroken = !SR;     // set when the browser refuses speech recognition, e.g. some installed iPhone apps
+const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+// Plain words for why voice failed, and what to do instead.
+function voiceProblem(code) {
+  if (code === 'not-allowed') return 'Microphone access is blocked for Synaut. Allow the microphone for this site in your browser settings, then try again.';
+  if (code === 'missing' && !STANDALONE) return 'This browser has no voice recognition. Use Chrome or Safari, or tap the microphone on your keyboard to dictate.';
+  if (code === 'service-not-allowed' || code === 'unsupported' || code === 'missing') return STANDALONE
+    ? 'Voice recognition is not available inside the installed app on this device. Open Synaut in Safari or Chrome for voice, or tap the microphone on your keyboard to dictate here.'
+    : 'Voice recognition is turned off on this device. On iPhone, turn on Siri or Dictation in Settings, or tap the microphone on your keyboard to dictate.';
+  if (code === 'network') return 'Voice recognition needs an internet connection. Check your signal and try again.';
+  if (code === 'audio-capture') return 'No microphone was found. Check that one is connected and not used by another app.';
+  return 'Voice stopped working (' + code + '). Try again, or type instead.';
+}
+function showVoiceProblem(code) {
+  if (code === 'service-not-allowed' || code === 'unsupported') srBroken = true;
+  const text = voiceProblem(code);
+  if (drive.on) { setDrive('error', text); return; }
+  msgs.append($('div', 'msg err', text)); msgs.scrollTop = msgs.scrollHeight;
+  if (srBroken) input.focus();
+}
 
 // A calm, friendly British voice: the best en-GB voice this device has, a touch slower than default.
 const GB_PREFERRED = [/Sonia.*Natural/i, /Libby.*Natural/i, /Ryan.*Natural/i, /Serena/i, /Daniel.*(Enhanced|Premium)/i, /Kate.*(Enhanced|Premium)/i,
@@ -1021,7 +1040,8 @@ document.getElementById('speaker').onclick = () => { unlockSpeech(); const on = 
 function afterSpeak() { if (drive.on) listen(); }
 
 function listen() {
-  if (!SR || busy) return;
+  if (busy) return;
+  if (srBroken) return showVoiceProblem(SR ? 'unsupported' : 'missing');
   try { rec?.abort(); } catch {}
   rec = new SR();
   rec.lang = navigator.language || 'en-GB'; rec.interimResults = true; rec.continuous = false;
@@ -1045,9 +1065,9 @@ function listen() {
       ask(said);
     } else if (drive.on) setDrive('idle');
   };
-  rec.onerror = (e) => { if (drive.on && e.error !== 'no-speech' && e.error !== 'aborted') setDrive('error', e.error === 'not-allowed' ? 'Microphone access was blocked.' : 'Voice error: ' + e.error); };
+  rec.onerror = (e) => { if (e.error !== 'no-speech' && e.error !== 'aborted') showVoiceProblem(e.error); };
   if (drive.on) setDrive('listening', ''); else document.getElementById('mic').classList.add('live');
-  rec.start();
+  try { rec.start(); } catch (err) { document.getElementById('mic').classList.remove('live'); showVoiceProblem(err.name === 'NotAllowedError' ? 'not-allowed' : 'unsupported'); }
 }
 document.getElementById('mic').onclick = () => {
   unlockSpeech();
@@ -1061,7 +1081,7 @@ function setDrive(state, text) {
   document.getElementById('drive-heard').textContent = text || (state === 'idle' ? (agent === 'companion' ? 'Pick a mood up top, or say "unhinged mode". Say "stop" to end.' : 'Say "stop" any time to end.') : '');
 }
 function startDrive() {
-  if (!SR) { msgs.append($('div', 'msg err', 'Hands-free voice needs Chrome or Safari.')); return; }
+  if (srBroken) { showVoiceProblem(SR ? 'unsupported' : 'missing'); return; }
   unlockSpeech();
   drive.on = true; document.getElementById('drive').hidden = false;
   listen();
@@ -1082,7 +1102,7 @@ document.getElementById('drive-off').onclick = stopDrive;
 document.getElementById('logout').onclick = async () => { await fetch('/api/login', { method: 'DELETE' }); location.reload(); };
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 const talk = new URLSearchParams(location.search).get('talk');
-if (talk === 'companion' || talk === 'assistant') { openChat(talk); if (talk === 'companion' && SR) { drive.on = true; document.getElementById('drive').hidden = false; setDrive('idle'); } }
+if (talk === 'companion' || talk === 'assistant') { openChat(talk); if (talk === 'companion' && !srBroken) { drive.on = true; document.getElementById('drive').hidden = false; setDrive('idle'); } }
 drawTabs();
 load();
 </script>
