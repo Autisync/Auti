@@ -254,6 +254,40 @@ await check('the owner can add a task by hand, and bad input is refused', async 
   await web.setTaskState(db, plain.id, 'cancelled');
 });
 
+await check('the owner can add clients, log contacts and record why one was lost', async () => {
+  const c = await web.addClient(db, { name: ' Acme Energy ', market: 'angola', status: 'active', sector: 'energy', contact_every_days: '14' });
+  assert.equal(c.name, 'Acme Energy');
+  let row = (await web.getDashboard(db)).clients.find((x) => x.id === c.id);
+  assert.equal(row.contact_every_days, 14);
+  assert.equal(row.flag, 'ok');                                   // a rhythm without a date starts the clock today
+  const lead = await web.addClient(db, { name: 'Quiet Lead', market: 'uk', contact_every_days: '' });
+  assert.equal((await web.getDashboard(db)).clients.find((x) => x.id === lead.id).flag, 'no_next_contact');
+  await assert.rejects(web.addClient(db, { name: 'X', market: 'mars' }), /market must be/);
+  await assert.rejects(web.addClient(db, { name: 'X', market: 'uk', contact_every_days: '0' }), /1 to 365/);
+  await assert.rejects(web.addClient(db, { name: '', market: 'uk' }), /name is required/);
+
+  await db.query(`UPDATE clients SET next_contact_due = current_date - 5 WHERE id = $1`, [lead.id]);
+  const out = await web.logContact(db, { client_id: lead.id, channel: 'call', summary: 'Asked for a proposal.', next_contact_due: '2099-01-01' });
+  assert.ok(out.last_contact_at);
+  row = (await web.getDashboard(db)).clients.find((x) => x.id === lead.id);
+  assert.equal(row.flag, 'ok');
+  assert.equal(row.contacts[0].summary, 'Asked for a proposal.');
+  assert.equal(await web.logContact(db, { client_id: '00000000-0000-0000-0000-000000000000', summary: 'x' }), null);
+  await assert.rejects(web.logContact(db, { client_id: lead.id, summary: ' ' }), /summary is required/);
+  await assert.rejects(web.logContact(db, { client_id: lead.id, summary: 'x', channel: 'pigeon' }), /channel must be/);
+
+  const { gatherContext } = await import('../src/context.js');
+  assert.equal((await gatherContext(db)).recentContacts[0].client, 'Quiet Lead');   // the coordinator sees logged contacts
+
+  await assert.rejects(web.setClientStatus(db, { id: lead.id, status: 'lost' }), /say why/);
+  await web.setClientStatus(db, { id: lead.id, status: 'lost', lost_reason: 'Chose a cheaper studio.' });
+  row = (await web.getDashboard(db)).clients.find((x) => x.id === lead.id);
+  assert.equal(row.status, 'lost');
+  assert.equal(row.flag, null);
+  const lesson = (await db.query(`SELECT body FROM journal WHERE kind = 'lesson' AND client_id = $1`, [lead.id])).rows;
+  assert.deepEqual(lesson, [{ body: 'Lost Quiet Lead: Chose a cheaper studio.' }]);
+});
+
 await check('dropping a plan takes it off the dashboard without approving it', async () => {
   const id = (await db.query(`INSERT INTO initiatives (title, status, created_by_agent) VALUES ('Side quest', 'awaiting_approval', 'coordinator') RETURNING id`)).rows[0].id;
   assert.deepEqual(await web.decide(db, id, 'drop'), { id, status: 'dropped', tasks: 0 });

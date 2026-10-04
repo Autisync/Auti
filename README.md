@@ -111,5 +111,6 @@ Set `DATABASE_URL`, `DASHBOARD_PASSWORD` and `ANTHROPIC_API_KEY` in the Vercel p
 - Sign in once with `DASHBOARD_PASSWORD`; the session lasts 30 days. Changing the password signs everyone out.
 - Install it: on iPhone, Safari → Share → Add to Home Screen. On Android or desktop Chrome/Edge, use Install in the address bar or menu.
 - Tasks tab: approved plans arrive as one task per step. Start, finish, block or reopen them, or add your own. Finishing a plan's last task marks the plan done.
+- Clients tab: add clients and leads with a contact rhythm, log each call, email or meeting, and pick the next contact date. Marking a client lost asks why and saves the reason as a lesson in the journal. The coordinator sees the last 30 days of logged contacts.
 - Chat stores only token counts (`agent_usage`), never what was said.
 - Icons are drawn by `python3 scripts/make-icons.py`.
