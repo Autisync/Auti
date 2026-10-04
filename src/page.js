@@ -129,12 +129,14 @@ export const PAGE = `<!doctype html>
   .plan ol li + li, .plan ul li + li { margin-top: 8px; }
   .plan ol li::before { content: counter(s, decimal-leading-zero); position: absolute; left: 0; font: 600 12px/1.9 var(--mono); color: var(--cyan); }
   .plan ul { margin: 0; padding-left: 18px; }
+  .follow .form { margin-top: 14px; }
+  a.act { text-decoration: none; display: inline-block; }
   .pending { position: absolute; top: 18px; right: 20px; font: 600 10px/1 var(--mono); letter-spacing: 0.14em; color: var(--amber);
              border: 1px solid rgba(255,181,71,0.4); border-radius: 999px; padding: 5px 8px; }
   .actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; align-items: center; }
-  button.act { font: 600 14px/1 var(--sans); border-radius: 10px; padding: 11px 18px; cursor: pointer;
+  button.act, a.act { font: 600 14px/1 var(--sans); border-radius: 10px; padding: 11px 18px; cursor: pointer;
                border: 1px solid var(--line); background: transparent; color: var(--ink); transition: all .15s; }
-  button.act:hover { border-color: var(--dim); }
+  button.act:hover, a.act:hover { border-color: var(--dim); }
   button.approve { background: var(--cyan); border-color: var(--cyan); color: #021018; box-shadow: 0 0 20px -4px var(--cyan-glow); }
   button.confirm { background: var(--amber); border-color: var(--amber); color: #1a1003; }
   button:disabled { opacity: 0.5; cursor: default; }
@@ -392,7 +394,7 @@ if (!TABS.some(([id]) => id === current)) current = 'overview';
 
 function drawTabs() {
   const el = document.getElementById('tabs'); el.replaceChildren();
-  const counts = data ? { approvals: data.approvals.length, tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.length } : {};
+  const counts = data ? { approvals: data.approvals.length + (data.followUps?.length || 0), tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.length } : {};
   TABS.forEach(([id, label]) => {
     const b = $('button', 'tab' + (id === 'approvals' && counts.approvals ? ' hot' : ''), label);
     b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(id === current));
@@ -420,7 +422,8 @@ function viewOverview(root) {
   const stats = $('div', 'stats');
   const cold = data.projects.filter((p) => p.going_cold).length;
   const watch = data.clients.filter((c) => c.flag && c.flag !== 'ok').length;
-  stats.append(stat(approvals.length, 'Need approval', approvals.length > 0, 'approvals'), stat(cold, 'Projects going cold', cold > 0, 'projects'),
+  const waiting = approvals.length + (data.followUps?.length || 0);
+  stats.append(stat(waiting, 'Need approval', waiting > 0, 'approvals'), stat(cold, 'Projects going cold', cold > 0, 'projects'),
     stat(watch, 'Clients to contact', watch > 0, 'clients'), stat(b?.questions_for_owner?.length || 0, 'Questions for you', false, 'overview'));
   hello.append(stats);
   root.append(hello);
@@ -525,8 +528,47 @@ function planCard(p) {
   return c;
 }
 
+function followUpCard(f) {
+  const c = $('div', 'card plan follow');
+  c.append($('span', 'pending', 'DRAFT'));
+  const h = $('h3', null, f.client); h.append($('span', 'tag', f.channel), $('span', 'tag', human(f.market))); c.append(h);
+  if (f.rationale) c.append($('div', 'detail', f.rationale));
+  const form = $('div', 'form');
+  const subj = $('label', 'wide', f.channel === 'email' ? 'Subject' : 'Purpose'); const si = $('input'); si.value = f.subject || ''; si.readOnly = f.channel !== 'email'; subj.append(si);
+  const msg = $('label', 'wide', f.channel === 'call' ? 'Talking points' : 'Message (edit before sending)'); const ta = $('textarea'); ta.value = f.body; ta.rows = Math.min(12, f.body.split('\\n').length + 2); msg.append(ta);
+  const nx = $('label', null, 'Next contact'); const ni = $('input'); ni.type = 'date'; ni.value = inDays(f.contact_every_days || 14); nx.append(ni);
+  form.append(subj, msg, nx); c.append(form);
+  const actions = $('div', 'actions'); const hint = $('span', 'hint');
+  const copy = $('button', 'act', 'Copy');
+  copy.onclick = async () => {
+    const text = (f.channel === 'email' && si.value ? si.value + '\\n\\n' : '') + ta.value;
+    try { await navigator.clipboard.writeText(text); hint.className = 'hint'; hint.textContent = 'Copied.'; } catch { ta.select(); hint.textContent = 'Select and copy the text.'; }
+  };
+  const sent = $('button', 'act approve', f.channel === 'call' ? 'Mark called' : 'Mark sent');
+  const drop = $('button', 'act', 'Drop');
+  const finish = async (decision) => {
+    sent.disabled = drop.disabled = true; hint.className = 'hint'; hint.textContent = 'Saving…';
+    try {
+      await post('/api/follow-up', { id: f.id, decision, body: ta.value, next_contact_due: ni.value });
+      c.querySelector('.pending').remove();
+      actions.replaceWith($('div', 'done ' + (decision === 'sent' ? 'ok' : 'drop'), decision === 'sent' ? '✓ LOGGED AS SENT' : 'DROPPED'));
+      data.followUps = data.followUps.filter((x) => x.id !== f.id); drawTabs();
+    } catch (e) { sent.disabled = drop.disabled = false; hint.className = 'error'; hint.textContent = e.message; }
+  };
+  sent.onclick = () => finish('sent');
+  let armed = false;
+  drop.onclick = () => { if (armed) return finish('drop'); armed = true; drop.textContent = 'Confirm drop'; drop.className = 'act confirm'; };
+  actions.append(sent, copy);
+  if (f.channel === 'whatsapp') { const wa = $('a', 'act', 'Open WhatsApp'); wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); wa.target = '_blank'; wa.rel = 'noopener'; wa.onclick = () => { wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); }; actions.append(wa); }
+  actions.append(drop, hint); c.append(actions);
+  return c;
+}
+
 function viewApprovals(root) {
-  root.append(section('Needs your approval', ...(data.approvals.length ? data.approvals.map(planCard) : [emptyCard('Nothing is waiting for you.')])));
+  const fu = data.followUps || [];
+  root.append(section('Plans', ...(data.approvals.length ? data.approvals.map(planCard) : [emptyCard('No plans are waiting for you.')])));
+  root.append(section('Follow-ups to send', ...(fu.length ? fu.map(followUpCard)
+    : [emptyCard('No drafts. The retention agent writes one when a client is due for contact.')])));
 }
 
 const picks = {};   // remembers each list's filter across refreshes

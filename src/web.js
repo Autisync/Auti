@@ -76,8 +76,13 @@ export async function getDashboard(db) {
      WHERE t.state NOT IN ('done', 'cancelled') OR t.completed_at > now() - interval '7 days'
      ORDER BY (t.state IN ('done', 'cancelled')), t.due_date NULLS LAST, t.created_at`)).rows;
   const people = (await db.query(`SELECT id, name FROM people ORDER BY is_partner DESC, name`)).rows;
+  const followUps = (await db.query(`
+    SELECT f.id, f.channel, f.subject, f.body, f.rationale, f.created_at, c.id AS client_id, c.name AS client, c.market,
+           extract(day FROM c.contact_interval)::int AS contact_every_days
+      FROM follow_up f JOIN clients c ON c.id = f.client_id
+     WHERE f.status = 'awaiting_approval' ORDER BY f.created_at`)).rows;
   const agents = await agentsSummary(db);
-  return { latest, approvals, lastRun, projects, clients, journal, agents, tasks, people };
+  return { latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps };
 }
 
 // The owner's decision on one plan. Only plans still awaiting approval can change.
@@ -235,4 +240,30 @@ export async function setProjectRepo(db, { id, github_repo } = {}) {
   const repo = blank ? null : normaliseRepo(github_repo);
   if (!blank && !repo) throw new Error('repository must look like owner/repo');
   return (await db.query(`UPDATE projects SET github_repo = $2 WHERE id = $1 RETURNING id, github_repo`, [id, repo])).rows[0] || null;
+}
+
+// The owner's call on a drafted follow-up. "sent" means the owner sent it (Synaut never does):
+// it saves the final text and logs a touchpoint, which moves the client's next contact date.
+export async function decideFollowUp(db, { id, decision, body, next_contact_due } = {}) {
+  if (!['sent', 'drop'].includes(decision)) throw new Error('decision must be sent or drop');
+  if (!UUID.test(String(id))) throw new Error('bad follow-up id');
+  if (next_contact_due && !DAY.test(String(next_contact_due))) throw new Error('next contact must be YYYY-MM-DD');
+  const text = String(body ?? '').trim();
+  if (text.length > 8000) throw new Error('message is too long');
+  return db.transaction(async (tx) => {
+    const f = (await tx.query(
+      `UPDATE follow_up SET status = $2::follow_up_status, decided_at = now(), body = COALESCE(NULLIF($3, ''), body)
+        WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, client_id, channel, subject, body`,
+      [id, decision === 'sent' ? 'sent' : 'dropped', decision === 'sent' ? text : ''])).rows[0];
+    if (!f) return null;
+    if (decision === 'sent') {
+      const summary = `Sent follow-up${f.subject ? ` "${f.subject}"` : ''}: ${f.body.length > 300 ? f.body.slice(0, 297) + '...' : f.body}`;
+      const tp = (await tx.query(
+        `INSERT INTO client_touchpoint (client_id, channel, summary) VALUES ($1, $2, $3) RETURNING id`,
+        [f.client_id, f.channel, summary])).rows[0];
+      await tx.query(`UPDATE follow_up SET touchpoint_id = $2 WHERE id = $1`, [f.id, tp.id]);
+      if (next_contact_due) await tx.query(`UPDATE clients SET next_contact_due = $2::date WHERE id = $1`, [f.client_id, next_contact_due]);
+    }
+    return { id: f.id, status: decision === 'sent' ? 'sent' : 'dropped' };
+  });
 }

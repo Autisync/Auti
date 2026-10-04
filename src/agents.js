@@ -8,6 +8,12 @@ export const AGENTS = [
     schedule: 'Daily 04:17 UTC, weekdays 12:23 and 16:23 UTC',
   },
   {
+    id: 'retention',
+    name: 'Retention',
+    role: 'Watches clients due or overdue for contact and drafts a follow-up for each. It never sends anything: every draft waits for you on the Approvals tab.',
+    schedule: 'After every coordinator run',
+  },
+  {
     id: 'assistant',
     name: 'Synaut (chat)',
     role: 'Answers your questions about the company, with the same view of it as the coordinator. It can advise but never approve or change anything.',
