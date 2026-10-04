@@ -422,7 +422,7 @@ await check('the dashboard tabs get projects, clients, the journal and every age
   assert.ok(d.projects.every((p) => typeof p.going_cold === 'boolean' && Number.isInteger(p.open_tasks)));
   assert.ok(d.clients.some((c) => c.name === 'Example Client'));
   assert.ok(d.journal.length > 0);
-  assert.deepEqual(d.agents.map((a) => a.id), ['coordinator', 'retention', 'assistant', 'companion']);
+  assert.deepEqual(d.agents.map((a) => a.id), ['coordinator', 'retention', 'leads', 'assistant', 'companion']);
   const coord = d.agents[0];
   assert.ok(coord.usage.month.calls >= 1);
   assert.ok(coord.usage.month.input >= 1200);               // the run the real-client test recorded

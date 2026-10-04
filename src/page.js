@@ -306,6 +306,17 @@ export const PAGE = `<!doctype html>
   input.search:focus { outline: none; border-color: var(--cyan-glow); }
   ol.steps { margin: 12px 0 0; padding-left: 20px; } ol.steps li + li { margin-top: 6px; }
   .empty.small { font: 12px/1.6 var(--mono); color: var(--dim); margin-top: 18px; }
+  /* leads */
+  .lead > * { grid-column: 1 / -1; }
+  .lead > .item-title { grid-column: 1; }
+  .lead > .meta { grid-column: 2; }
+  .lead .services { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .tag.svc { color: var(--cyan); }
+  .lead .links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 13px; }
+  .lead .links a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+  .lead form.card { margin-top: 10px; }
+  @media (max-width: 600px) { .lead > .item-title, .lead > .meta { grid-column: 1 / -1; } .lead > .meta { text-align: left; white-space: normal; } }
+
   /* documents */
   .doc-row { cursor: pointer; }
   .doc-row:hover, .doc-row:focus-visible { border-color: var(--cyan-glow); outline: none; }
@@ -436,7 +447,7 @@ const emptyCard = (text) => card($('p', 'empty', text));
 
 /* ---------- tabs ---------- */
 const TABS = [
-  ['overview', 'Overview'], ['approvals', 'Approvals'], ['crm', 'CRM'], ['tasks', 'Tasks'], ['projects', 'Projects'],
+  ['overview', 'Overview'], ['approvals', 'Approvals'], ['crm', 'CRM'], ['leads', 'Leads'], ['tasks', 'Tasks'], ['projects', 'Projects'],
   ['clients', 'Clients'], ['documents', 'Documents'], ['agents', 'Agents'], ['journal', 'Journal'],
 ];
 let data = null;
@@ -445,7 +456,7 @@ if (!TABS.some(([id]) => id === current)) current = 'overview';
 
 function drawTabs() {
   const el = document.getElementById('tabs'); el.replaceChildren();
-  const counts = data ? { approvals: data.approvals.length + (data.followUps?.length || 0) + (data.crmRequests?.length || 0), tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.length } : {};
+  const counts = data ? { approvals: data.approvals.length + (data.followUps?.length || 0) + (data.crmRequests?.length || 0), tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.length, leads: (data.leads || []).filter((l) => l.status === 'new').length } : {};
   TABS.forEach(([id, label]) => {
     const b = $('button', 'tab' + (id === 'approvals' && counts.approvals ? ' hot' : ''), label);
     b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(id === current));
@@ -1241,6 +1252,86 @@ function viewCrm(root) {
   root.append($('p', 'empty small', 'Read from the CRM ' + ago(d.fetched_at) + '.'));
 }
 
+// Businesses the leads agent found. Nothing here contacts anyone: tracking adds a lead to Synaut's clients
+// (so the retention agent drafts an introduction for the owner to send), and Add to CRM creates the client there.
+const MARKET_NAME = { angola: 'Angola', uk: 'UK', portugal: 'Portugal' };
+const SERVICE_NAME = { crm: 'CRM', domain: 'Domain', email: 'Business email', hosting: 'Hosting', software: 'Software' };
+let leadForm = {};   // lead id -> 'crm' | 'dismiss'
+function viewLeads(root) {
+  const leads = data.leads || [];
+  const bar = rise($('div', 'toolbar'));
+  const on = data.leadsOn === true;
+  const t = $('button', 'more', data.leadsOn == null ? 'Leads agent: after the next run' : 'Leads agent: ' + (on ? 'on' : 'off'));
+  t.title = data.leadsOn == null ? 'The next scheduled run sets this up' : on ? 'Tap to stop the daily search' : 'Tap to search for new leads every day';
+  t.disabled = data.leadsOn == null;
+  t.onclick = async () => { t.disabled = true; try { await post('/api/leads', { enabled: !on }); await load(); } catch (e) { t.disabled = false; t.textContent = e.message; } };
+  const ask = $('button', 'more', 'Ask Synaut about leads'); ask.onclick = () => openChat('assistant', 'Looking at the leads the leads agent found, ');
+  bar.append(t, ask); root.append(bar);
+
+  const fresh = leads.filter((l) => l.status === 'new');
+  const stats = rise($('div', 'stats six'));
+  const count = (f) => leads.filter(f).length;
+  stats.append(
+    stat(fresh.length, 'New leads', fresh.length > 0, 'leads'),
+    stat(count((l) => l.status === 'new' && l.fit >= 4), 'Strong (4-5)', false, 'leads'),
+    stat(count((l) => l.status === 'new' && l.market === 'angola'), 'Angola', false, 'leads'),
+    stat(count((l) => l.status === 'new' && l.market === 'portugal'), 'Portugal', false, 'leads'),
+    stat(count((l) => l.status === 'new' && l.market === 'uk'), 'UK', false, 'leads'),
+    stat(count((l) => l.status === 'tracking' || l.status === 'in_crm'), 'Taken on (30 days)', false, 'leads'),
+  );
+  root.append(stats);
+  if (!leads.length) {
+    root.append(section('Leads', emptyCard(data.leadsOn == null
+      ? 'The leads agent starts after the next overnight run. It searches one market a day, so all three are covered within a week.'
+      : 'No leads yet. The agent searches once a day, after the overnight run.')));
+    return;
+  }
+  filtered(root, 'Leads', leads,
+    [['new', 'New'], ['angola', 'Angola'], ['portugal', 'Portugal'], ['uk', 'UK'], ['tracking', 'Tracking'], ['in_crm', 'In CRM'], ['dismissed', 'Dismissed'], ['all', 'All']],
+    (l, k) => MARKET_NAME[k] ? l.status === 'new' && l.market === k : l.status === k, leadCard, 'new');
+}
+function leadCard(l) {
+  const el = $('div', 'card row lead');
+  const t = $('div', 'item-title', l.company);
+  t.append($('span', 'tag', MARKET_NAME[l.market] || l.market), $('span', 'tag' + (l.fit >= 4 ? ' ok' : ''), 'fit ' + l.fit + '/5'));
+  if (l.status !== 'new') t.append($('span', 'tag' + (l.status === 'dismissed' ? ' bad' : ' ok'), l.status === 'in_crm' ? 'in CRM' : l.status));
+  el.append(t);
+  const meta = $('div', 'meta', [l.sector, l.city].filter(Boolean).join(' · ') || ' ');
+  meta.append($('div', null, 'found ' + ago(l.found_at)));
+  el.append(meta);
+  const chips = $('div', 'services'); (l.services || []).forEach((s) => chips.append($('span', 'tag svc', SERVICE_NAME[s] || s))); el.append(chips);
+  el.append($('div', 'desc', l.signals));
+  if (l.pitch) { const p = $('div', 'detail'); p.append($('b', null, 'Opening: '), document.createTextNode(l.pitch)); el.append(p); }
+  if (l.contact_route) el.append($('div', 'detail', 'Public contact: ' + l.contact_route));
+  if (l.dismiss_reason) el.append($('div', 'detail', 'Dismissed: ' + l.dismiss_reason));
+  const links = $('div', 'links');
+  const link = (href, label) => { const a = $('a', null, label); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; links.append(a); };
+  if (l.website) link(l.website, 'Website ↗');
+  (l.sources || []).forEach((s, i) => { let host = s; try { host = new URL(s).hostname.replace(/^www\\./, ''); } catch (e) {} link(s, 'Source ' + (i + 1) + ': ' + host); });
+  el.append(links);
+
+  const acts = $('div', 'acts');
+  const act = (label, cls, fn) => { const b = $('button', 'mini' + (cls ? ' ' + cls : ''), label); b.onclick = async () => { b.disabled = true; try { await fn(); } catch (e) { b.disabled = false; acts.append($('span', 'error', e.message)); } }; acts.append(b); };
+  const decide = async (body) => { await post('/api/leads', { id: l.id, ...body }); delete leadForm[l.id]; await load(); };
+  const toggle = (k) => async () => { leadForm[l.id] = leadForm[l.id] === k ? null : k; draw(); };
+  if (l.status === 'new') act('Track as lead', 'go', () => decide({ action: 'track' }));
+  if (data.crmOn && (l.status === 'new' || l.status === 'tracking')) act(leadForm[l.id] === 'crm' ? 'Close' : 'Add to CRM', null, toggle('crm'));
+  if (l.status === 'new') act(leadForm[l.id] === 'dismiss' ? 'Close' : 'Dismiss', null, toggle('dismiss'));
+  if (l.status === 'dismissed') act('Reopen', null, () => decide({ action: 'reopen' }));
+  act('Ask Synaut', null, async () => openChat('assistant', 'About the lead ' + l.company + ' (' + (MARKET_NAME[l.market] || l.market) + ', needs ' + (l.services || []).join(', ') + '): '));
+  el.append(acts);
+  if (leadForm[l.id] === 'crm') {
+    el.append($('p', 'empty small', 'The CRM needs a contact. Use a business contact you found or were given; Synaut never contacts them.'));
+    el.append(formCard([['contactName', 'Contact name', 'text', null, { required: true }], ['email', 'Email', 'text', null, { required: true }], ['phone', 'Phone', 'text', null, { required: true }]],
+      'Add to CRM', (v) => decide({ action: 'crm', ...v }), () => { leadForm[l.id] = null; draw(); }));
+  }
+  if (leadForm[l.id] === 'dismiss') {
+    el.append(formCard([['reason', 'Why not? (the agent learns from it)', 'text', null, { wide: true, placeholder: 'e.g. too big, already a competitor\\'s client, wrong sector' }]],
+      'Dismiss', (v) => decide({ action: 'dismiss', reason: v.reason }), () => { leadForm[l.id] = null; draw(); }));
+  }
+  return el;
+}
+
 // A change in the CRM that Synaut proposed. Approving runs it in the CRM straight away.
 function crmRequestCard(r) {
   const c = $('div', 'card plan');
@@ -1258,7 +1349,7 @@ function crmRequestCard(r) {
   actions.append(yes, no, hint); c.append(actions); return c;
 }
 
-const VIEWS = { overview: viewOverview, approvals: viewApprovals, tasks: viewTasks, projects: viewProjects, clients: viewClients, agents: viewAgents, journal: viewJournal, documents: viewDocuments, crm: viewCrm };
+const VIEWS = { overview: viewOverview, approvals: viewApprovals, tasks: viewTasks, projects: viewProjects, clients: viewClients, agents: viewAgents, journal: viewJournal, documents: viewDocuments, crm: viewCrm, leads: viewLeads };
 function draw() {
   if (!data) return;
   delay = 0;

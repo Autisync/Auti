@@ -1,5 +1,6 @@
 import { listDocuments } from './documents.js';
 import { crmForContext } from './crm.js';
+import { leadsForContext } from './leads.js';
 
 // Reads everything the coordinator needs to think, in one snapshot.
 // Kept as plain data so it can be logged, tested and sent to the model as JSON.
@@ -50,6 +51,8 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
       FROM coordinator_action WHERE created_at > now() - interval '14 days' ORDER BY created_at DESC LIMIT 30`)
     .catch((err) => { if (err.code === '42P01') return []; throw err; });
 
+  const leads = await leadsForContext(db);
+
   const today = new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   }).format(now);
@@ -70,6 +73,7 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     recentContacts,                      // logged client touchpoints, last 30 days
     documents,                           // the company's contract templates, policies and checklists
     recentActions,                       // steps Synaut took on its own, last 14 days
+    leads,                               // businesses the leads agent found, waiting for the owner
     ...(crm ? { crm: crmForContext(crm) } : {}),   // live from the company CRM: money, renewals, pipeline
   };
 }

@@ -12,7 +12,7 @@
     "standup": "node --env-file-if-exists=.env src/run.js standup",
     "brief": "node --env-file-if-exists=.env src/show.js",
     "check:private": "node scripts/check-private.js",
-    "test": "node test/coordinator.test.js && node test/crm.test.js"
+    "test": "node test/coordinator.test.js && node test/crm.test.js && node test/leads.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
