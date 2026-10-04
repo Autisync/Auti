@@ -1,5 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["iad1"],
-  "rewrites": [{ "source": "/", "destination": "/api/page" }]
+  "rewrites": [
+    { "source": "/", "destination": "/api/page" },
+    { "source": "/api/crm", "destination": "/api/ops?op=crm" },
+    { "source": "/api/autonomy", "destination": "/api/ops?op=autonomy" }
+  ]
 }
