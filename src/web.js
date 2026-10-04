@@ -65,7 +65,8 @@ export async function getDashboard(db) {
              SELECT happened_at, channel, summary FROM client_touchpoint WHERE client_id = c.id ORDER BY happened_at DESC LIMIT 3) t), '[]') AS contacts
       FROM clients c LEFT JOIN people pe ON pe.id = c.owner_id ORDER BY c.status, c.name`)).rows;
   const journal = (await db.query(`
-    SELECT kind, author, body, acted_on, created_at FROM journal ORDER BY created_at DESC LIMIT 50`)).rows;
+    SELECT j.kind, j.author, j.body, j.acted_on, j.created_at, p.name AS project
+      FROM journal j LEFT JOIN projects p ON p.id = j.project_id ORDER BY j.created_at DESC LIMIT 50`)).rows;
   const tasks = (await db.query(`
     SELECT t.id, t.title, t.detail, t.state, t.due_date, t.completed_at, p.name AS project, i.title AS plan, pe.name AS owner,
            (t.due_date < current_date AND t.state NOT IN ('done', 'cancelled')) AS overdue
@@ -208,4 +209,19 @@ export async function setClientStatus(db, { id, status, lost_reason } = {}) {
     }
     return c || null;
   });
+}
+
+// What the owner can write in the journal. Suggestions and reviews belong to the coordinator.
+const OWNER_KINDS = ['standup', 'decision', 'lesson'];
+
+// A stand-up (typed or dictated), a decision or a lesson. The next coordinator run reads it.
+export async function addJournal(db, { kind = 'standup', body, project_id } = {}) {
+  if (!OWNER_KINDS.includes(kind)) throw new Error('kind must be one of ' + OWNER_KINDS.join(', '));
+  body = String(body ?? '').trim();
+  if (!body) throw new Error('say something first');
+  if (body.length > 8000) throw new Error('entry is too long');
+  if (project_id && !UUID.test(String(project_id))) throw new Error('bad project id');
+  return (await db.query(
+    `INSERT INTO journal (kind, body, author, project_id) VALUES ($1::journal_kind, $2, 'owner', $3) RETURNING id, kind, created_at`,
+    [kind, body, project_id || null])).rows[0];
 }

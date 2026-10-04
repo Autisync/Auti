@@ -288,6 +288,21 @@ await check('the owner can add clients, log contacts and record why one was lost
   assert.deepEqual(lesson, [{ body: 'Lost Quiet Lead: Chose a cheaper studio.' }]);
 });
 
+await check('the owner can log a stand-up, and the next run sees it', async () => {
+  const project = (await web.getDashboard(db)).projects.find((p) => p.name === 'Project A');
+  const j = await web.addJournal(db, { kind: 'standup', body: '  Shipped the booking form. Next: payments. Blocked on the bank. ', project_id: project.id });
+  assert.equal(j.kind, 'standup');
+  const top = (await web.getDashboard(db)).journal[0];
+  assert.equal(top.body, 'Shipped the booking form. Next: payments. Blocked on the bank.');
+  assert.equal(top.author, 'owner');
+  assert.equal(top.project, 'Project A');
+  await web.addJournal(db, { body: 'Quick one, no project.' });         // stand-up is the default
+  await assert.rejects(web.addJournal(db, { kind: 'suggestion', body: 'x' }), /kind must be/);   // only the coordinator suggests
+  await assert.rejects(web.addJournal(db, { body: '   ' }), /say something/);
+  const { gatherContext } = await import('../src/context.js');
+  assert.ok((await gatherContext(db)).journal.some((e) => e.kind === 'standup' && /payments/.test(e.body)));
+});
+
 await check('dropping a plan takes it off the dashboard without approving it', async () => {
   const id = (await db.query(`INSERT INTO initiatives (title, status, created_by_agent) VALUES ('Side quest', 'awaiting_approval', 'coordinator') RETURNING id`)).rows[0].id;
   assert.deepEqual(await web.decide(db, id, 'drop'), { id, status: 'dropped', tasks: 0 });
