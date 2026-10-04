@@ -155,7 +155,7 @@ await check('chat gets the CRM tools only when the CRM is connected', async () =
   const sys = await chat.systemFor('assistant', db);
   assert.match(sys, /crm_propose_change/);
   const { PAGE } = await import('../src/page.js');
-  assert.match(PAGE, /\['crm', 'CRM'\]/);
+  assert.match(PAGE, /\['crm', 'CRM', /);
   assert.match(PAGE, /function crmRequestCard/);
   new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);
 });

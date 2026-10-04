@@ -132,7 +132,7 @@ await check('the coordinator, the dashboard and the page see the leads', async (
   assert.equal(d.crmOn, false);
   assert.ok(d.leads.some((l) => l.company === 'Strong Co'));
   const { PAGE } = await import('../src/page.js');
-  assert.match(PAGE, /\['leads', 'Leads'\]/);
+  assert.match(PAGE, /\['leads', 'Leads', /);
   assert.match(PAGE, /rel = 'noopener noreferrer'/);
   new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);
 });

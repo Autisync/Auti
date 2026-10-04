@@ -306,6 +306,57 @@ export const PAGE = `<!doctype html>
   input.search:focus { outline: none; border-color: var(--cyan-glow); }
   ol.steps { margin: 12px 0 0; padding-left: 20px; } ol.steps li + li { margin-top: 6px; }
   .empty.small { font: 12px/1.6 var(--mono); color: var(--dim); margin-top: 18px; }
+  /* today */
+  .today-head .sub { font: 13px/1.6 var(--mono); }
+  .pulse { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 20px; }
+  .kpi { position: relative; display: flex; flex-direction: column; gap: 2px; text-align: left; color: inherit; cursor: pointer;
+         background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px 13px; font: inherit; min-width: 0; }
+  .kpi:hover { border-color: var(--cyan-glow); }
+  .kpi::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 2px; border-radius: 2px; background: var(--cyan); opacity: 0.5; }
+  .kpi.warn::before { background: var(--amber); opacity: 1; } .kpi.bad::before { background: var(--red); opacity: 1; }
+  .kpi-group { font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); }
+  .kpi b { font: 600 22px/1.25 var(--mono); color: var(--cyan); margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kpi.warn b { color: var(--amber); } .kpi.bad b { color: var(--red); }
+  .kpi-label { font-size: 12px; color: var(--ink); }
+  .kpi-hint { font-size: 11px; color: var(--muted); }
+  .queue { padding: 6px 0; }
+  .q-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 12px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--line); }
+  .q-row:first-child { border-top: 0; }
+  .q-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan-glow); }
+  .q-row.now .q-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  .q-row.soon .q-dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .q-title { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+  .q-kind { font: 600 10px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+            border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; margin-right: 8px; vertical-align: 2px; }
+  .q-why { font-size: 13px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+  .queue > .more { margin: 8px 18px 6px; }
+  .two-col { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0 24px; align-items: start; }
+  .two-col > .col:only-child { grid-column: 1 / -1; }
+  .mini-list { list-style: none; margin: 0; padding: 0; }
+  .mini-list li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .mini-list li:first-child { border-top: 0; padding-top: 0; }
+  .mini-list .r { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+
+  /* side menu on wide screens */
+  .side { display: none; }
+  @media (min-width: 1100px) {
+    main { max-width: 1240px; }
+    .tabs { display: none; }
+    .bar-in { padding-bottom: 14px; }
+    .layout { display: grid; grid-template-columns: 188px minmax(0, 1fr); gap: 32px; }
+    .side { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 84px; align-self: start; padding-top: 26px; }
+    .side-group { font: 600 10px/1 var(--mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); margin: 16px 0 6px 12px; }
+    .side-group:first-child { margin-top: 0; }
+    .side-tab { display: flex; justify-content: space-between; align-items: center; background: none; border: 1px solid transparent; border-radius: 10px;
+                color: var(--muted); cursor: pointer; font: 600 13px/1 var(--sans); padding: 10px 12px; text-align: left; }
+    .side-tab:hover { color: var(--ink); background: var(--panel); }
+    .side-tab[aria-selected="true"] { color: var(--cyan); background: var(--cyan-soft); border-color: var(--line); }
+    .side-tab .n { font: 12px/1 var(--mono); color: var(--dim); }
+    .side-tab.hot .n { color: var(--amber); }
+  }
+  @media (max-width: 860px) { .two-col { grid-template-columns: minmax(0, 1fr); } .pulse { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .q-row { padding: 12px 14px; gap: 10px; } .kpi b { font-size: 19px; } }
+
   /* leads */
   .lead > * { grid-column: 1 / -1; }
   .lead > .item-title { grid-column: 1; }
@@ -383,7 +434,10 @@ export const PAGE = `<!doctype html>
     </div>
     <div class="tabs" role="tablist" id="tabs"></div>
   </div>
-  <div id="root"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+  <div class="layout">
+    <nav class="side" id="side" aria-label="Sections"></nav>
+    <div id="root"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+  </div>
   <footer>PLANS, CLIENT MESSAGES AND MONEY WAIT FOR YOUR APPROVAL</footer>
 </main>
 
@@ -446,9 +500,13 @@ const card = (...children) => { const c = $('div', 'card'); c.append(...children
 const emptyCard = (text) => card($('p', 'empty', text));
 
 /* ---------- tabs ---------- */
+// Tabs in the order of a working day, grouped for the side menu on wide screens.
 const TABS = [
-  ['overview', 'Overview'], ['approvals', 'Approvals'], ['crm', 'CRM'], ['leads', 'Leads'], ['tasks', 'Tasks'], ['projects', 'Projects'],
-  ['clients', 'Clients'], ['documents', 'Documents'], ['agents', 'Agents'], ['journal', 'Journal'],
+  ['overview', 'Today', 'Daily'], ['approvals', 'Approvals', 'Daily'],
+  ['crm', 'CRM', 'Business'], ['leads', 'Leads', 'Business'], ['clients', 'Clients', 'Business'],
+  ['tasks', 'Tasks', 'Delivery'], ['projects', 'Projects', 'Delivery'],
+  ['documents', 'Documents', 'Library'], ['journal', 'Journal', 'Library'],
+  ['agents', 'Agents', 'Synaut'],
 ];
 let data = null;
 let current = (location.hash || '#overview').slice(1);
@@ -456,13 +514,19 @@ if (!TABS.some(([id]) => id === current)) current = 'overview';
 
 function drawTabs() {
   const el = document.getElementById('tabs'); el.replaceChildren();
+  const side = document.getElementById('side'); side.replaceChildren();
   const counts = data ? { approvals: data.approvals.length + (data.followUps?.length || 0) + (data.crmRequests?.length || 0), tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.length, leads: (data.leads || []).filter((l) => l.status === 'new').length } : {};
-  TABS.forEach(([id, label]) => {
-    const b = $('button', 'tab' + (id === 'approvals' && counts.approvals ? ' hot' : ''), label);
-    b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(id === current));
-    if (counts[id] != null) b.append($('span', 'n', String(counts[id])));
-    b.onclick = () => go(id);
-    el.append(b);
+  let group = null;
+  TABS.forEach(([id, label, g]) => {
+    const make = (cls) => {
+      const b = $('button', cls + (id === 'approvals' && counts.approvals ? ' hot' : ''), label);
+      b.setAttribute('aria-selected', String(id === current));
+      if (counts[id] != null) b.append($('span', 'n', String(counts[id])));
+      b.onclick = () => go(id); return b;
+    };
+    const t = make('tab'); t.setAttribute('role', 'tab'); el.append(t);
+    if (g !== group) { side.append($('div', 'side-group', g)); group = g; }
+    side.append(make('side-tab'));
   });
 }
 function go(id) {
@@ -476,61 +540,140 @@ function stat(n, label, warn, tab) {
   s.onclick = () => go(tab); return s;
 }
 
-function viewOverview(root) {
-  const { latest, approvals } = data; const b = latest?.brief;
-  const hello = rise($('div'));
-  hello.append($('h1', 'hello', greeting()),
-    $('p', 'sub', b ? 'Here is where the company stands, from the ' + (latest.mode === 'standup' ? 'stand-up refresh' : 'overnight run') + ' on ' + when(latest.finished_at) + '.' : 'Synaut has not written a brief yet. The next scheduled run will.'));
-  const stats = $('div', 'stats');
-  const cold = data.projects.filter((p) => p.going_cold).length;
-  const watch = data.clients.filter((c) => c.flag && c.flag !== 'ok').length;
-  const waiting = approvals.length + (data.followUps?.length || 0);
-  stats.append(stat(waiting, 'Need approval', waiting > 0, 'approvals'), stat(cold, 'Projects going cold', cold > 0, 'projects'),
-    stat(watch, 'Clients to contact', watch > 0, 'clients'), stat(b?.questions_for_owner?.length || 0, 'Questions for you', false, 'overview'));
-  hello.append(stats);
-  root.append(hello);
-  if (!b) return;
-  const alert = $('div', 'card alert');
-  alert.append($('span', 'kicker', '⚠ Weakest link'), $('p', 'headline', b.weakest_link.headline), $('p', 'why', b.weakest_link.why));
-  const focus = $('div', 'card focus');
-  focus.append($('span', 'kicker', '◎ One thing today'), document.createTextNode(b.one_thing_today));
-  root.append(section('Situation', alert, focus));
-  autoSection(root);
-  if (b.priorities?.length) {
-    const ul = $('ul', 'list');
-    b.priorities.forEach((p, i) => {
-      const li = $('li'); const body = $('div'); const t = $('div', 'item-title', p.title);
-      if (p.project) t.append($('span', 'tag', p.project));
-      body.append(t, $('div', 'detail', p.detail));
-      li.append($('span', 'idx', String(i + 1).padStart(2, '0')), body); ul.append(li);
-    });
-    root.append(section('Today, in order', card(ul)));
+// Today: the day's decisions first, then the numbers behind them, then Synaut's reading of the company.
+// CRM figures load on their own, so the page never waits on the CRM.
+function kpi(group, value, label, hint, tone, tab, target) {
+  const s = $('button', 'kpi' + (tone ? ' ' + tone : ''));
+  s.append($('span', 'kpi-group', group), $('b', null, String(value)), $('span', 'kpi-label', label));
+  if (hint) s.append($('span', 'kpi-hint', hint));
+  s.onclick = () => { go(tab); if (target) setTimeout(() => document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' }), 80); };
+  return s;
+}
+const SEV = { now: 0, soon: 1, info: 2 };
+// Everything waiting on the owner, from every corner of Synaut, in one ranked list.
+function decisionQueue() {
+  const items = [];
+  const add = (sev, kind, title, why, label, fn) => items.push({ sev, kind, title, why, label, fn });
+  const b = data.latest?.brief;
+  (data.crmRequests || []).forEach((r) => add('now', 'CRM change', r.summary, r.reason || 'Proposed by Synaut', 'Review', () => go('approvals')));
+  (data.approvals || []).forEach((a) => add('soon', 'Plan', a.title, a.objective || 'A plan from the coordinator', 'Review', () => go('approvals')));
+  if (data.followUps?.length) add('now', 'Follow-ups', data.followUps.length + ' message draft' + (data.followUps.length > 1 ? 's' : '') + ' ready to send',
+    data.followUps.slice(0, 3).map((f) => f.client).join(', ') + (data.followUps.length > 3 ? ' and more' : ''), 'Review', () => go('approvals'));
+  const crm = crmData && !crmData.error && crmData.connected ? crmData : null;
+  if (crm) {
+    crm.overdue_invoices.slice(0, 3).forEach((i) => add('now', 'Overdue invoice', (i.client_name || 'A client') + ' · ' + money(i.total, i.currency),
+      'Invoice ' + (i.invoice_number || '') + (i.due_date ? ' was due ' + day(i.due_date) : ''), 'Chase', () => openChat('assistant', 'Help me chase the overdue invoice ' + (i.invoice_number || '') + ' from ' + (i.client_name || 'this client') + ': ')));
+    crm.expiring_subscriptions.filter((s) => !s.end_date || (new Date(s.end_date) - Date.now()) < 14 * 864e5).slice(0, 3)
+      .forEach((s) => add('soon', 'Renewal', (s.client_name || 'A client') + ' · ' + (s.service_name || 'service'), 'Ends ' + (s.end_date ? day(s.end_date) : 'soon') + (s.auto_renew ? ', renews automatically' : ', no auto-renew'), 'Open', () => { go('crm'); setTimeout(() => document.getElementById('crm-renewals')?.scrollIntoView({ behavior: 'smooth' }), 80); }));
   }
-  if (approvals.length) {
-    const more = $('button', 'more', 'Review ' + approvals.length + ' plan' + (approvals.length > 1 ? 's' : '') + ' waiting for you →');
-    more.onclick = () => go('approvals');
-    root.append(section('Needs your approval', card($('p', 'empty', approvals.map((a) => a.title).join(' · ')), more)));
-  }
-  if (b.suggestions?.length) {
-    const ul = $('ul', 'list');
-    b.suggestions.forEach((s) => {
-      const li = $('li'); const body = $('div'); const t = $('div', 'item-title', s.title); t.append($('span', 'tag', s.kind));
-      body.append(t, $('div', 'detail', s.rationale)); li.append($('span', 'bullet'), body); ul.append(li);
-    });
-    root.append(section('Suggestions', card(ul)));
-  }
-  if (b.questions_for_owner?.length) {
-    const ul = $('ul', 'list');
-    b.questions_for_owner.forEach((q, i) => {
-      const li = $('li'); const body = $('div'); body.append($('div', 'q', q));
-      const ask = $('button', 'more', 'Answer with Synaut →'); ask.onclick = () => openChat('assistant', 'About your question: "' + q + '"\\n\\n');
-      body.append(ask); li.append($('span', 'idx', 'Q' + (i + 1)), body); ul.append(li);
-    });
-    root.append(section('Questions for you', card(ul)));
-  }
+  const overdueClients = data.clients.filter((c) => c.flag === 'overdue');
+  if (overdueClients.length) add('soon', 'Clients', overdueClients.length + ' client' + (overdueClients.length > 1 ? 's' : '') + ' overdue for contact',
+    overdueClients.slice(0, 3).map((c) => c.name).join(', '), 'Open', () => go('clients'));
+  (b?.questions_for_owner || []).forEach((q) => add('soon', 'Question', q, 'The coordinator needs your answer', 'Answer', () => openChat('assistant', 'About your question: "' + q + '"\\n\\n')));
+  const strong = (data.leads || []).filter((l) => l.status === 'new' && l.fit >= 4);
+  if (strong.length) add('info', 'Leads', strong.length + ' strong lead' + (strong.length > 1 ? 's' : '') + ' to look at',
+    strong.slice(0, 3).map((l) => l.company).join(', '), 'Open', () => go('leads'));
+  const late = data.tasks.filter((t) => t.overdue);
+  if (late.length) add('info', 'Tasks', late.length + ' overdue task' + (late.length > 1 ? 's' : ''), late.slice(0, 2).map((t) => t.title).join(' · '), 'Open', () => go('tasks'));
+  return items.sort((x, y) => SEV[x.sev] - SEV[y.sev]);
 }
 
-// What Synaut did on its own since the owner last looked. Each step can be undone with one tap.
+let queueAll = false;
+function viewOverview(root) {
+  const { latest } = data; const b = latest?.brief;
+  if (data.crmOn && crmData === null) loadCrm();
+  const crm = crmData && !crmData.error && crmData.connected ? crmData : null;
+  const hello = rise($('div', 'today-head'));
+  const dateLine = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  hello.append($('h1', 'hello', greeting()),
+    $('p', 'sub', dateLine + ' · ' + (b ? 'brief from the ' + (latest.mode === 'standup' ? 'stand-up refresh' : 'overnight run') + ', ' + ago(latest.finished_at) : 'no brief yet; the next scheduled run writes one')));
+  root.append(hello);
+
+  // The numbers that drive today's decisions, grouped by what they are about.
+  const pulse = rise($('div', 'pulse'));
+  const s = crm?.summary || {};
+  const crmWait = data.crmOn && !crmData ? '…' : null;
+  const crmOff = !data.crmOn ? 'connect' : crmData?.error ? '!' : null;
+  const v = (x) => crmOff || crmWait || x;
+  const waiting = data.approvals.length + (data.followUps?.length || 0) + (data.crmRequests?.length || 0);
+  const overdueInv = crm ? crm.overdue_invoices.length : 0;
+  const newLeads = (data.leads || []).filter((l) => l.status === 'new');
+  const toContact = data.clients.filter((c) => c.flag && c.flag !== 'ok').length;
+  const lateTasks = data.tasks.filter((t) => t.overdue).length;
+  const cold = data.projects.filter((p) => p.going_cold).length;
+  pulse.append(
+    kpi('You', waiting, 'Waiting on you', waiting ? 'plans, drafts and CRM changes' : 'nothing waiting', waiting ? 'warn' : '', 'approvals'),
+    kpi('Money', v(money(s.monthlyRecurringRevenue)), 'Recurring / month', crm && s.revenueThisMonth != null ? money(s.revenueThisMonth) + ' billed this month' : '', '', 'crm'),
+    kpi('Money', v(s.outstandingInvoices ? money(s.outstandingInvoices.total) : '–'), 'Outstanding', crm ? overdueInv + ' overdue invoice' + (overdueInv === 1 ? '' : 's') : '', overdueInv ? 'bad' : '', 'crm', 'crm-overdue'),
+    kpi('Money', v(crm ? crm.expiring_subscriptions.length : '–'), 'Renewals, 45 days', crm && crm.expiring_subscriptions.length ? 'protect these first' : '', crm && crm.expiring_subscriptions.length ? 'warn' : '', 'crm', 'crm-renewals'),
+    kpi('Sales', v(crm ? money(crm.pipeline_value) : '–'), 'Open pipeline', crm ? crm.open_opportunities.length + ' opportunit' + (crm.open_opportunities.length === 1 ? 'y' : 'ies') : '', '', 'crm', 'crm-pipeline'),
+    kpi('Sales', newLeads.length, 'New leads', newLeads.filter((l) => l.fit >= 4).length + ' strong', '', 'leads'),
+    kpi('Clients', toContact, 'To contact', toContact ? 'overdue or no date set' : 'all in rhythm', toContact ? 'warn' : '', 'clients'),
+    kpi('Delivery', lateTasks + ' · ' + cold, 'Late tasks · cold projects', '', lateTasks || cold ? 'warn' : '', lateTasks ? 'tasks' : 'projects'),
+  );
+  root.append(pulse);
+  if (crmData?.error) root.append($('p', 'empty small', 'CRM: ' + crmData.error));
+
+  // Decide now.
+  const queue = decisionQueue();
+  const qs = rise($('section')); qs.append($('h2', null, 'Decide now' + (queue.length ? ' (' + queue.length + ')' : '')));
+  if (!queue.length) qs.append(emptyCard('Nothing needs you right now.'));
+  else {
+    const list = $('div', 'card queue');
+    (queueAll ? queue : queue.slice(0, 8)).forEach((it) => {
+      const row = $('div', 'q-row ' + it.sev);
+      const body = $('div', 'q-body'); const t = $('div', 'q-title'); t.append($('span', 'q-kind', it.kind), document.createTextNode(it.title));
+      body.append(t); if (it.why) body.append($('div', 'q-why', it.why));
+      const btn = $('button', 'mini go', it.label); btn.onclick = it.fn;
+      row.append($('span', 'q-dot'), body, btn); list.append(row);
+    });
+    if (queue.length > 8) { const m = $('button', 'more', queueAll ? 'Show fewer' : 'Show all ' + queue.length); m.onclick = () => { queueAll = !queueAll; draw(); }; list.append(m); }
+    qs.append(list);
+  }
+  root.append(qs);
+
+  const grid = $('div', 'two-col'); const left = $('div', 'col'); const right = $('div', 'col');
+  grid.append(left, right); root.append(grid);
+  if (b) {
+    const alert = $('div', 'card alert');
+    alert.append($('span', 'kicker', '⚠ Weakest link'), $('p', 'headline', b.weakest_link.headline), $('p', 'why', b.weakest_link.why));
+    const focus = $('div', 'card focus');
+    focus.append($('span', 'kicker', '◎ One thing today'), document.createTextNode(b.one_thing_today));
+    left.append(section('Situation', alert, focus));
+    if (b.priorities?.length) {
+      const ul = $('ul', 'list');
+      b.priorities.forEach((p, i) => {
+        const li = $('li'); const body = $('div'); const t = $('div', 'item-title', p.title);
+        if (p.project) t.append($('span', 'tag', p.project));
+        body.append(t, $('div', 'detail', p.detail));
+        li.append($('span', 'idx', String(i + 1).padStart(2, '0')), body); ul.append(li);
+      });
+      left.append(section('Today, in order', card(ul)));
+    }
+    if (b.suggestions?.length) {
+      const ul = $('ul', 'list');
+      b.suggestions.forEach((x) => {
+        const li = $('li'); const body = $('div'); const t = $('div', 'item-title', x.title); t.append($('span', 'tag', x.kind));
+        body.append(t, $('div', 'detail', x.rationale)); li.append($('span', 'bullet'), body); ul.append(li);
+      });
+      left.append(section('Suggestions', card(ul)));
+    }
+  } else left.append(section('Situation', emptyCard('Synaut has not written a brief yet. The next scheduled run will.')));
+
+  // The money and sales detail behind the numbers, for the decisions above.
+  if (crm) {
+    const mini = (rows, cells) => { const ul = $('ul', 'mini-list'); rows.forEach((r) => { const li = $('li'); cells(r).forEach((c, i) => li.append($('span', i ? 'r' : null, c))); ul.append(li); }); return ul; };
+    if (crm.expiring_subscriptions.length) right.append(section('Renewals next', card(mini(crm.expiring_subscriptions.slice(0, 5), (x) => [(x.client_name || '') + ' · ' + (x.service_name || ''), x.end_date ? day(x.end_date) : '']))));
+    if (crm.overdue_invoices.length) right.append(section('Money owed', card(mini(crm.overdue_invoices.slice(0, 5), (x) => [x.client_name || x.invoice_number || '', money(x.total, x.currency)]))));
+    if (crm.open_opportunities.length) right.append(section('Pipeline', card(mini([...crm.open_opportunities].sort((x, y) => Number(y.value || 0) - Number(x.value || 0)).slice(0, 5), (x) => [x.name + (x.stage ? ' · ' + x.stage : ''), money(x.value)]))));
+  } else if (!data.crmOn) {
+    const c = card($('p', 'empty', 'Connect the CRM to see money, renewals and pipeline here.')); const m = $('button', 'more', 'How to connect →'); m.onclick = () => go('crm'); c.append(m);
+    right.append(section('Money', c));
+  }
+  autoSection(right);
+  if (!right.children.length) right.remove();
+}
+
 const ACTION_LABEL = { add_task: 'task', set_next_contact: 'client', review_suggestion: 'review' };
 function autoSection(root) {
   const list = (data.actions || []).slice(0, 8);
@@ -1142,7 +1285,7 @@ async function loadCrm() {
     crmData = r.ok ? out : { connected: true, error: out.error || 'Could not reach the CRM (' + r.status + ')' };
   } catch (e) { crmData = { connected: true, error: e.message }; }
   finally { crmLoading = false; }
-  if (current === 'crm') draw();
+  if (current === 'crm' || current === 'overview') draw();
 }
 function crmTable(cols, rows) {
   const wrap = $('div', 'tbl-wrap'); const t = $('table', 'grid');
@@ -1372,7 +1515,7 @@ async function load() {
   } catch (e) { status.className = 'status bad'; statusText.textContent = e.message; }
   finally { btn.disabled = false; }
 }
-document.getElementById('refresh').onclick = () => { if (current === 'documents' && !docEdit) docs = null; if (current === 'crm') crmData = null; load(); };
+document.getElementById('refresh').onclick = () => { if (current === 'documents' && !docEdit) docs = null; if (current === 'crm' || current === 'overview') crmData = null; load(); };
 setInterval(() => { if (!document.hidden && !document.querySelector('button.confirm, form.form')) load(); }, 5 * 60 * 1000);
 
 /* ---------- chat ---------- */
