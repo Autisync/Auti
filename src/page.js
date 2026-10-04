@@ -177,6 +177,25 @@ export const PAGE = `<!doctype html>
   .entry .when { font: 12px/1.6 var(--mono); color: var(--dim); }
   .entry .who { font: 600 11px/1.6 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 
+  /* forms (new task, new client, log contact) */
+  .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .form label { display: grid; gap: 4px; font: 600 10px/1.2 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .form label.wide { grid-column: 1 / -1; }
+  .form input, .form select, .form textarea { width: 100%; box-sizing: border-box; background: rgba(5,8,13,0.6); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; font: 15px/1.4 var(--sans); letter-spacing: 0; text-transform: none; color-scheme: dark; }
+  .form textarea { min-height: 84px; resize: vertical; }
+  .form input:focus, .form select:focus, .form textarea:focus { outline: none; border-color: var(--cyan-glow); box-shadow: 0 0 0 3px var(--cyan-soft); }
+  .form .actions { grid-column: 1 / -1; margin-top: 4px; }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 28px 0 12px; }
+  .toolbar + section, .toolbar + .form + section { margin-top: 22px; }
+  .toolbar .more { margin-top: 0; }
+  .row .acts { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .mini { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+  .mini:hover { color: var(--cyan); border-color: var(--cyan-glow); }
+  .mini.go { color: var(--green); border-color: rgba(77,255,158,0.35); }
+  .row.finished { opacity: 0.6; }
+  .row.finished .item-title { text-decoration: line-through; text-decoration-color: var(--dim); }
+
   footer { margin-top: 48px; text-align: center; font: 11px/1.6 var(--mono); color: var(--dim); letter-spacing: 0.1em; }
 
   /* floating chat */
@@ -357,7 +376,7 @@ const emptyCard = (text) => card($('p', 'empty', text));
 
 /* ---------- tabs ---------- */
 const TABS = [
-  ['overview', 'Overview'], ['approvals', 'Approvals'], ['projects', 'Projects'],
+  ['overview', 'Overview'], ['approvals', 'Approvals'], ['tasks', 'Tasks'], ['projects', 'Projects'],
   ['clients', 'Clients'], ['agents', 'Agents'], ['journal', 'Journal'],
 ];
 let data = null;
@@ -366,7 +385,7 @@ if (!TABS.some(([id]) => id === current)) current = 'overview';
 
 function drawTabs() {
   const el = document.getElementById('tabs'); el.replaceChildren();
-  const counts = data ? { approvals: data.approvals.length, projects: data.projects.length, clients: data.clients.length } : {};
+  const counts = data ? { approvals: data.approvals.length, tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.length } : {};
   TABS.forEach(([id, label]) => {
     const b = $('button', 'tab' + (id === 'approvals' && counts.approvals ? ' hot' : ''), label);
     b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(id === current));
@@ -503,8 +522,9 @@ function viewApprovals(root) {
   root.append(section('Needs your approval', ...(data.approvals.length ? data.approvals.map(planCard) : [emptyCard('Nothing is waiting for you.')])));
 }
 
-function filtered(root, title, items, chips, match, row) {
-  let pick = 'all';
+const picks = {};   // remembers each list's filter across refreshes
+function filtered(root, title, items, chips, match, row, start = 'all') {
+  let pick = picks[title] ?? start;
   const wrap = rise($('section')); wrap.append($('h2', null, title));
   const bar = $('div', 'filters'); const list = $('div', 'rows');
   const paint = () => {
@@ -514,8 +534,96 @@ function filtered(root, title, items, chips, match, row) {
     shown.forEach((it) => list.append(row(it)));
     [...bar.children].forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === pick)));
   };
-  chips.forEach(([k, label]) => { const b = $('button', 'chip', label); b.dataset.k = k; b.onclick = () => { pick = k; paint(); }; bar.append(b); });
+  chips.forEach(([k, label]) => { const b = $('button', 'chip', label); b.dataset.k = k; b.onclick = () => { pick = picks[title] = k; paint(); }; bar.append(b); });
   wrap.append(bar, list); root.append(wrap); paint();
+}
+
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const out = await r.json().catch(() => ({}));
+  if (r.status === 401) { location.reload(); throw new Error('Signed out'); }
+  if (!r.ok) throw new Error(out.error || r.statusText);
+  return out;
+}
+
+// A small form. fields: [name, label, kind ('text' | 'date' | 'textarea' | 'select'), options?, extra?]
+function formCard(fields, submitLabel, onSubmit, onCancel) {
+  const f = $('form', 'card form'); f.noValidate = true;
+  fields.forEach(([name, label, kind, options, extra = {}]) => {
+    const l = $('label', kind === 'textarea' || extra.wide ? 'wide' : null, label);
+    let el;
+    if (kind === 'select') { el = $('select'); options.forEach(([v, t]) => { const o = $('option', null, t); o.value = v; el.append(o); }); }
+    else if (kind === 'textarea') el = $('textarea');
+    else { el = $('input'); el.type = kind; }
+    el.name = name; if (extra.placeholder) el.placeholder = extra.placeholder; if (extra.value != null) el.value = extra.value;
+    if (extra.required) el.required = true;
+    l.append(el); f.append(l);
+  });
+  const actions = $('div', 'actions'); const go = $('button', 'act approve', submitLabel); go.type = 'submit';
+  const hint = $('span', 'hint'); actions.append(go);
+  if (onCancel) { const x = $('button', 'act', 'Cancel'); x.type = 'button'; x.onclick = onCancel; actions.append(x); }
+  actions.append(hint); f.append(actions);
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const missing = [...f.elements].find((el) => el.required && !el.value.trim());
+    if (missing) { hint.className = 'error'; hint.textContent = 'Fill in ' + missing.parentElement.firstChild.textContent.toLowerCase() + '.'; missing.focus(); return; }
+    const values = Object.fromEntries([...f.elements].filter((el) => el.name).map((el) => [el.name, el.value.trim()]));
+    go.disabled = true; hint.className = 'hint'; hint.textContent = 'Saving…';
+    try { await onSubmit(values); } catch (err) { hint.className = 'error'; hint.textContent = err.message; go.disabled = false; }
+  };
+  return f;
+}
+
+const STATE_LABEL = { todo: 'to do', doing: 'doing', blocked: 'blocked', done: 'done', cancelled: 'cancelled' };
+const NEXT_MOVES = {
+  todo: [['doing', 'Start'], ['done', 'Done'], ['blocked', 'Blocked']],
+  doing: [['done', 'Done'], ['blocked', 'Blocked'], ['todo', 'Back to do']],
+  blocked: [['doing', 'Unblock'], ['cancelled', 'Cancel']],
+  done: [['todo', 'Reopen']], cancelled: [['todo', 'Reopen']],
+};
+let addingTask = false;
+
+function viewTasks(root) {
+  const bar = rise($('div', 'toolbar'));
+  const add = $('button', 'more', addingTask ? 'Close' : '+ New task');
+  add.onclick = () => { addingTask = !addingTask; draw(); };
+  bar.append(add); root.append(bar);
+  if (addingTask) {
+    const projects = [['', 'No project'], ...data.projects.map((p) => [p.id, p.name])];
+    const people = [['', 'Nobody yet'], ...data.people.map((p) => [p.id, p.name])];
+    root.append(rise(formCard([
+      ['title', 'Task', 'text', null, { required: true, wide: true, placeholder: 'What needs doing?' }],
+      ['project_id', 'Project', 'select', projects], ['owner_id', 'Owner', 'select', people], ['due_date', 'Due', 'date'],
+    ], 'Add task', async (v) => { await post('/api/task', v); addingTask = false; await load(); }, () => { addingTask = false; draw(); })));
+  }
+  const open = (t) => !['done', 'cancelled'].includes(t.state);
+  filtered(root, 'Tasks', data.tasks,
+    [['open', 'Open'], ['overdue', 'Overdue'], ['doing', 'Doing'], ['blocked', 'Blocked'], ['finished', 'Finished this week'], ['all', 'All']],
+    (t, k) => k === 'open' ? open(t) : k === 'overdue' ? t.overdue : k === 'finished' ? !open(t) : t.state === k,
+    (t) => {
+      const c = $('div', 'card row' + (open(t) ? '' : ' finished'));
+      const title = $('div', 'item-title', t.title);
+      title.append($('span', 'tag' + (t.state === 'blocked' ? ' bad' : t.state === 'doing' ? ' ok' : ''), STATE_LABEL[t.state]));
+      if (t.overdue) title.append($('span', 'tag warn', 'overdue'));
+      const meta = $('div', 'meta', t.due_date ? 'due ' + day(t.due_date) : 'no due date');
+      if (t.owner) meta.append($('div', null, t.owner));
+      if (t.completed_at) meta.append($('div', null, 'done ' + ago(t.completed_at)));
+      c.append(title, meta);
+      const desc = [t.project, t.plan ? 'plan: ' + t.plan : null, t.detail].filter(Boolean).join(' · ');
+      if (desc) c.append($('div', 'desc', desc));
+      const acts = $('div', 'acts');
+      (NEXT_MOVES[t.state] || []).forEach(([state, label]) => {
+        const b = $('button', 'mini' + (state === 'done' ? ' go' : ''), label);
+        b.onclick = async () => {
+          acts.querySelectorAll('button').forEach((x) => (x.disabled = true));
+          try { await post('/api/task', { id: t.id, state }); await load(); }
+          catch (e) { acts.querySelectorAll('button').forEach((x) => (x.disabled = false)); acts.append($('span', 'error', e.message)); }
+        };
+        acts.append(b);
+      });
+      c.append(acts);
+      return c;
+    }, 'open');
 }
 
 function viewProjects(root) {
@@ -598,7 +706,7 @@ function viewJournal(root) {
   root.append(section('Journal', c));
 }
 
-const VIEWS = { overview: viewOverview, approvals: viewApprovals, projects: viewProjects, clients: viewClients, agents: viewAgents, journal: viewJournal };
+const VIEWS = { overview: viewOverview, approvals: viewApprovals, tasks: viewTasks, projects: viewProjects, clients: viewClients, agents: viewAgents, journal: viewJournal };
 function draw() {
   if (!data) return;
   delay = 0;
@@ -622,7 +730,7 @@ async function load() {
   finally { btn.disabled = false; }
 }
 document.getElementById('refresh').onclick = load;
-setInterval(() => { if (!document.hidden && !document.querySelector('button.confirm')) load(); }, 5 * 60 * 1000);
+setInterval(() => { if (!document.hidden && !document.querySelector('button.confirm, form.form')) load(); }, 5 * 60 * 1000);
 
 /* ---------- chat ---------- */
 const AGENT_INFO = {

@@ -234,6 +234,26 @@ await check('an approved plan becomes tasks, and finishing them finishes the pla
   assert.equal((await web.getDashboard(db)).tasks.length, 2);   // recently finished tasks still show
 });
 
+await check('the owner can add a task by hand, and bad input is refused', async () => {
+  const d = await web.getDashboard(db);
+  const project = d.projects.find((p) => p.name === 'Company operations');
+  const sam = d.people.find((p) => p.name === 'Sam');
+  assert.ok(project.id && sam.id);
+  const t = await web.addTask(db, { title: '  Call the accountant ', project_id: project.id, owner_id: sam.id, due_date: '2026-10-09' });
+  assert.equal(t.title, 'Call the accountant');
+  assert.equal(t.state, 'todo');
+  const plain = await web.addTask(db, { title: 'Tidy the drive', project_id: '', owner_id: '', due_date: '' });
+  const rows = (await web.getDashboard(db)).tasks;
+  const added = rows.find((r) => r.id === t.id);
+  assert.equal(added.project, 'Company operations');
+  assert.equal(added.owner, 'Sam');
+  assert.equal(rows.find((r) => r.id === plain.id).project, null);
+  await assert.rejects(web.addTask(db, { title: '   ' }), /title is required/);
+  await assert.rejects(web.addTask(db, { title: 'x', project_id: "1' OR 1=1" }), /bad project id/);
+  await assert.rejects(web.addTask(db, { title: 'x', due_date: 'next week' }), /YYYY-MM-DD/);
+  await web.setTaskState(db, plain.id, 'cancelled');
+});
+
 await check('dropping a plan takes it off the dashboard without approving it', async () => {
   const id = (await db.query(`INSERT INTO initiatives (title, status, created_by_agent) VALUES ('Side quest', 'awaiting_approval', 'coordinator') RETURNING id`)).rows[0].id;
   assert.deepEqual(await web.decide(db, id, 'drop'), { id, status: 'dropped', tasks: 0 });

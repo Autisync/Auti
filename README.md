@@ -98,8 +98,7 @@ Copy those files off the VPS as well. A backup that lives on the same machine do
 
 ## Not built yet (next steps)
 
-- **Dashboard and iPhone app.** These read `v_latest_brief`, `v_needs_approval` and `v_client_watch`, and add the Approve button. The screens are already designed.
-- **Approve → Linear.** On approval, turn each step of the plan into a task and create it in Linear.
+- **Linear mirror.** Approved plans already become tasks on the Tasks tab; mirror them to Linear too.
 - **GitHub sync.** A nightly job that fills `projects.last_activity_at` from your repositories.
 - **Voice.** Stand-ups by speech, on the phone and the Mac.
 - **Retention agent.** Its first job: a daily check of `v_client_watch` that drafts follow-up messages for your approval.
@@ -111,5 +110,6 @@ Set `DATABASE_URL`, `DASHBOARD_PASSWORD` and `ANTHROPIC_API_KEY` in the Vercel p
 
 - Sign in once with `DASHBOARD_PASSWORD`; the session lasts 30 days. Changing the password signs everyone out.
 - Install it: on iPhone, Safari → Share → Add to Home Screen. On Android or desktop Chrome/Edge, use Install in the address bar or menu.
+- Tasks tab: approved plans arrive as one task per step. Start, finish, block or reopen them, or add your own. Finishing a plan's last task marks the plan done.
 - Chat stores only token counts (`agent_usage`), never what was said.
 - Icons are drawn by `python3 scripts/make-icons.py`.
