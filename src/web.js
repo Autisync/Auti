@@ -51,7 +51,7 @@ export async function getDashboard(db) {
     SELECT mode, started_at, finished_at, error IS NOT NULL AS failed
       FROM coordinator_run ORDER BY started_at DESC LIMIT 1`)).rows[0] || null;
   const projects = (await db.query(`
-    SELECT p.name, p.description, p.phase, p.markets::text[] AS markets, p.last_activity_at, p.target_date,
+    SELECT p.id, p.name, p.description, p.phase, p.markets::text[] AS markets, p.last_activity_at, p.target_date,
            (SELECT count(*)::int FROM tasks t WHERE t.project_id = p.id AND t.state NOT IN ('done', 'cancelled')) AS open_tasks,
            EXISTS (SELECT 1 FROM v_projects_going_cold c WHERE c.id = p.id) AS going_cold
       FROM projects p WHERE p.phase <> 'closed' ORDER BY p.name`)).rows;
@@ -70,8 +70,9 @@ export async function getDashboard(db) {
       LEFT JOIN people pe ON pe.id = t.owner_id
      WHERE t.state NOT IN ('done', 'cancelled') OR t.completed_at > now() - interval '7 days'
      ORDER BY (t.state IN ('done', 'cancelled')), t.due_date NULLS LAST, t.created_at`)).rows;
+  const people = (await db.query(`SELECT id, name FROM people ORDER BY is_partner DESC, name`)).rows;
   const agents = await agentsSummary(db);
-  return { latest, approvals, lastRun, projects, clients, journal, agents, tasks };
+  return { latest, approvals, lastRun, projects, clients, journal, agents, tasks, people };
 }
 
 // The owner's decision on one plan. Only plans still awaiting approval can change.
@@ -126,4 +127,19 @@ export async function setTaskState(db, id, state) {
     }
     return { id: t.id, state: t.state };
   });
+}
+
+const UUID = /^[0-9a-f-]{36}$/i;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// The owner adds a task by hand. Project and owner are optional; a blank due date means none.
+export async function addTask(db, { title, project_id, owner_id, due_date, detail } = {}) {
+  title = String(title ?? '').trim();
+  if (!title) throw new Error('title is required');
+  if (title.length > 200) throw new Error('title is too long');
+  for (const [k, v] of [['project', project_id], ['owner', owner_id]]) if (v && !UUID.test(String(v))) throw new Error(`bad ${k} id`);
+  if (due_date && !DAY.test(String(due_date))) throw new Error('due date must be YYYY-MM-DD');
+  return (await db.query(
+    `INSERT INTO tasks (title, detail, project_id, owner_id, due_date) VALUES ($1, $2, $3, $4, $5) RETURNING id, title, state`,
+    [title, String(detail ?? '').trim() || null, project_id || null, owner_id || null, due_date || null])).rows[0];
 }
