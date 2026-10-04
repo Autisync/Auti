@@ -18,7 +18,8 @@ await migrate(db, () => {});
 await check('migrations apply and are idempotent', async () => {
   await migrate(db, () => {});
   const n = (await db.query(`SELECT count(*)::int AS n FROM schema_migrations`)).rows[0].n;
-  assert.equal(n, 5);
+  const files = (await import('node:fs')).readdirSync(new URL('../db/', import.meta.url)).filter((f) => f.endsWith('.sql'));
+  assert.equal(n, files.length);
 });
 
 await check('seed loads once', async () => {
