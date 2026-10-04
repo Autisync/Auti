@@ -29,4 +29,5 @@ npm run brief            # print the latest brief
 - The repo is public. Company data lives only in `seed/private.sql` and the database. Never commit it, and never print brief content in CI logs (`JARVIS_QUIET`).
 - Never read out, log or commit secrets: `.env`, API keys, connection strings.
 - Initiatives created by the coordinator stay `awaiting_approval`. Don't remove the `CHECK` constraint or let the coordinator approve anything.
+- Automatic steps live in `src/autonomy.js`: each kind is validated in code, logged in `coordinator_action` and undoable. Only add a kind that is internal and reversible; anything that contacts a client, sends a document or spends money stays a proposal.
 - Keep the tests green, and add a test with every behaviour change.

@@ -719,6 +719,129 @@ await check('the Documents tab renders Markdown without ever inserting HTML', as
   assert.doesNotMatch(mdBlock, /innerHTML/);
 });
 
+// Autonomy: small internal steps Synaut takes itself, each checked, logged and undoable.
+const auto = await import('../src/autonomy.js');
+
+await check('Synaut takes its allowed steps itself, refuses the rest, and never fails a run over a bad one', async () => {
+  const { BRIEF_TOOL } = await import('../src/prompt.js');
+  assert.ok(BRIEF_TOOL.input_schema.required.includes('actions'));
+  assert.equal((await db.query(`SELECT enabled FROM coordinator_config WHERE key = 'autonomy'`)).rows[0].enabled, true);
+  await db.query(`INSERT INTO clients (name, market, status) VALUES ('Auto Lead', 'uk', 'lead'), ('Dated Lead', 'uk', 'lead'), ('Third Lead', 'uk', 'lead')`);
+  await db.query(`UPDATE clients SET next_contact_due = current_date + 5 WHERE name = 'Dated Lead'`);
+  const old = (await db.query(`SELECT id FROM journal WHERE kind = 'suggestion' AND author = 'coordinator' ORDER BY created_at LIMIT 1`)).rows[0];
+  await db.query(`UPDATE journal SET created_at = now() - interval '5 days' WHERE id = $1`, [old.id]);
+  const fresh = (await db.query(`SELECT id FROM journal WHERE kind = 'suggestion' AND author = 'coordinator' ORDER BY created_at DESC LIMIT 1`)).rows[0];
+  const withActions = { ...answer, proposed_initiatives: [], actions: [
+    { type: 'add_task', title: 'Draft the UK target client list', detail: 'Ten names with a contact each.', project: 'company operations', due: '2099-01-31', priority: 2, reason: 'No target list exists.' },
+    { type: 'add_task', title: 'draft the UK target client list', reason: 'duplicate' },
+    { type: 'send_email', title: 'Email the client', reason: 'not allowed' },
+    { type: 'set_next_contact', client: 'auto lead', next_contact: new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10), reason: 'A lead with no next contact.' },
+    { type: 'set_next_contact', client: 'Dated Lead', next_contact: '2099-01-01', reason: 'already dated' },
+    { type: 'set_next_contact', client: 'Auto Lead', next_contact: '2026-13-45', reason: 'bad date' },
+    { type: 'review_suggestion', suggestion_id: old.id, acted_on: false, outcome: 'Nobody logged a touchpoint since.', reason: 'No touchpoints.' },
+    { type: 'review_suggestion', suggestion_id: fresh.id, acted_on: true, reason: 'too new' },
+  ] };
+  const out = await runCoordinator({ db, brain: { async think() { return { output: withActions, model: 'fake-model', usage: { input: 1, output: 1 } }; } } });
+  // Six reach the checks (the brief keeps at most six); three are taken.
+  assert.deepEqual(out.brief.actions_taken.map((a) => a.type), ['add_task', 'set_next_contact']);
+  assert.deepEqual(out.brief.actions_skipped.map((a) => a.type), ['add_task', 'send_email', 'set_next_contact', 'set_next_contact']);
+  assert.match(out.brief.actions_skipped[0].why, /already an open task/);
+  assert.match(out.brief.actions_skipped[1].why, /not an action/);
+  assert.match(out.brief.actions_skipped[2].why, /already has a next contact date/);   // never moves an existing date
+  assert.match(out.brief.actions_skipped[3].why, /already has a next contact date/);
+  const task = (await db.query(`SELECT t.title, t.due_date::text AS due, t.priority, p.name AS project FROM tasks t LEFT JOIN projects p ON p.id = t.project_id WHERE t.title = 'Draft the UK target client list'`)).rows[0];
+  assert.deepEqual(task, { title: 'Draft the UK target client list', due: '2099-01-31', priority: 2, project: 'Company operations' });
+  assert.ok((await db.query(`SELECT next_contact_due FROM clients WHERE name = 'Auto Lead'`)).rows[0].next_contact_due);
+
+  // The review step on its own (it was cut by the six-action limit above), straight through the checks.
+  const r = await db.transaction((tx) => auto.applyActions(tx, [
+    { type: 'review_suggestion', suggestion_id: old.id, acted_on: false, outcome: 'Nobody logged a touchpoint since.', reason: 'No touchpoints.' },
+    { type: 'review_suggestion', suggestion_id: fresh.id, acted_on: true, reason: 'too new' },
+    { type: 'set_next_contact', client: 'Third Lead', next_contact: '2026-13-45', reason: 'bad date' },
+    { type: 'set_next_contact', client: 'Third Lead', next_contact: '2099-01-01', reason: 'too far' },
+  ], { runId: null }));
+  assert.equal(r.taken.length, 1);
+  assert.match(r.skipped[0].why, /three or more days old/);
+  assert.match(r.skipped[1].why, /real YYYY-MM-DD/);
+  assert.match(r.skipped[2].why, /within the next 90 days/);
+  const reviewed = (await db.query(`SELECT acted_on, outcome FROM journal WHERE id = $1`, [old.id])).rows[0];
+  assert.deepEqual(reviewed, { acted_on: false, outcome: 'Nobody logged a touchpoint since.' });
+  assert.equal((await db.query(`SELECT count(*)::int AS n FROM journal WHERE reviews_id = $1`, [old.id])).rows[0].n, 1);
+
+  const d = await web.getDashboard(db);
+  assert.equal(d.autonomy, true);
+  assert.equal(d.actions.length, 3);
+  assert.equal(d.tasks.find((t) => t.title === 'Draft the UK target client list').by_synaut, true);
+  const { gatherContext } = await import('../src/context.js');
+  const ctx = await gatherContext(db);
+  assert.equal(ctx.recentActions.length, 3);
+  assert.ok(ctx.recentSuggestions.every((x) => x.id));
+});
+
+await check('the owner can undo each automatic step, once', async () => {
+  const steps = (await db.query(`SELECT id, kind, target_id FROM coordinator_action ORDER BY created_at`)).rows;
+  for (const a of steps) assert.deepEqual(await auto.undoAction(db, a.id), { id: a.id, undone: true });
+  assert.equal(await auto.undoAction(db, steps[0].id), null);
+  await assert.rejects(auto.undoAction(db, 'nope'), /bad action id/);
+  assert.equal((await db.query(`SELECT state FROM tasks WHERE title = 'Draft the UK target client list'`)).rows[0].state, 'cancelled');
+  assert.equal((await db.query(`SELECT next_contact_due FROM clients WHERE name = 'Auto Lead'`)).rows[0].next_contact_due, null);
+  const review = steps.find((a) => a.kind === 'review_suggestion');
+  assert.deepEqual((await db.query(`SELECT acted_on, outcome FROM journal WHERE id = $1`, [review.target_id])).rows[0], { acted_on: null, outcome: null });
+  assert.equal((await db.query(`SELECT count(*)::int AS n FROM journal WHERE reviews_id = $1`, [review.target_id])).rows[0].n, 0);
+  assert.ok((await web.getDashboard(db)).actions.every((a) => a.undone_at));
+});
+
+await check('switching autonomy off stops every automatic step and drops it from the instructions', async () => {
+  assert.deepEqual(await auto.setAutonomy(db, false), { enabled: false });
+  await assert.rejects(auto.setAutonomy(db, 'yes'), /true or false/);
+  const before = (await db.query(`SELECT count(*)::int AS n FROM tasks`)).rows[0].n;
+  let shown;
+  const out = await runCoordinator({ db, brain: { async think(a) { shown = a; return { output: { ...answer, proposed_initiatives: [], actions: [{ type: 'add_task', title: 'Something new', reason: 'r' }] }, usage: {} }; } } });
+  assert.deepEqual(out.brief.actions_taken, []);
+  assert.match(out.brief.actions_skipped[0].why, /switched off/);
+  assert.equal((await db.query(`SELECT count(*)::int AS n FROM tasks`)).rows[0].n, before);
+  assert.doesNotMatch(shown.system, /- autonomy:/);
+  assert.equal((await web.getDashboard(db)).autonomy, false);
+  await auto.setAutonomy(db, true);
+});
+
+await check('Synaut never piles up more than ten open tasks of its own', async () => {
+  let taken = 0;
+  for (let i = 0; i < 5; i++) {
+    const r = await db.transaction((tx) => auto.applyActions(tx,
+      [0, 1, 2].map((j) => ({ type: 'add_task', title: `Cap test ${i}-${j}`, reason: 'r' })), { runId: null }));
+    taken += r.taken.length;
+  }
+  assert.equal(taken, 10);
+});
+
+await check('the dashboard and chat work before migration 006 has run', async () => {
+  const fresh = new PGlite();
+  await migrate(fresh, () => {});
+  await fresh.query(`DROP TABLE coordinator_action`);
+  await fresh.query(`DELETE FROM coordinator_config WHERE key = 'autonomy'`);
+  const d = await web.getDashboard(fresh);
+  assert.deepEqual(d.actions, []);
+  assert.equal(d.autonomy, null);
+  const { gatherContext } = await import('../src/context.js');
+  assert.deepEqual((await gatherContext(fresh)).recentActions, []);
+  await assert.rejects(auto.setAutonomy(fresh, true), /not ready yet/);
+});
+
+await check('the schedule runs every two hours on weekdays and is kept alive', async () => {
+  const yml = fs0.readFileSync(new URL('../.github/workflows/coordinator.yml', import.meta.url), 'utf8');
+  assert.match(yml, /cron: '17 4 \* \* \*'/);                        // the nightly run is still recognised by its exact cron
+  assert.match(yml, /cron: '23 6-18\/2 \* \* 1-5'/);
+  assert.match(yml, /github\.event\.schedule }}" = "17 4 \* \* \*"/);
+  const keep = fs0.readFileSync(new URL('../.github/workflows/keepalive.yml', import.meta.url), 'utf8');
+  assert.match(keep, /actions: write/);
+  assert.match(keep, /workflows\/\$wf\/enable/);
+  const { PAGE } = await import('../src/page.js');
+  assert.match(PAGE, /Done on its own/);
+  assert.match(PAGE, /Acts on its own/);
+  new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);
+});
+
 // Only where the private seed exists (your machine, never public CI).
 const { DEFAULT_SEED } = await import('../src/seed.js');
 const fs = await import('node:fs');

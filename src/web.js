@@ -87,8 +87,22 @@ export async function getDashboard(db) {
       if (err.code === '42P01') return { rows: [] };
       throw err;
     })).rows;
+  // Steps Synaut took on its own in the last week, newest first. Missing until migration 006 runs.
+  const actions = (await db.query(`
+    SELECT id, kind, summary, reason, target_id, created_at, undone_at
+      FROM coordinator_action WHERE created_at > now() - interval '7 days' ORDER BY created_at DESC LIMIT 40`).catch((err) => {
+      if (err.code === '42P01') return { rows: [] };
+      throw err;
+    })).rows;
+  const bySynaut = new Set((await db.query(`SELECT target_id FROM coordinator_action WHERE kind = 'add_task' AND undone_at IS NULL`)
+    .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows.map((r) => r.target_id));
+  for (const t of tasks) t.by_synaut = bySynaut.has(t.id);
+  const autonomy = (await db.query(`SELECT enabled FROM coordinator_config WHERE key = 'autonomy'`)).rows[0] || null;
   const agents = await agentsSummary(db);
-  return { latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools() };
+  return {
+    latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools(),
+    actions, autonomy: autonomy ? autonomy.enabled : null,   // null: not set up yet
+  };
 }
 
 // The owner's decision on one plan. Only plans still awaiting approval can change.

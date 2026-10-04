@@ -7,7 +7,7 @@ export const BRIEF_TOOL = {
   input_schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['weakest_link', 'one_thing_today', 'priorities', 'suggestions', 'proposed_initiatives', 'questions_for_owner'],
+    required: ['weakest_link', 'one_thing_today', 'priorities', 'suggestions', 'proposed_initiatives', 'questions_for_owner', 'actions'],
     properties: {
       weakest_link: {
         type: 'object',
@@ -75,6 +75,28 @@ export const BRIEF_TOOL = {
           },
         },
       },
+      actions: {
+        type: 'array', maxItems: 6,
+        description: "Small internal steps you take yourself right now, without waiting for the owner. Only when the standing instructions include 'autonomy'; otherwise send an empty list. Each is logged and the owner can undo it. Never use this to contact a client, send a document, spend money or change a partner's work: propose an initiative instead. Prefer none over a weak one.",
+        items: {
+          type: 'object', additionalProperties: false, required: ['type', 'reason'],
+          properties: {
+            type: { type: 'string', enum: ['add_task', 'set_next_contact', 'review_suggestion'],
+              description: "add_task: capture a concrete next step nobody has written down (at most 3 per run, never a duplicate of an open task). set_next_contact: give a lead or active client with no next contact date a first one, within 90 days. review_suggestion: mark one of your own suggestions from recentSuggestions, at least 3 days old and not yet reviewed, as acted on or not, from the evidence." },
+            reason: { type: 'string', description: 'One sentence of evidence from the data.' },
+            title: { type: 'string', description: 'add_task: the task, starting with a verb.' },
+            detail: { type: 'string', description: 'add_task: what done looks like.' },
+            project: { type: 'string', description: 'add_task: exact project name from the data, or omit.' },
+            due: { type: 'string', description: 'add_task: YYYY-MM-DD, today or later, if there is a real deadline.' },
+            priority: { type: 'integer', minimum: 1, maximum: 4, description: 'add_task: 1 = urgent, 4 = low.' },
+            client: { type: 'string', description: 'set_next_contact: exact client name from the data.' },
+            next_contact: { type: 'string', description: 'set_next_contact: YYYY-MM-DD.' },
+            suggestion_id: { type: 'string', description: 'review_suggestion: the id from recentSuggestions.' },
+            acted_on: { type: 'boolean', description: 'review_suggestion: whether the data shows it was acted on.' },
+            outcome: { type: 'string', description: 'review_suggestion: what happened, in one sentence.' },
+          },
+        },
+      },
       questions_for_owner: {
         type: 'array', maxItems: 3,
         description: 'Missing facts that would change your advice, e.g. an unbriefed project or a client with no data.',
@@ -95,6 +117,7 @@ How to work:
 - Base every claim on the data you are given. If something is unknown, say so or ask in questions_for_owner; never invent clients, numbers or dates.
 - Look at what was suggested recently and whether it was acted on. Follow up on what was ignored instead of piling on new ideas.
 - Projects in phase 'not_briefed' have no description yet. Do not plan their work; ask for a briefing instead.
+- Keep work moving between the owner's visits. Where the standing instructions allow it (autonomy), take the small internal steps yourself through actions instead of only suggesting them. recentActions shows what you did lately and what the owner undid; learn from the undos.
 - Keep everything short, specific and doable. The owner is one person carrying many projects, so less is more.
 
 Record your brief by calling write_morning_brief exactly once.`;

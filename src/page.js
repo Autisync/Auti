@@ -194,6 +194,7 @@ export const PAGE = `<!doctype html>
   .toolbar + section, .toolbar + .form + section { margin-top: 22px; }
   .toolbar .more { margin-top: 0; }
   .row .acts { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .list .acts { display: flex; gap: 8px; margin-top: 8px; }
   .mini { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
   .mini:hover { color: var(--cyan); border-color: var(--cyan-glow); }
   .mini.go { color: var(--green); border-color: rgba(77,255,158,0.35); }
@@ -359,7 +360,7 @@ export const PAGE = `<!doctype html>
     <div class="tabs" role="tablist" id="tabs"></div>
   </div>
   <div id="root"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
-  <footer>NOTHING SYNAUT PROPOSES TAKES EFFECT UNTIL YOU APPROVE IT</footer>
+  <footer>PLANS, CLIENT MESSAGES AND MONEY WAIT FOR YOUR APPROVAL</footer>
 </main>
 
 <div class="dock" id="dock">
@@ -470,6 +471,7 @@ function viewOverview(root) {
   const focus = $('div', 'card focus');
   focus.append($('span', 'kicker', '◎ One thing today'), document.createTextNode(b.one_thing_today));
   root.append(section('Situation', alert, focus));
+  autoSection(root);
   if (b.priorities?.length) {
     const ul = $('ul', 'list');
     b.priorities.forEach((p, i) => {
@@ -502,6 +504,36 @@ function viewOverview(root) {
     });
     root.append(section('Questions for you', card(ul)));
   }
+}
+
+// What Synaut did on its own since the owner last looked. Each step can be undone with one tap.
+const ACTION_LABEL = { add_task: 'task', set_next_contact: 'client', review_suggestion: 'review' };
+function autoSection(root) {
+  const list = (data.actions || []).slice(0, 8);
+  if (!list.length && data.autonomy !== false) return;
+  const c = card();
+  if (data.autonomy === false) { const off = $('p', 'empty', 'Automatic steps are switched off. Turn them on from the Agents tab.'); off.style.marginBottom = list.length ? '12px' : '0'; c.append(off); }
+  if (list.length) {
+    const ul = $('ul', 'list');
+    list.forEach((a) => {
+      const li = $('li'); const body = $('div'); const t = $('div', 'item-title', a.summary);
+      t.append($('span', 'tag', ACTION_LABEL[a.kind] || a.kind));
+      if (a.undone_at) t.append($('span', 'tag warn', 'undone'));
+      body.append(t, $('div', 'detail', [a.reason, ago(a.created_at)].filter(Boolean).join(' · ')));
+      if (!a.undone_at) {
+        const undo = $('button', 'mini', 'Undo');
+        undo.onclick = async () => {
+          undo.disabled = true;
+          try { await post('/api/autonomy', { undo: a.id }); await load(); }
+          catch (e) { undo.disabled = false; body.append($('span', 'error', e.message)); }
+        };
+        const row = $('div', 'acts'); row.append(undo); body.append(row);
+      }
+      li.append($('span', 'bullet'), body); ul.append(li);
+    });
+    c.append(ul);
+  }
+  root.append(section('Done on its own', c));
 }
 
 function planCard(p) {
@@ -691,6 +723,7 @@ function viewTasks(root) {
       const title = $('div', 'item-title', t.title);
       title.append($('span', 'tag' + (t.state === 'blocked' ? ' bad' : t.state === 'doing' ? ' ok' : ''), STATE_LABEL[t.state]));
       if (t.overdue) title.append($('span', 'tag warn', 'overdue'));
+      if (t.by_synaut) title.append($('span', 'tag', 'by Synaut'));
       const meta = $('div', 'meta', t.due_date ? 'due ' + day(t.due_date) : 'no due date');
       if (t.owner) meta.append($('div', null, t.owner));
       if (t.completed_at) meta.append($('div', null, 'done ' + ago(t.completed_at)));
@@ -847,6 +880,15 @@ function viewAgents(root) {
     c.append(head, $('div', 'detail', a.role), use, meter);
     if (a.models.length) c.append($('div', 'detail', 'Model: ' + a.models.join(', ')));
     if (a.id !== 'coordinator') { const t = $('button', 'more', 'Talk to ' + a.name + ' →'); t.onclick = () => openChat(a.id); c.append(t); }
+    if (a.id === 'coordinator') {
+      const on = data.autonomy === true;
+      const t = $('button', 'more', data.autonomy == null ? 'Acts on its own: after the next run' : 'Acts on its own: ' + (on ? 'on' : 'off'));
+      t.setAttribute('aria-pressed', String(on));
+      t.title = data.autonomy == null ? 'The next scheduled run sets this up' : on ? 'Tap to stop automatic steps; everything then waits for you' : 'Tap to let Synaut take small internal steps itself';
+      t.disabled = data.autonomy == null;
+      t.onclick = async () => { t.disabled = true; try { await post('/api/autonomy', { enabled: !on }); await load(); } catch (e) { t.disabled = false; t.textContent = e.message; } };
+      c.append(t);
+    }
     return c;
   })));
 }

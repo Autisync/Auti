@@ -1,0 +1,26 @@
+name: Keep the schedule alive
+
+# GitHub pauses scheduled workflows in a public repo after 60 days without repository activity,
+# which would silently stop Synaut. Twice a month this re-enables the coordinator's schedule and itself,
+# which resets that clock. It changes nothing in the code and makes no commit.
+on:
+  schedule:
+    - cron: '41 3 1,15 * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Re-enable the scheduled workflows
+        run: |
+          for wf in coordinator.yml keepalive.yml; do
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$wf/enable"
+            echo "enabled $wf"
+          done
