@@ -637,7 +637,7 @@ const msgs = document.getElementById('msgs'); const input = document.getElementB
 const MOODS = [
   ['witty', 'Witty', '😏'], ['unhinged', 'Unhinged', '🤪'], ['storyteller', 'Storyteller', '📖'], ['genius', 'Genius', '🧠'],
   ['debate', 'Argumentative', '⚔️'], ['motivation', 'Motivation', '🔥'], ['therapist', 'Unlicensed therapist', '🛋️'],
-  ['conspiracy', 'Conspiracy', '🛸'], ['quiz', 'Quiz master', '🎯'], ['calm', 'Meditation', '🌙'],
+  ['conspiracy', 'Conspiracy', '🛸'], ['quiz', 'Quiz master', '🎯'], ['saint', 'Latter-day Saint', '🕊️'], ['calm', 'Meditation', '🌙'],
 ];
 let mood = (() => { try { const m = localStorage.getItem('synaut.mood'); return MOODS.some(([k]) => k === m) ? m : 'witty'; } catch { return 'witty'; } })();
 let moodVoice = { rate: 0.96, pitch: 0.98 };

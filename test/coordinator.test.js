@@ -327,6 +327,7 @@ await check('the companion plays the mood the owner picks, and refuses made-up m
   assert.match(sys, /no slurs or hate/);
   assert.match(sys, /read aloud/);                                    // the driving rules stay in every mood
   assert.match(await chatMod.systemFor('companion', db, {}), /default self/);
+  assert.match(await chatMod.systemFor('companion', db, { mood: 'saint' }), /Church of Jesus Christ of Latter-day Saints/);
   assert.ok(Object.keys(chatMod.MOODS).length >= 8);
   for (const m of Object.values(chatMod.MOODS)) assert.ok(m.voice.rate > 0.5 && m.voice.rate < 1.5);
   const brain = { async reply() { return { text: 'Right then.', model: 'fake', usage: { input: 1, output: 1 } }; } };
