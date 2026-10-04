@@ -321,6 +321,20 @@ await check('the road companion talks for the ear, can search the web, and keeps
   assert.ok(companion.usage.day.cost > 0);
 });
 
+await check('the companion plays the mood the owner picks, and refuses made-up moods', async () => {
+  const sys = await chatMod.systemFor('companion', db, { mood: 'unhinged' });
+  assert.match(sys, /Unhinged mode/);
+  assert.match(sys, /no slurs or hate/);
+  assert.match(sys, /read aloud/);                                    // the driving rules stay in every mood
+  assert.match(await chatMod.systemFor('companion', db, {}), /default self/);
+  assert.ok(Object.keys(chatMod.MOODS).length >= 8);
+  for (const m of Object.values(chatMod.MOODS)) assert.ok(m.voice.rate > 0.5 && m.voice.rate < 1.5);
+  const brain = { async reply() { return { text: 'Right then.', model: 'fake', usage: { input: 1, output: 1 } }; } };
+  const out = await chatMod.chat(db, brain, { agent: 'companion', mood: 'calm', messages: [{ role: 'user', content: 'hi' }] });
+  assert.deepEqual(out.voice, chatMod.MOODS.calm.voice);
+  await assert.rejects(chatMod.chat(db, brain, { agent: 'companion', mood: 'sexy', messages: [{ role: 'user', content: 'hi' }] }), /unknown mood/);
+});
+
 await check('an unknown agent is refused', async () => {
   await assert.rejects(chatMod.systemFor('root', db), /unknown agent/);
 });

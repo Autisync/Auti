@@ -243,6 +243,15 @@ export const PAGE = `<!doctype html>
   .big-orb.speaking { animation: breathe .7s ease-in-out infinite; }
   .drive-state { font: 600 13px/1 var(--mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
   .drive-heard { color: var(--ink); font-size: 18px; min-height: 2.8em; max-width: 320px; }
+  .moods { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .moods::-webkit-scrollbar { display: none; }
+  .moods[hidden] { display: none; }
+  .mood { flex: none; display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+          border-radius: 999px; padding: 7px 12px; cursor: pointer; font: 600 12px/1 var(--sans); }
+  .mood:hover { color: var(--ink); }
+  .mood[aria-pressed="true"] { color: #fff; background: linear-gradient(135deg, rgba(166,139,255,0.35), rgba(62,224,255,0.18)); border-color: rgba(166,139,255,0.6); box-shadow: 0 0 16px -4px rgba(166,139,255,0.7); }
+  .drive .moods { position: absolute; top: env(safe-area-inset-top); left: 0; right: 0; border-bottom: 0; padding: 16px; justify-content: safe center; }
+  .note { align-self: center; font: 600 11px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--violet); padding: 4px 0; }
   .drive-exit { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 10px 18px; cursor: pointer; font: 600 12px/1 var(--mono); letter-spacing: 0.1em; }
 
   /* motion */
@@ -307,6 +316,7 @@ export const PAGE = `<!doctype html>
     <button class="icon-btn" id="clear" title="New conversation" aria-label="New conversation">⟲</button>
     <button class="icon-btn" id="close" title="Close" aria-label="Close">✕</button>
   </div>
+  <div class="moods" id="moods" role="group" aria-label="Companion mood" hidden></div>
   <div class="msgs" id="msgs" aria-live="polite"></div>
   <div class="drive-toggle"><button id="drive-on"><svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px;margin-right:6px" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>Hands-free voice</button></div>
   <form class="compose" id="compose">
@@ -315,6 +325,7 @@ export const PAGE = `<!doctype html>
     <button type="submit" class="round send" title="Send" aria-label="Send">↑</button>
   </form>
   <div class="drive" id="drive" hidden>
+    <div class="moods" id="drive-moods" role="group" aria-label="Companion mood"></div>
     <div class="drive-state" id="drive-state">Tap to talk</div>
     <button class="big-orb" id="big-orb" aria-label="Talk"></button>
     <div class="drive-heard" id="drive-heard"></div>
@@ -616,17 +627,47 @@ setInterval(() => { if (!document.hidden && !document.querySelector('button.conf
 /* ---------- chat ---------- */
 const AGENT_INFO = {
   assistant: { name: 'Synaut', placeholder: 'Ask Synaut about the company…', intro: 'Your coordinator, with the full picture of the company. Ask what to focus on, test a decision, or think out loud.' },
-  companion: { name: 'Companion', placeholder: 'Say anything…', intro: 'Company for the road. Ask about the news, a big idea, a bit of history, or just talk. Replies are read aloud; tap the mic below the chat for hands-free.' },
+  companion: { name: 'Companion', placeholder: 'Say anything…', intro: 'Company for the road. Pick a mood above, then ask about the news, a big idea, a bit of history, or just talk. Replies are read aloud; Hands-free voice lets you switch moods by saying, for example, "storyteller mode".' },
 };
 let agent = store.get('synaut.agent') || 'assistant';
 const convos = store.get('synaut.convos') || { assistant: [], companion: [] };
 let busy = false, voiceTurn = false;
 const msgs = document.getElementById('msgs'); const input = document.getElementById('input');
 
+const MOODS = [
+  ['witty', 'Witty', '😏'], ['unhinged', 'Unhinged', '🤪'], ['storyteller', 'Storyteller', '📖'], ['genius', 'Genius', '🧠'],
+  ['debate', 'Argumentative', '⚔️'], ['motivation', 'Motivation', '🔥'], ['therapist', 'Unlicensed therapist', '🛋️'],
+  ['conspiracy', 'Conspiracy', '🛸'], ['quiz', 'Quiz master', '🎯'], ['calm', 'Meditation', '🌙'],
+];
+let mood = (() => { try { const m = localStorage.getItem('synaut.mood'); return MOODS.some(([k]) => k === m) ? m : 'witty'; } catch { return 'witty'; } })();
+let moodVoice = { rate: 0.96, pitch: 0.98 };
+function paintMoods() {
+  for (const id of ['moods', 'drive-moods']) {
+    const row = document.getElementById(id); row.replaceChildren();
+    if (id === 'moods') row.hidden = agent !== 'companion';
+    MOODS.forEach(([k, label, icon]) => {
+      const b = $('button', 'mood'); b.type = 'button'; b.append($('span', null, icon), document.createTextNode(label));
+      b.setAttribute('aria-pressed', String(k === mood));
+      b.onclick = () => setMood(k);
+      row.append(b);
+    });
+    row.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }
+}
+function setMood(k, spoken) {
+  if (k === mood) return;
+  mood = k; try { localStorage.setItem('synaut.mood', k); } catch {}
+  paintMoods();
+  const label = MOODS.find(([m]) => m === k)[1];
+  if (agent === 'companion') { msgs.append($('div', 'note', 'Mood · ' + label)); msgs.scrollTop = msgs.scrollHeight; }
+  if (spoken && drive.on) speak(label + ' mode.');
+}
+
 function paintChat() {
   [...document.querySelectorAll('#seg button')].forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.agent === agent)));
   input.placeholder = AGENT_INFO[agent].placeholder;
   paintSpeaker();
+  paintMoods();
   msgs.replaceChildren();
   if (!convos[agent].length) { const i = $('div', 'intro'); i.append($('b', null, AGENT_INFO[agent].name), document.createTextNode(AGENT_INFO[agent].intro)); msgs.append(i); }
   convos[agent].forEach((m) => msgs.append($('div', 'msg ' + m.role, m.content)));
@@ -657,11 +698,12 @@ async function ask(text) {
   let tick = 0; const t = setInterval(() => { typing.textContent = ['·', '··', '···'][tick++ % 3]; }, 350);
   try {
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent: who, messages: convos[who], voice: voiceTurn || drive.on }) });
+      body: JSON.stringify({ agent: who, messages: convos[who], voice: voiceTurn || drive.on, mood }) });
     const out = await r.json();
     if (!r.ok) throw new Error(out.error || 'Something went wrong');
     convos[who].push({ role: 'assistant', content: out.reply }); store.set('synaut.convos', convos);
     if (agent === who) paintChat();
+    moodVoice = out.voice || { rate: 0.96, pitch: 0.98 };
     if (voiceTurn || drive.on || speakerOn(who)) speak(out.reply);
     else afterSpeak();
   } catch (e) {
@@ -708,7 +750,7 @@ function speak(text) {
   parts.forEach((p, i) => {
     const u = new SpeechSynthesisUtterance(p.trim());
     if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-GB';
-    u.rate = 0.96; u.pitch = 0.98;
+    u.rate = moodVoice.rate; u.pitch = moodVoice.pitch;
     if (i === parts.length - 1) u.onend = afterSpeak;
     u.onerror = (e) => { if (e.error !== 'interrupted' && e.error !== 'canceled') afterSpeak(); };
     synth.speak(u);
@@ -741,6 +783,9 @@ function listen() {
     const said = finalText.trim();
     if (said) {
       if (drive.on && /^(stop|exit|goodbye|bye)[.!]?$/i.test(said)) return stopDrive();
+      const asked = agent === 'companion' && /\\b(mode|mood|switch to|be)\\b/i.test(said) && said.split(' ').length <= 6
+        && MOODS.find(([k, label]) => new RegExp('\\\\b(' + k + '|' + label.split(' ').pop() + ')\\\\b', 'i').test(said));
+      if (asked) { setMood(asked[0], true); return; }
       voiceTurn = true; input.value = '';
       if (drive.on) setDrive('thinking', said);
       ask(said);
@@ -759,7 +804,7 @@ document.getElementById('mic').onclick = () => {
 function setDrive(state, text) {
   const orb = document.getElementById('big-orb'); orb.className = 'big-orb ' + (['listening', 'thinking', 'speaking'].includes(state) ? state : '');
   document.getElementById('drive-state').textContent = { idle: 'Tap to talk', listening: 'Listening', thinking: 'Thinking', speaking: AGENT_INFO[agent].name + ' speaking · tap to interrupt', error: 'Tap to try again' }[state];
-  document.getElementById('drive-heard').textContent = text || (state === 'idle' ? 'Say "stop" any time to end.' : '');
+  document.getElementById('drive-heard').textContent = text || (state === 'idle' ? (agent === 'companion' ? 'Pick a mood up top, or say "unhinged mode". Say "stop" to end.' : 'Say "stop" any time to end.') : '');
 }
 function startDrive() {
   if (!SR) { msgs.append($('div', 'msg err', 'Hands-free voice needs Chrome or Safari.')); return; }

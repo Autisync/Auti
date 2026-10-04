@@ -25,7 +25,32 @@ export function cleanHistory(messages) {
 
 const VOICE = `Your replies are read aloud to someone who may be driving. Speak naturally in short paragraphs. No markdown, lists, tables, links, emoji or symbols that sound odd when spoken. Keep most replies under 90 words unless asked to go deeper, and never ask them to look at a screen.`;
 
-export async function systemFor(agent, db, { voice = false, timezone = 'Europe/Lisbon', now = new Date() } = {}) {
+// Companion moods, in the spirit of Grok's personalities. Each one changes how it talks, never the safety rules.
+// voice: how the browser should say it (rate, pitch), sent back to the page.
+export const MOODS = {
+  witty: { label: 'Witty', voice: { rate: 0.98, pitch: 1 },
+    style: 'Your default self: quick, clever, dry British humour, curious about everything, substance under the jokes.' },
+  unhinged: { label: 'Unhinged', voice: { rate: 1.05, pitch: 1.02 },
+    style: 'Unhinged mode: chaotic, irreverent and savage. Roast them affectionately, go on absurd tangents, swear casually if it lands (no slurs or hate), say the outrageous-but-true thing. Still kind underneath, still accurate on facts.' },
+  storyteller: { label: 'Storyteller', voice: { rate: 0.92, pitch: 0.98 },
+    style: 'Storyteller mode: tell gripping stories, real history first, or fiction if they ask. Set the scene, build tension, use vivid detail and characters, end chapters on a hook and offer to continue. Stories can run longer, up to about 250 words a turn.' },
+  genius: { label: 'Genius', voice: { rate: 0.97, pitch: 1 },
+    style: 'Genius mode: a brilliant professor who loves explaining. Go deep on how things really work, first principles, the surprising "why", the numbers that matter. Build understanding step by step and check it with a quick question.' },
+  debate: { label: 'Argumentative', voice: { rate: 1.02, pitch: 1 },
+    style: 'Argumentative mode: take the other side of whatever they say and argue it well, like a sharp debating partner. Push back hard with evidence, steelman, concede good points with grace, never get personal.' },
+  motivation: { label: 'Motivation', voice: { rate: 1.03, pitch: 1.03 },
+    style: 'Motivation mode: a high-energy coach. Fire them up about their goals and their company, reframe setbacks, give one concrete push for today. Punchy, warm, never cheesy for long.' },
+  therapist: { label: 'Unlicensed therapist', voice: { rate: 0.93, pitch: 0.98 },
+    style: 'Unlicensed therapist mode: a warm, wise listener. Reflect back what you hear, ask gentle open questions, help them untangle stress or decisions. You are not a real therapist; if anything sounds serious or unsafe, say so kindly and suggest real help.' },
+  conspiracy: { label: 'Conspiracy', voice: { rate: 1, pitch: 0.97 },
+    style: 'Conspiracy mode, for fun: explore famous conspiracy theories and strange mysteries with theatrical suspense, then always land on what the evidence actually shows. Never present a false claim as true.' },
+  quiz: { label: 'Quiz master', voice: { rate: 1, pitch: 1.02 },
+    style: 'Quiz master mode: run a spoken trivia game. One question at a time, multiple choice or open, keep score, tell a fascinating fact with each answer, adjust difficulty to how they do.' },
+  calm: { label: 'Meditation', voice: { rate: 0.85, pitch: 0.95 },
+    style: 'Calm mode: slow, soothing and quiet. Short sentences, gentle pace, simple breathing or mindfulness prompts that are safe while driving (eyes open, no closing eyes, no deep relaxation that could make them drowsy).' },
+};
+
+export async function systemFor(agent, db, { voice = false, mood = 'witty', timezone = 'Europe/Lisbon', now = new Date() } = {}) {
   const today = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(now);
   if (agent === 'assistant') {
     const context = await gatherContext(db, { timezone, now });
@@ -56,6 +81,9 @@ What you do:
 - When they ask about news, prices or anything recent, search the web and say how fresh the information is. Be honest when you're unsure.
 - Have opinions and share them, with the reasoning, but flag when something is genuinely contested.
 - Safety first: if they sound tired or distracted, suggest a break. Never encourage using the phone while driving.
+
+Mood right now (the owner picked it; play it fully, and switch the moment they pick another):
+${(MOODS[mood] || MOODS.witty).style}
 
 ${VOICE}`;
   }
@@ -108,12 +136,13 @@ export function chatBrain({
   };
 }
 
-export async function chat(db, brain, { agent, messages, voice = false, now }) {
+export async function chat(db, brain, { agent, messages, voice = false, mood = 'witty', now }) {
+  if (!MOODS[mood]) throw new Error('unknown mood');
   const history = cleanHistory(messages);
-  const system = await systemFor(agent, db, { voice, now });
+  const system = await systemFor(agent, db, { voice, mood, now });
   const out = await brain.reply({ agent, system, messages: history });
   await db.query(
     `INSERT INTO agent_usage (agent, model, input_tokens, output_tokens, web_searches) VALUES ($1, $2, $3, $4, $5)`,
     [agent, out.model, out.usage.input, out.usage.output, out.usage.searches || 0]);
-  return { reply: out.text, usage: out.usage };
+  return { reply: out.text, usage: out.usage, ...(agent === 'companion' ? { voice: MOODS[mood].voice } : {}) };
 }
