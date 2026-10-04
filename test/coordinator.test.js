@@ -303,6 +303,35 @@ await check('the owner can log a stand-up, and the next run sees it', async () =
   assert.ok((await gatherContext(db)).journal.some((e) => e.kind === 'standup' && /payments/.test(e.body)));
 });
 
+await check('GitHub sync moves project activity forward from each linked repo', async () => {
+  const gh = await import('../src/github.js');
+  assert.equal(gh.normaliseRepo('https://github.com/Example/app.git'), 'Example/app');
+  assert.equal(gh.normaliseRepo(' example/app/ '), 'example/app');
+  assert.equal(gh.normaliseRepo('not a repo'), null);
+  const ps = (await web.getDashboard(db)).projects;
+  const a = ps.find((p) => p.name === 'Project A'), b = ps.find((p) => p.name === 'Project B');
+  assert.deepEqual(await web.setProjectRepo(db, { id: a.id, github_repo: 'github.com/example/project-a' }), { id: a.id, github_repo: 'example/project-a' });
+  await web.setProjectRepo(db, { id: b.id, github_repo: 'example/private-b' });
+  await assert.rejects(web.setProjectRepo(db, { id: a.id, github_repo: 'rm -rf /' }), /owner\/repo/);
+  const calls = [];
+  const fakeFetch = async (url, init) => {
+    calls.push({ url, auth: init.headers.Authorization });
+    if (url.endsWith('/example/private-b')) return new Response('{"message":"Not Found"}', { status: 404 });
+    return new Response(JSON.stringify({ pushed_at: '2026-10-02T09:00:00Z' }), { status: 200 });
+  };
+  assert.deepEqual(await gh.syncGithub(db, { token: 't0ken', fetch: fakeFetch }), { checked: 2, updated: 1, failed: 1 });
+  assert.equal(calls[0].auth, 'Bearer t0ken');
+  assert.ok(calls.some((c) => c.url === 'https://api.github.com/repos/example/project-a'));
+  const when = async () => (await db.query(`SELECT last_activity_at FROM projects WHERE id = $1`, [a.id])).rows[0].last_activity_at.toISOString();
+  assert.equal(await when(), '2026-10-02T09:00:00.000Z');
+  await web.setProjectRepo(db, { id: b.id, github_repo: '' });
+  const older = async () => new Response(JSON.stringify({ pushed_at: '2026-09-01T00:00:00Z' }), { status: 200 });
+  assert.equal((await gh.syncGithub(db, { token: '', fetch: older })).updated, 0);   // never moves backwards
+  assert.equal(await when(), '2026-10-02T09:00:00.000Z');
+  assert.equal((await web.getDashboard(db)).projects.find((p) => p.id === b.id).github_repo, null);
+  await web.setProjectRepo(db, { id: a.id, github_repo: '' });
+});
+
 await check('dropping a plan takes it off the dashboard without approving it', async () => {
   const id = (await db.query(`INSERT INTO initiatives (title, status, created_by_agent) VALUES ('Side quest', 'awaiting_approval', 'coordinator') RETURNING id`)).rows[0].id;
   assert.deepEqual(await web.decide(db, id, 'drop'), { id, status: 'dropped', tasks: 0 });
