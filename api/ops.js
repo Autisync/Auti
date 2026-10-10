@@ -1,13 +1,14 @@
 // One function for the smaller endpoints. Vercel's Hobby plan deploys at most 12 functions,
-// so /api/crm, /api/autonomy and /api/leads are rewritten here (vercel.json) and dispatched by ?op=.
+// so /api/crm, /api/autonomy, /api/leads and /api/voice are rewritten here (vercel.json) and dispatched by ?op=.
 // Files starting with _ in api/ are not deployed as functions of their own.
 import crm from './_crm.js';
 import autonomy from './_autonomy.js';
 import leads from './_leads.js';
+import voice from './_voice.js';
 
 export const config = { maxDuration: 30 };
 
-const OPS = { crm, autonomy, leads };
+const OPS = { crm, autonomy, leads, voice };
 
 export default async function handler(req, res) {
   const op = OPS[String(req.query?.op || '')];

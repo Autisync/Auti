@@ -5,6 +5,7 @@
     { "source": "/", "destination": "/api/page" },
     { "source": "/api/crm", "destination": "/api/ops?op=crm" },
     { "source": "/api/autonomy", "destination": "/api/ops?op=autonomy" },
-    { "source": "/api/leads", "destination": "/api/ops?op=leads" }
+    { "source": "/api/leads", "destination": "/api/ops?op=leads" },
+    { "source": "/api/voice", "destination": "/api/ops?op=voice" }
   ]
 }
