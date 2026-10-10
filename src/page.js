@@ -171,6 +171,7 @@ ${FONTS}
   .agent-ico.companion { background: var(--silver-soft); color: var(--silver); border-color: rgba(230,230,230,0.4); }
   .agent-ico.coordinator { background: var(--amber-soft); color: var(--amber); border-color: rgba(212,135,74,0.4); }
   .agent-name { font-weight: 600; font-size: 17px; }
+  details.memory { margin-top: 10px; } details.memory summary { cursor: pointer; color: var(--gold); font-size: 13px; } details.memory .detail { white-space: pre-wrap; margin-top: 6px; }
   .agent-state { margin-left: auto; font: 12px/1 var(--display); color: var(--muted); display: flex; gap: 6px; align-items: center; white-space: nowrap; }
   .usage { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .use { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
@@ -1079,6 +1080,20 @@ function viewAgents(root) {
     const meter = $('div', 'meter'); const bar = $('i'); bar.style.width = Math.round(100 * (a.usage.month.input + a.usage.month.output) / max) + '%'; meter.append(bar);
     c.append(head, $('div', 'detail', a.role), use, meter);
     if (a.models.length) c.append($('div', 'detail', 'Model: ' + a.models.join(', ')));
+    // Which model this agent uses now, learned from what you approve and dismiss.
+    const mc = a.model_choice;
+    if (mc && mc.choice) {
+      const fam = (m) => (m.includes('haiku') ? 'Haiku' : m.includes('opus') ? 'Opus' : m.includes('sonnet') ? 'Sonnet' : m);
+      const score = Object.entries(mc.scores || {}).map(([f, x]) => f[0].toUpperCase() + f.slice(1) + ' ' + Math.round(100 * x.rate) + '% accepted of ' + x.decided).join(' · ');
+      const box = $('div', 'detail');
+      box.append($('strong', '', 'Uses ' + fam(mc.choice.model) + (mc.choice.auto ? ', chosen by results' : ', pinned') + '. '),
+        document.createTextNode((mc.choice.reason || '') + (score ? ' ' + score + '.' : ' No decided work yet.')));
+      c.append(box);
+    }
+    if (a.id === 'coordinator' && data.latest && data.latest.brief && data.latest.brief.working_summary) {
+      const mem = $('details', 'memory'); mem.append($('summary', '', 'What Auti remembers between runs'), $('div', 'detail', data.latest.brief.working_summary));
+      c.append(mem);
+    }
     if (a.id !== 'coordinator') { const t = $('button', 'more', 'Talk to ' + a.name + ' →'); t.onclick = () => openChat(a.id); c.append(t); }
     if (a.id === 'coordinator') {
       const on = data.autonomy === true;

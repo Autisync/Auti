@@ -14,7 +14,9 @@ const WINDOW = '60 days';
 export function agentModels(agent, env = process.env) {
   const strong = env.JARVIS_MODEL || STRONG;
   const pin = { coordinator: env.AUTI_COORDINATOR_MODEL, retention: env.SYNAUT_RETENTION_MODEL, leads: env.SYNAUT_LEADS_MODEL }[agent];
-  return { strong, cheap: CHEAP, start: agent === 'retention' ? CHEAP : strong, pinned: pin || null };
+  // The coordinator and retention start on Haiku: a side-by-side run on the real company (2026-10-10) gave the
+  // same weakest link and priorities at a twentieth of the cost. Leads (web research) starts on the stronger model.
+  return { strong, cheap: CHEAP, start: agent === 'leads' ? strong : CHEAP, pinned: pin || null };
 }
 
 // What the owner did with each agent's work, per model: accepted or turned down. Undecided work doesn't count.

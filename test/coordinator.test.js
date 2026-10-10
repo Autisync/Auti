@@ -140,10 +140,10 @@ await check('the real Claude client sends a forced tool call and parses the answ
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const { claudeBrain } = await import('../src/llm.js');
-  const real = claudeBrain({ apiKey: 'test-key', model: 'claude-sonnet-5-5', fetch: fakeFetch });
+  const real = claudeBrain({ apiKey: 'test-key', model: 'claude-sonnet-5', fetch: fakeFetch });
   const out = await runCoordinator({ db, brain: real, mode: 'standup' });
   assert.match(sent.url, /\/v1\/messages$/);
-  assert.equal(sent.body.model, 'claude-sonnet-5-5');
+  assert.equal(sent.body.model, 'claude-sonnet-5');
   assert.deepEqual(sent.body.tool_choice, { type: 'tool', name: 'write_morning_brief' });
   assert.equal(sent.body.tools[0].name, 'write_morning_brief');
   assert.equal(out.brief.one_thing_today, answer.one_thing_today);
