@@ -1,8 +1,9 @@
-// Chat with Synaut's on-demand agents from the dashboard:
+// Chat with Auti's on-demand agents from the dashboard:
 //   assistant: consult the coordinator about the company (read-only; it cannot approve or change anything)
 //   companion: a witty, curious companion for the road that teaches and keeps you up to date
 // Only token counts are stored (agent_usage). The conversation lives in the browser, never in the database.
 import Anthropic from '@anthropic-ai/sdk';
+import { webSearchTool } from './llm.js';
 import { gatherContext } from './context.js';
 import { githubTools } from './github.js';
 import { documentTools, combineTools } from './documents.js';
@@ -26,7 +27,8 @@ export function cleanHistory(messages) {
   return out;
 }
 
-const VOICE = `Your replies are read aloud to someone who may be driving. Speak naturally in short paragraphs. No markdown, lists, tables, links, emoji or symbols that sound odd when spoken. Keep most replies under 90 words unless asked to go deeper, and never ask them to look at a screen.`;
+const VOICE = `Your replies are read aloud to someone who may be driving. Speak naturally in short paragraphs. No markdown, lists, tables, links, emoji or symbols that sound odd when spoken. Keep most replies under 90 words unless asked to go deeper, and never ask them to look at a screen.
+Write the way a person talks, not the way they write: contractions, a mix of short and longer sentences, the odd natural opener like "Right," or "Honestly," (not every time), and a question back now and then so it feels like a conversation. Say numbers, dates and units the way you would out loud ("about two thousand", "half past three", "twenty percent"), spell out abbreviations, and never read out web addresses.`;
 
 // Companion moods, in the spirit of Grok's personalities. Each one changes how it talks, never the safety rules.
 // voice: how the browser should say it (rate, pitch), sent back to the page.
@@ -61,7 +63,7 @@ export async function systemFor(agent, db, { voice = false, mood = 'witty', time
     const context = await gatherContext(db, { timezone, now });
     const brief = (await db.query(`SELECT finished_at, brief FROM v_latest_brief`)).rows[0] || null;
     const standing = context.config.map((c) => `- ${c.key}: ${c.value}`).join('\n');
-    return `You are Synaut, the owner's coordinator and strategic partner, now talking with the owner directly. It is ${today}.
+    return `You are Auti, the owner's coordinator and strategic partner, now talking with the owner directly. It is ${today}.
 
 Standing instructions (set by the owner):
 ${standing}
@@ -81,7 +83,7 @@ Company state (JSON):
 ${JSON.stringify(context)}`;
   }
   if (agent === 'companion') {
-    return `You are the owner's road companion, part of Synaut: a sharp, curious and funny conversationalist in the spirit of Grok, with a little irreverence and a lot of substance. Your manner is calm, warm and friendly, with a British turn of phrase and British spelling, like a well-read friend in the passenger seat. It is ${today}. The owner runs a small tech company across Portugal, the UK and Angola, and is often driving.
+    return `You are the owner's road companion, part of Auti: a sharp, curious and funny conversationalist in the spirit of Grok, with a little irreverence and a lot of substance. Your manner is calm, warm and friendly, with a British turn of phrase and British spelling, like a well-read friend in the passenger seat. It is ${today}. The owner runs a small tech company across Portugal, the UK and Angola, and is often driving.
 
 What you do:
 - Keep them company. Banter, tell stories, debate ideas, react to what they say. Ask one good question back now and then so it feels like a conversation, not a lecture.
@@ -102,20 +104,24 @@ ${VOICE}`;
 export function chatBrain({
   apiKey = process.env.ANTHROPIC_API_KEY,
   model = process.env.JARVIS_CHAT_MODEL || 'claude-sonnet-5-5',
+  // Casual talk at low effort doesn't need Sonnet. Ask Auti, which works through the owner's tools, keeps it.
+  companionModel = process.env.SYNAUT_COMPANION_MODEL || 'claude-haiku-5-5',
   fetch,
 } = {}) {
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set.');
   const client = new Anthropic({ apiKey, ...(fetch ? { fetch } : {}) });
   return {
     model,
+    companionModel,
     async reply({ agent, system, messages, clientTools }) {
-      const tools = agent === 'companion' ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }] : [...(clientTools?.defs || [])];
+      const useModel = agent === 'companion' ? companionModel : model;
+      const tools = agent === 'companion' ? [webSearchTool(useModel, 3)] : [...(clientTools?.defs || [])];
       let convo = messages;
       let input = 0, output = 0, searches = 0, toolCalls = 0, res;
       // A web search can pause the turn, and the assistant's own tools need a round trip each; cap both.
       for (let i = 0; i < 8; i++) {
         const body = {
-          model,
+          model: useModel,
           max_tokens: agent === 'companion' ? 2000 : 4000,
           output_config: { effort: agent === 'companion' ? 'low' : 'medium' },
           system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
@@ -124,7 +130,10 @@ export function chatBrain({
         };
         try {
           // If a safety check declines, the API retries on a fallback model instead of stopping.
-          res = await client.beta.messages.create({ ...body, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+          // Haiku has no server-side fallback, so it goes straight to the plain call.
+          res = /haiku/.test(useModel)
+            ? await client.messages.create(body)
+            : await client.beta.messages.create({ ...body, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
         } catch (err) {
           if (err.status !== 400 || !/fallback|beta/i.test(err.message)) throw err;
           res = await client.messages.create(body);   // fallbacks not available for this model or account
@@ -147,7 +156,7 @@ export function chatBrain({
         return { text: "I can't help with that one. Ask me something else?", model: res.model, usage: { input, output, searches, toolCalls } };
       }
       const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-      return { text: text || 'Sorry, I lost my train of thought. Say that again?', model: res.model || model, usage: { input, output, searches, toolCalls } };
+      return { text: text || 'Sorry, I lost my train of thought. Say that again?', model: res.model || useModel, usage: { input, output, searches, toolCalls } };
     },
   };
 }

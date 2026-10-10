@@ -54,7 +54,7 @@ export const LEADS_TOOL = {
 
 function systemPrompt(config) {
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n') || '- (none)';
-  return `You are Synaut's leads agent for a small technology company that sells CRM, domains, business email, web hosting, and software development.
+  return `You are Auti's leads agent for a small technology company that sells CRM, domains, business email, web hosting, and software development.
 Your job: find real businesses that clearly need those services, and record the evidence so the owner can decide in seconds.
 
 How to work:
@@ -74,12 +74,8 @@ export async function waitingLeads(db) {
   return Number((await db.query(`SELECT count(*)::int AS n FROM lead WHERE status = 'new'`)).rows[0].n);
 }
 
-// The researcher is a brain with web search (claudeResearcher in llm.js); tests pass a fake.
-export async function runLeads({ db, researcher, now = new Date(), focus = focusFor(now) }) {
-  if (!(await leadsAgentOn(db))) return { skipped: 'switched off', found: 0, saved: 0 };
-  const waiting = await waitingLeads(db);
-  if (waiting >= MAX_WAITING) return { skipped: `${waiting} leads already wait for review`, found: 0, saved: 0 };
-
+// What the researcher is asked, read from the database without changing anything (npm run compare uses it too).
+export async function leadsRequest(db, { now = new Date(), focus = focusFor(now) } = {}) {
   const config = (await db.query(`SELECT key, value FROM coordinator_config WHERE enabled ORDER BY key`)).rows;
   const known = (await db.query(`
     SELECT company AS name FROM lead WHERE market = $1
@@ -97,8 +93,18 @@ Already known (skip these): ${JSON.stringify(known)}
 Leads the owner turned down, and why (learn from these): ${JSON.stringify(dismissed)}
 ${lastNote ? `Your note from last time: ${lastNote}\n` : ''}
 Research, then call ${LEADS_TOOL.name} once.`;
+  return { system: systemPrompt(config), user };
+}
 
-  const { output, model, usage } = await researcher.research({ system: systemPrompt(config), user, tool: LEADS_TOOL });
+// The researcher is a brain with web search (claudeResearcher in llm.js); tests pass a fake.
+export async function runLeads({ db, researcher, now = new Date(), focus = focusFor(now) }) {
+  if (!(await leadsAgentOn(db))) return { skipped: 'switched off', found: 0, saved: 0 };
+  const waiting = await waitingLeads(db);
+  if (waiting >= MAX_WAITING) return { skipped: `${waiting} leads already wait for review`, found: 0, saved: 0 };
+
+  const { system, user } = await leadsRequest(db, { now, focus });
+
+  const { output, model, usage } = await researcher.research({ system, user, tool: LEADS_TOOL });
   await db.query(`INSERT INTO agent_usage (agent, model, input_tokens, output_tokens, web_searches) VALUES ('leads', $1, $2, $3, $4)`,
     [model ?? null, usage?.input ?? 0, usage?.output ?? 0, usage?.searches ?? 0]);
 
@@ -108,11 +114,11 @@ Research, then call ${LEADS_TOOL.name} once.`;
     const l = cleanLead(raw, focus.market);
     if (!l) continue;
     const res = await db.query(`
-      INSERT INTO lead (company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources)
-      SELECT $1, $2::market, $3, $4, $5, $6, $7, $8, $9, $10, $11
+      INSERT INTO lead (company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources, model)
+      SELECT $1, $2::market, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
        WHERE NOT EXISTS (SELECT 1 FROM clients WHERE lower(name) = lower($1) AND market = $2::market)
       ON CONFLICT DO NOTHING RETURNING id`,
-      [l.company, l.market, l.city, l.sector, l.website, l.services, l.fit, l.signals, l.pitch, l.contact_route, l.sources]);
+      [l.company, l.market, l.city, l.sector, l.website, l.services, l.fit, l.signals, l.pitch, l.contact_route, l.sources, model ?? null]);
     saved += res.rows.length;
   }
   await db.query(`INSERT INTO lead_run (market, angle, found, saved, searches, notes) VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -150,7 +156,7 @@ export async function listLeads(db) {
     .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;
 }
 
-// The owner's decision on a lead. 'track' adds it to Synaut's clients as a lead with a first contact date in two days,
+// The owner's decision on a lead. 'track' adds it to Auti's clients as a lead with a first contact date in two days,
 // so the retention agent drafts an introduction for the owner to send. 'crm' is recorded after the CRM accepted it.
 export async function decideLead(db, { id, action, reason, crm_id } = {}) {
   if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw new Error('bad lead id');

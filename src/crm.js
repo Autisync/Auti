@@ -1,8 +1,8 @@
-// Synaut's link to the company CRM, through the CRM's own REST API.
-// Synaut signs in as its own CRM user (CRM_EMAIL / CRM_PASSWORD), never as the owner, so everything it does
+// Auti's link to the company CRM, through the CRM's own REST API.
+// Auti signs in as its own CRM user (CRM_EMAIL / CRM_PASSWORD), never as the owner, so everything it does
 // is audited under its name and the owner can cut it off by disabling that one user.
 // Reading is free. Changing anything in the CRM happens only when the owner taps to confirm:
-// from the CRM tab directly, or by approving a change Synaut proposed (crm_request, on the Approvals tab).
+// from the CRM tab directly, or by approving a change Auti proposed (crm_request, on the Approvals tab).
 // Settings: CRM_API_URL (the API base, ending in /api), CRM_EMAIL, CRM_PASSWORD. Nothing is logged.
 
 const TIMEOUT_MS = 12000;
@@ -39,7 +39,7 @@ export function crmClient({
 
   const login = async () => {
     const { ok, status, out } = await call('POST', '/auth/login', { email, password });
-    if (!ok || !out.accessToken) throw new Error(status === 401 || status === 403 ? 'the CRM refused Synaut\'s sign-in (check CRM_EMAIL and CRM_PASSWORD, and that the user is active)' : `CRM sign-in failed (${status})`);
+    if (!ok || !out.accessToken) throw new Error(status === 401 || status === 403 ? 'the CRM refused Auti\'s sign-in (check CRM_EMAIL and CRM_PASSWORD, and that the user is active)' : `CRM sign-in failed (${status})`);
     cached = { key, token: out.accessToken, at: now() };
     return cached.token;
   };
@@ -48,7 +48,7 @@ export function crmClient({
   const request = async (method, path, body) => {
     let res = await call(method, path, body, await token());
     if (res.status === 401) res = await call(method, path, body, await login());   // expired or revoked: sign in once more
-    if (res.status === 403) throw new Error(`Synaut's CRM user is not allowed to do that (${method} ${path.split('?')[0]}). Give it a role with that permission.`);
+    if (res.status === 403) throw new Error(`Auti's CRM user is not allowed to do that (${method} ${path.split('?')[0]}). Give it a role with that permission.`);
     if (!res.ok) {
       const why = res.out?.error || res.out?.errors?.map?.((e) => `${e.path || e.param}: ${e.msg}`).join(', ') || res.status;
       throw new Error(`the CRM said: ${why}`);
@@ -77,7 +77,7 @@ const INV_KEYS = ['id', 'invoice_number', 'client_id', 'client_name', 'status', 
 const OPP_KEYS = ['id', 'name', 'value', 'status', 'stage_id', 'pipeline_id', 'contact_id', 'source', 'created_at', 'updated_at'];
 
 // One picture of the business for the coordinator, the chat and the CRM tab. Each part fails on its own,
-// so a permission the Synaut user lacks hides one section instead of the whole CRM.
+// so a permission the Auti user lacks hides one section instead of the whole CRM.
 export async function crmSnapshot(crm, { clients = 50 } = {}) {
   const part = async (fn) => { try { return { ok: true, data: await fn() }; } catch (err) { return { ok: false, error: err.message }; } };
   const [summary, alerts, expiring, overdue, list, opps] = await Promise.all([
@@ -164,7 +164,7 @@ export async function applyCrmChange(crm, kind, payload) {
   return c.run(crm, c.check(payload));
 }
 
-// Synaut (chat or coordinator) proposes a change; it waits on the Approvals tab.
+// Auti (chat or coordinator) proposes a change; it waits on the Approvals tab.
 export async function proposeCrmChange(db, { kind, payload, reason, proposed_by = 'assistant' }) {
   const c = CRM_CHANGES[kind];
   if (!c) throw new Error(`unknown change; use one of ${Object.keys(CRM_CHANGES).join(', ')}`);

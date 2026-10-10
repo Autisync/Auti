@@ -22,6 +22,6 @@ export default async function handler(req, res) {
     if (/messages must|each message|last message|unknown mood/.test(err.message)) return res.status(400).json({ error: err.message });
     if (/ANTHROPIC_API_KEY/.test(err.message)) return res.status(503).json({ error: 'Chat is not set up yet: add ANTHROPIC_API_KEY in Vercel.' });
     console.error('chat failed:', err.status || '', err.message);
-    res.status(502).json({ error: 'Synaut could not answer just now. Try again.' });
+    res.status(502).json({ error: 'Auti could not answer just now. Try again.' });
   }
 }

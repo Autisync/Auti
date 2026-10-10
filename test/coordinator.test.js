@@ -98,6 +98,7 @@ await check('the brief is stored for the dashboard', async () => {
 });
 
 await check('a second run does not duplicate an open initiative, and sees its own past suggestions', async () => {
+  await db.query(`INSERT INTO journal (kind, author, body) VALUES ('standup', 'owner', 'Back at my desk.')`);   // something new, so the stand-up isn't skipped
   const second = await runCoordinator({ db, brain, mode: 'standup' });
   assert.deepEqual(second.brief.skipped_duplicates, ['Client contact rhythm']);
   const n = (await db.query(`SELECT count(*)::int AS n FROM initiatives`)).rows[0].n;
@@ -140,10 +141,10 @@ await check('the real Claude client sends a forced tool call and parses the answ
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const { claudeBrain } = await import('../src/llm.js');
-  const real = claudeBrain({ apiKey: 'test-key', model: 'claude-sonnet-5-5', fetch: fakeFetch });
-  const out = await runCoordinator({ db, brain: real, mode: 'standup' });
+  const real = claudeBrain({ apiKey: 'test-key', model: 'claude-sonnet-5', fetch: fakeFetch });
+  const out = await runCoordinator({ db, brain: real, mode: 'standup', skipUnchanged: false });
   assert.match(sent.url, /\/v1\/messages$/);
-  assert.equal(sent.body.model, 'claude-sonnet-5-5');
+  assert.equal(sent.body.model, 'claude-sonnet-5');
   assert.deepEqual(sent.body.tool_choice, { type: 'tool', name: 'write_morning_brief' });
   assert.equal(sent.body.tools[0].name, 'write_morning_brief');
   assert.equal(out.brief.one_thing_today, answer.one_thing_today);
@@ -398,17 +399,34 @@ await check('dropping a plan takes it off the dashboard without approving it', a
 await check('the page escapes nothing into HTML: data goes in through textContent only', async () => {
   const { PAGE } = await import('../src/page.js');
   const { LOGIN } = await import('../src/page.js');
-  assert.match(PAGE, /<title>Synaut<\/title>/);
+  assert.match(PAGE, /<title>Auti<\/title>/);
   assert.doesNotMatch(PAGE + LOGIN, /innerHTML|insertAdjacentHTML|document\.write/);
   assert.doesNotMatch(PAGE + LOGIN, /Jarvis/i);                         // renamed everywhere on screen
   new Function(PAGE.match(/<script>([\s\S]*)<\/script>/)[1]);           // the page's script parses
   new Function(LOGIN.match(/<script>([\s\S]*)<\/script>/)[1]);
 });
 
+await check('the page carries the Auti brand: name, Gold Flash, Poppins, and the mark', async () => {
+  const { PAGE, LOGIN } = await import('../src/page.js');
+  for (const html of [PAGE, LOGIN]) {
+    assert.match(html, /Auti/);
+    assert.match(html, /#B98B2F/i);                                       // Gold Flash
+    assert.match(html, /fonts\.googleapis\.com\/css2\?family=Poppins/);
+    assert.match(html, /<symbol id="auti-mark"/);
+    assert.doesNotMatch(html, /Synaut|SYNAUT|#3ee0ff/);                   // old visible name and cyan are gone
+  }
+  assert.match(PAGE, /Ask Auti/);
+  assert.match(PAGE, /'auti\.voice'/);                                   // the chosen voice is remembered
+  const { default: handler } = await import('../api/page.js');
+  const headers = {}; const res = { setHeader: (k, v) => { headers[k] = v; }, status: () => res, send: () => res };
+  handler({ headers: {} }, res);
+  assert.match(headers['Content-Security-Policy'], /font-src 'self' https:\/\/fonts\.gstatic\.com/);
+});
+
 await check('the app can be installed: manifest, icons and service worker are in place', async () => {
   const fs = await import('node:fs');
   const m = JSON.parse(fs.readFileSync(new URL('../public/manifest.webmanifest', import.meta.url)));
-  assert.equal(m.name, 'Synaut');
+  assert.equal(m.name, 'Auti');
   assert.equal(m.display, 'standalone');
   for (const i of m.icons) assert.ok(fs.existsSync(new URL('../public' + i.src, import.meta.url)), i.src);
   assert.ok(m.icons.some((i) => i.purpose === 'maskable' && i.sizes === '512x512'));
@@ -529,14 +547,20 @@ await check('the road companion talks for the ear, can search the web, and keeps
   const fakeFetch = async (url, init) => {
     bodies.push(JSON.parse(init.body));
     const r = replies.shift();
-    return new Response(JSON.stringify({ id: 'msg_r', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', stop_sequence: null, ...r }),
+    bodies.at(-1).url = String(url);
+    return new Response(JSON.stringify({ id: 'msg_r', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', stop_sequence: null, ...r }),
       { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const brain = chatMod.chatBrain({ apiKey: 'test-key', fetch: fakeFetch });
   const out = await chatMod.chat(db, brain, { agent: 'companion', voice: true, messages: [{ role: 'user', content: 'Anything new?' }] });
   assert.equal(out.reply, 'Big day in space news.');
   assert.equal(bodies.length, 2);
+  // The companion runs on Haiku: the basic web search, and no fallback beta (Haiku has none).
+  assert.equal(bodies[0].model, 'claude-haiku-5-5');
   assert.equal(bodies[0].tools[0].name, 'web_search');
+  assert.equal(bodies[0].tools[0].type, 'web_search_20250305');
+  assert.equal(bodies[0].fallbacks, undefined);
+  assert.doesNotMatch(bodies[0].url, /beta=true/);
   assert.match(bodies[0].system[0].text, /read aloud/);
   assert.doesNotMatch(bodies[0].system[0].text, /Example Client/);   // the companion doesn't get company data
   assert.equal(bodies[1].messages.at(-1).role, 'assistant');
@@ -575,19 +599,19 @@ await check('a brief whose nested parts arrive as JSON strings is still accepted
     proposed_initiatives: JSON.stringify([{ ...answer.proposed_initiatives[0], title: 'Stringly plan', steps: JSON.stringify(answer.proposed_initiatives[0].steps) }]),
   };
   const b2 = { model: 'fake', async think() { return { output: stringly, model: 'fake-model', usage: { input: 1, output: 1 } }; } };
-  const { brief } = await runCoordinator({ db, brain: b2, mode: 'standup' });
+  const { brief } = await runCoordinator({ db, brain: b2, mode: 'standup', skipUnchanged: false });
   assert.equal(brief.weakest_link.headline, answer.weakest_link.headline);
   assert.equal(brief.priorities.length, 1);
   assert.deepEqual(brief.created_initiatives.map((i) => i.title), ['Stringly plan']);
   await db.query(`DELETE FROM initiatives WHERE title = 'Stringly plan'`);
   const b3 = { model: 'fake', async think() { return { output: { ...answer, weakest_link: 'Just a sentence.' }, model: 'f', usage: {} }; } };
-  assert.equal((await runCoordinator({ db, brain: b3, mode: 'standup' })).brief.weakest_link.headline, 'Just a sentence.');
+  assert.equal((await runCoordinator({ db, brain: b3, mode: 'standup', skipUnchanged: false })).brief.weakest_link.headline, 'Just a sentence.');
 });
 
 await check('leaked tool-call markup in the weakest link is cleaned, in new runs and on the dashboard', async () => {
   const leaked = '<parameter name="headline">Zero clients tracked.</parameter>\n<parameter name="why">Example Client was lost to silence.';
   const b4 = { model: 'fake', async think() { return { output: { ...answer, weakest_link: leaked }, model: 'f', usage: {} }; } };
-  const { brief } = await runCoordinator({ db, brain: b4, mode: 'standup' });
+  const { brief } = await runCoordinator({ db, brain: b4, mode: 'standup', skipUnchanged: false });
   assert.deepEqual(brief.weakest_link, { headline: 'Zero clients tracked.', why: 'Example Client was lost to silence.' });
   // A brief already stored with the markup is repaired when the dashboard reads it.
   await db.query(`UPDATE coordinator_run SET brief = jsonb_set(brief, '{weakest_link}', $1::jsonb)
@@ -828,10 +852,33 @@ await check('the dashboard and chat work before migration 006 has run', async ()
   await assert.rejects(auto.setAutonomy(fresh, true), /not ready yet/);
 });
 
-await check('the schedule runs every two hours on weekdays and is kept alive', async () => {
+await check('cheaper models: Haiku is priced, and a side-by-side comparison saves nothing and reports the saving', async () => {
+  const agents = await import('../src/agents.js');
+  assert.equal(agents.cost('claude-haiku-5-5', 1e6, 1e6), 0.6);
+  assert.equal(agents.cost('claude-sonnet-5-5', 1e6, 1e6), 12);
+  const { webSearchTool } = await import('../src/llm.js');
+  assert.equal(webSearchTool('claude-haiku-5-5', 3).type, 'web_search_20250305');
+  assert.equal(webSearchTool('claude-sonnet-5', 8).type, 'web_search_20260209');
+  const cmp = await import('../src/compare.js');
+  const before = (await db.query(`SELECT count(*)::int AS n FROM coordinator_run`)).rows[0].n;
+  const results = await cmp.compareModels(async (model) => {
+    if (model === 'broken') throw new Error('nope');
+    return { output: { one_thing_today: `from ${model}` }, model, usage: { input: 10000, output: 2000 } };
+  }, ['claude-sonnet-5-5', 'claude-haiku-5-5', 'broken']);
+  assert.deepEqual(results.map((r) => r.cost), [0.04, 0.002, undefined]);
+  assert.equal(results[2].error, 'nope');
+  const report = cmp.renderComparison('coordinator', results.slice(0, 2));
+  assert.match(report, /from claude-haiku-5-5/);
+  assert.match(report, /cost 20\.0x less/);
+  assert.equal((await db.query(`SELECT count(*)::int AS n FROM coordinator_run`)).rows[0].n, before);
+  const ignored = fs0.readFileSync(new URL('../.gitignore', import.meta.url), 'utf8');
+  assert.match(ignored, /^compare-\*\.md$/m);                      // the reports hold company data
+});
+
+await check('the schedule runs three stand-ups on weekdays and is kept alive', async () => {
   const yml = fs0.readFileSync(new URL('../.github/workflows/coordinator.yml', import.meta.url), 'utf8');
   assert.match(yml, /cron: '17 4 \* \* \*'/);                        // the nightly run is still recognised by its exact cron
-  assert.match(yml, /cron: '23 6-18\/2 \* \* 1-5'/);
+  assert.match(yml, /cron: '23 7,12,17 \* \* 1-5'/);
   assert.match(yml, /github\.event\.schedule }}" = "17 4 \* \* \*"/);
   const keep = fs0.readFileSync(new URL('../.github/workflows/keepalive.yml', import.meta.url), 'utf8');
   assert.match(keep, /actions: write/);

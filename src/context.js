@@ -6,8 +6,14 @@ import { leadsForContext } from './leads.js';
 // Kept as plain data so it can be logged, tested and sent to the model as JSON.
 
 // crm: a crmSnapshot() taken just before (the CRM is another system, so the caller fetches it and decides what a failure means).
-export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new Date(), crm = null } = {}) {
+// incremental: the scheduled coordinator reads its own working summary from the last run and, with it,
+// only the journal and client contacts since then, instead of re-reading (and re-thinking) all the history.
+export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new Date(), crm = null, incremental = false } = {}) {
   const q = async (sql, params) => (await db.query(sql, params)).rows;
+  const last = (await q(`SELECT finished_at, brief->>'working_summary' AS summary FROM coordinator_run
+      WHERE error IS NULL AND finished_at IS NOT NULL AND brief ? 'working_summary' AND brief->>'working_summary' <> ''
+      ORDER BY finished_at DESC LIMIT 1`))[0];
+  const since = incremental && last ? last.finished_at : null;
 
   const [
     config, projects, goingCold, initiatives, needsApproval,
@@ -32,20 +38,20 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     q(`SELECT name, market, sector, status, last_contact_at, next_contact_due, lost_reason
          FROM clients ORDER BY status, name`),
     q(`SELECT kind, author, body, acted_on, outcome, created_at
-         FROM journal ORDER BY created_at DESC LIMIT 40`),
+         FROM journal WHERE $1::timestamptz IS NULL OR created_at >= $1 ORDER BY created_at DESC LIMIT 40`, [since]),
     q(`SELECT id, body, acted_on, outcome, created_at FROM journal
         WHERE kind = 'suggestion' AND author = 'coordinator'
           AND created_at > now() - interval '21 days'
         ORDER BY created_at DESC`),
     q(`SELECT c.name AS client, t.happened_at, t.channel, t.summary
          FROM client_touchpoint t JOIN clients c ON c.id = t.client_id
-        WHERE t.happened_at > now() - interval '30 days'
-        ORDER BY t.happened_at DESC LIMIT 30`),
+        WHERE t.happened_at > now() - interval '30 days' AND ($1::timestamptz IS NULL OR t.happened_at >= $1)
+        ORDER BY t.happened_at DESC LIMIT 30`, [since]),
   ]);
 
   // Titles only: the full text is one chat tool call away, and it would crowd out the company state here.
   const documents = (await listDocuments(db, { bodies: false })).map((d) => ({ title: d.title, category: d.category, updated_at: d.updated_at }));
-  // What Synaut did on its own lately, and what the owner undid. Missing until migration 006 runs
+  // What Auti did on its own lately, and what the owner undid. Missing until migration 006 runs
   // (the dashboard's chat can be deployed before that), so a missing table reads as none.
   const recentActions = await q(`SELECT kind, summary, reason, created_at, undone_at IS NOT NULL AS undone_by_owner
       FROM coordinator_action WHERE created_at > now() - interval '14 days' ORDER BY created_at DESC LIMIT 30`)
@@ -59,6 +65,8 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
 
   return {
     today,
+    // Auti's own notes from its last run; journal and recentContacts start after it when since is set.
+    ...(last ? { memory: { written_at: last.finished_at, since: since ? 'journal and recentContacts only hold what happened after this' : null, working_summary: last.summary } } : {}),
     config,
     projects,
     goingCold,
@@ -72,7 +80,7 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     recentSuggestions,
     recentContacts,                      // logged client touchpoints, last 30 days
     documents,                           // the company's contract templates, policies and checklists
-    recentActions,                       // steps Synaut took on its own, last 14 days
+    recentActions,                       // steps Auti took on its own, last 14 days
     leads,                               // businesses the leads agent found, waiting for the owner
     ...(crm ? { crm: crmForContext(crm) } : {}),   // live from the company CRM: money, renewals, pipeline
   };

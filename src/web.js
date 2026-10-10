@@ -89,7 +89,7 @@ export async function getDashboard(db) {
       if (err.code === '42P01') return { rows: [] };
       throw err;
     })).rows;
-  // Steps Synaut took on its own in the last week, newest first. Missing until migration 006 runs.
+  // Steps Auti took on its own in the last week, newest first. Missing until migration 006 runs.
   const actions = (await db.query(`
     SELECT id, kind, summary, reason, target_id, created_at, undone_at
       FROM coordinator_action WHERE created_at > now() - interval '7 days' ORDER BY created_at DESC LIMIT 40`).catch((err) => {
@@ -100,7 +100,7 @@ export async function getDashboard(db) {
     .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows.map((r) => r.target_id));
   for (const t of tasks) t.by_synaut = bySynaut.has(t.id);
   const autonomy = (await db.query(`SELECT enabled FROM coordinator_config WHERE key = 'autonomy'`)).rows[0] || null;
-  // CRM changes Synaut proposed, waiting for the owner. Missing until migration 007 runs.
+  // CRM changes Auti proposed, waiting for the owner. Missing until migration 007 runs.
   const crmRequests = (await db.query(`
     SELECT id, kind, summary, reason, proposed_by, error, created_at FROM crm_request
      WHERE status = 'awaiting_approval' ORDER BY created_at`).catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;
@@ -194,7 +194,7 @@ const days = (v) => {
   return n;
 };
 
-// The owner records a client or lead. A contact rhythm makes Synaut watch for the next contact.
+// The owner records a client or lead. A contact rhythm makes Auti watch for the next contact.
 export async function addClient(db, { name, market, status = 'lead', sector, contact_every_days, next_contact_due, owner_id, notes } = {}) {
   name = String(name ?? '').trim();
   if (!name) throw new Error('name is required');
@@ -272,7 +272,7 @@ export async function setProjectRepo(db, { id, github_repo } = {}) {
   return (await db.query(`UPDATE projects SET github_repo = $2 WHERE id = $1 RETURNING id, github_repo`, [id, repo])).rows[0] || null;
 }
 
-// The owner's call on a drafted follow-up. "sent" means the owner sent it (Synaut never does):
+// The owner's call on a drafted follow-up. "sent" means the owner sent it (Auti never does):
 // it saves the final text and logs a touchpoint, which moves the client's next contact date.
 export async function decideFollowUp(db, { id, decision, body, next_contact_due } = {}) {
   if (!['sent', 'drop'].includes(decision)) throw new Error('decision must be sent or drop');
@@ -298,15 +298,15 @@ export async function decideFollowUp(db, { id, decision, body, next_contact_due 
   });
 }
 
-// What Synaut can reach beyond its own database. Only whether a key is set is shown, never the key.
+// What Auti can reach beyond its own database. Only whether a key is set is shown, never the key.
 export function connectedTools(env = process.env) {
   return [
     { id: 'github', name: 'GitHub', connected: Boolean(env.GITHUB_TOKEN), access: 'read-only',
-      detail: env.GITHUB_TOKEN ? 'Synaut chat can list your repos, see commits, pull requests and issues, and read files.'
-        : 'Public repos only. Add a read-only GITHUB_TOKEN in Vercel to let Synaut chat see your private repos.' },
+      detail: env.GITHUB_TOKEN ? 'Auti chat can list your repos, see commits, pull requests and issues, and read files.'
+        : 'Public repos only. Add a read-only GITHUB_TOKEN in Vercel to let Auti chat see your private repos.' },
     { id: 'crm', name: 'CRM', connected: crmConfigured(env), access: crmConfigured(env) ? 'reads; changes on your approval' : 'not connected',
-      detail: crmConfigured(env) ? 'Synaut reads clients, subscriptions, invoices, the dashboard and the pipeline, and proposes changes for you to approve.'
-        : 'Create a CRM user for Synaut, then set CRM_API_URL, CRM_EMAIL and CRM_PASSWORD in Vercel and as GitHub secrets.' },
+      detail: crmConfigured(env) ? 'Auti reads clients, subscriptions, invoices, the dashboard and the pipeline, and proposes changes for you to approve.'
+        : 'Create a CRM user for Auti, then set CRM_API_URL, CRM_EMAIL and CRM_PASSWORD in Vercel and as GitHub secrets.' },
     { id: 'tasks', name: 'Task list', connected: false, access: 'planned', detail: 'Your existing task list, once connected, syncs with the Tasks tab.' },
   ];
 }

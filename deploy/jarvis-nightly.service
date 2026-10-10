@@ -1,5 +1,5 @@
 [Unit]
-Description=Synaut coordinator (nightly run)
+Description=Auti coordinator (nightly run)
 After=network-online.target postgresql.service
 Wants=network-online.target
 

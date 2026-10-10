@@ -1,7 +1,7 @@
 // The company's business documents: contract templates, service schedules, policies and checklists.
 // Stored as Markdown in the documents table (company data never goes in the public repo).
 // The owner imports a whole pack from the Documents tab, then views, copies, prints and edits each one.
-// Synaut reads them too: the coordinator sees the titles, and the chat can open any document.
+// Auti reads them too: the coordinator sees the titles, and the chat can open any document.
 
 // Same statement as db/005_documents.sql, so the first import works before the scheduled run migrates.
 export const DOCUMENTS_DDL = `CREATE TABLE IF NOT EXISTS documents (
@@ -128,7 +128,7 @@ export async function saveDocument(db, { slug, title, body } = {}) {
     [s, title, categoryOf(title), body])).rows[0];
 }
 
-// Read-only document tools for the Synaut chat, in the same shape as githubTools().
+// Read-only document tools for the Auti chat, in the same shape as githubTools().
 export const DOCUMENT_TOOL_DEFS = [
   {
     name: 'documents_list',

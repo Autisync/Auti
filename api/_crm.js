@@ -1,6 +1,6 @@
 // GET  /api/crm                          : a live picture of the company CRM (or how to connect it).
 // POST /api/crm {change, payload}        : the owner changes something in the CRM now (add client, opportunity, status).
-// POST /api/crm {request, decision}      : the owner approves or drops a change Synaut proposed.
+// POST /api/crm {request, decision}      : the owner approves or drops a change Auti proposed.
 import { guard, getDb } from './_shared.js';
 import { crmClient, crmConfigured, crmSnapshot, applyCrmChange, decideCrmRequest } from '../src/crm.js';
 

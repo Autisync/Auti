@@ -1,15 +1,16 @@
 name: Coordinator
 
-# Runs Synaut's thinking loop. Times are UTC (GitHub has no time zones):
+# Runs Auti's thinking loop. Times are UTC (GitHub has no time zones):
 #   04:17 UTC daily               = 05:17 Lisbon in summer, 04:17 in winter (overnight study)
-#   every 2 hours, 06:23 to 18:23 = stand-up refreshes through the working day, weekdays
-# Each refresh also lets Synaut take its small automatic steps, so work keeps moving between your visits.
+#   07:23, 12:23, 17:23 UTC       = stand-up refreshes at the start, middle and end of the working day, weekdays
+#                                   (was every 2 hours; three a day cut the coordinator's API spend by about 45%)
+# Each refresh also lets Auti take its small automatic steps, so work keeps moving between your visits.
 # Odd minutes on purpose: on-the-hour schedules are the most delayed on GitHub.
 # keepalive.yml stops GitHub pausing this schedule after 60 days without a commit.
 on:
   schedule:
     - cron: '17 4 * * *'
-    - cron: '23 6-18/2 * * 1-5'
+    - cron: '23 7,12,17 * * 1-5'
   workflow_dispatch:
     inputs:
       mode:
@@ -36,11 +37,16 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       JARVIS_MODEL: ${{ vars.JARVIS_MODEL || 'claude-sonnet-5-5' }}
+      # Each agent learns its model from what you approve and dismiss (src/models.js): JARVIS_MODEL is the
+      # stronger model, Haiku the cheaper one. Setting a per-agent variable pins that agent instead.
+      AUTI_COORDINATOR_MODEL: ${{ vars.AUTI_COORDINATOR_MODEL }}
+      SYNAUT_LEADS_MODEL: ${{ vars.SYNAUT_LEADS_MODEL }}
+      SYNAUT_RETENTION_MODEL: ${{ vars.SYNAUT_RETENTION_MODEL }}
       JARVIS_TIMEZONE: Europe/Lisbon
       # Reads each project's latest push. The built-in token sees this repo and public ones;
       # add a SYNAUT_GITHUB_TOKEN secret (read-only, fine-grained) to include your other private repos.
       GITHUB_TOKEN: ${{ secrets.SYNAUT_GITHUB_TOKEN || github.token }}
-      # The company CRM, read before each run as Synaut's own CRM user. Optional; leave unset to skip.
+      # The company CRM, read before each run as Auti's own CRM user. Optional; leave unset to skip.
       CRM_API_URL: ${{ secrets.CRM_API_URL }}
       CRM_EMAIL: ${{ secrets.CRM_EMAIL }}
       CRM_PASSWORD: ${{ secrets.CRM_PASSWORD }}
