@@ -132,7 +132,7 @@ await check('the coordinator, the dashboard and the page see the leads', async (
   assert.equal(d.crmOn, false);
   assert.ok(d.leads.some((l) => l.company === 'Strong Co'));
   const { PAGE } = await import('../src/page.js');
-  assert.match(PAGE, /\['leads', 'Leads'\]/);
+  assert.match(PAGE, /\['leads', 'Leads', /);
   assert.match(PAGE, /rel = 'noopener noreferrer'/);
   new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);
 });
@@ -147,6 +147,29 @@ await check('the dashboard works before migration 008 has run', async () => {
   assert.equal(d.leadsOn, null);
   const { gatherContext } = await import('../src/context.js');
   assert.equal((await gatherContext(fresh)).leads.waiting, 0);
+});
+
+await check('Today ranks what needs the owner, money and CRM changes first', async () => {
+  const { PAGE } = await import('../src/page.js');
+  const script = PAGE.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const src = script.slice(script.indexOf('const SEV = '), script.indexOf('let queueAll'));
+  const queue = new Function('data', 'crmData', 'money', 'day', 'go', 'openChat', src + '; return decisionQueue();');
+  const data = {
+    latest: { brief: { questions_for_owner: ['Is Gamma lost?'] } },
+    crmRequests: [{ summary: 'Add Delta to the CRM' }], approvals: [{ title: 'Retention plan' }], followUps: [],
+    clients: [{ name: 'Acme', flag: 'overdue' }, { name: 'Beta', flag: 'ok' }],
+    leads: [{ company: 'Strong Co', status: 'new', fit: 5 }, { company: 'Weak Co', status: 'new', fit: 2 }],
+    tasks: [{ title: 'Late one', overdue: true }],
+  };
+  const crm = { connected: true, overdue_invoices: [{ client_name: 'Beta', total: 950, currency: 'EUR', invoice_number: 'INV-9' }],
+    expiring_subscriptions: [{ client_name: 'Acme', service_name: 'Hosting', end_date: new Date(Date.now() + 5 * 864e5).toISOString() },
+      { client_name: 'Far', service_name: 'Domain', end_date: new Date(Date.now() + 40 * 864e5).toISOString() }] };
+  const items = queue(data, crm, (n) => String(n), () => 'd', () => {}, () => {});
+  assert.deepEqual(items.map((i) => i.kind), ['CRM change', 'Overdue invoice', 'Plan', 'Renewal', 'Clients', 'Question', 'Leads', 'Tasks']);
+  assert.match(items.find((i) => i.kind === 'Leads').title, /^1 strong lead/);      // weak leads stay off the list
+  assert.ok(!items.some((i) => /Far/.test(i.title)));                               // renewals beyond 14 days wait
+  assert.equal(queue(data, null, String, String, () => {}, () => {}).filter((i) => i.kind === 'Overdue invoice').length, 0);   // no CRM, no money rows
+  assert.match(PAGE, /id="side"/);
 });
 
 console.log(`\n${passed} passed`);

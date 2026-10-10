@@ -710,7 +710,7 @@ await check('Synaut sees the document titles, and its chat can open a document',
 
 await check('the Documents tab renders Markdown without ever inserting HTML', async () => {
   const { PAGE } = await import('../src/page.js');
-  assert.match(PAGE, /\['documents', 'Documents'\]/);
+  assert.match(PAGE, /\['documents', 'Documents', /);
   assert.match(PAGE, /function mdRender/);
   assert.match(PAGE, /\/api\/documents/);
   assert.match(PAGE, /@media print/);
