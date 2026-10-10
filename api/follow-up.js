@@ -1,5 +1,5 @@
 // POST /api/follow-up {id, decision: "sent"|"drop", body?, next_contact_due?}
-// The owner's call on a follow-up the retention agent drafted. Synaut never sends it; "sent" records that the owner did.
+// The owner's call on a follow-up the retention agent drafted. Auti never sends it; "sent" records that the owner did.
 import { guard, getDb } from './_shared.js';
 import { decideFollowUp } from '../src/web.js';
 

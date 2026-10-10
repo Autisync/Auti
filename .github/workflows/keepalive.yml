@@ -1,7 +1,7 @@
 name: Keep the schedule alive
 
 # GitHub pauses scheduled workflows in a public repo after 60 days without repository activity,
-# which would silently stop Synaut. Twice a month this re-enables the coordinator's schedule and itself,
+# which would silently stop Auti. Twice a month this re-enables the coordinator's schedule and itself,
 # which resets that clock. It changes nothing in the code and makes no commit.
 on:
   schedule:

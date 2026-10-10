@@ -1,4 +1,4 @@
-// The CRM link: sign-in as Synaut's own user, reading, and changes that only happen on the owner's tap.
+// The CRM link: sign-in as Auti's own user, reading, and changes that only happen on the owner's tap.
 // A fake CRM stands in for the real API, so no network or credentials are needed.
 import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
@@ -48,7 +48,7 @@ await check('the CRM is off until all three settings are set, and only over http
   assert.throws(() => crm.crmClient({ url: 'http://crm.example.test/api', email: 'a', password: 'b' }), /https/);
 });
 
-await check('Synaut signs in once, reuses the token, and signs in again when it expires', async () => {
+await check('Auti signs in once, reuses the token, and signs in again when it expires', async () => {
   crm.forgetCrmToken();
   const f = fakeCrm();
   const c = crm.crmClient(opts(f));
@@ -62,7 +62,7 @@ await check('Synaut signs in once, reuses the token, and signs in again when it 
   await later.get('/dashboard/summary');
   assert.equal(f.logins(), 2);
   crm.forgetCrmToken();
-  await assert.rejects(crm.crmClient(opts(f, { password: 'wrong' })).get('/clients'), /refused Synaut's sign-in/);
+  await assert.rejects(crm.crmClient(opts(f, { password: 'wrong' })).get('/clients'), /refused Auti's sign-in/);
 });
 
 await check('the snapshot gathers money, renewals, overdue invoices and the pipeline, and drops fields it does not need', async () => {
@@ -81,7 +81,7 @@ await check('the snapshot gathers money, renewals, overdue invoices and the pipe
   assert.ok(f.calls.every((c) => c.method === 'GET' || c.path === '/auth/login'));   // reading never writes
 });
 
-await check('a permission the Synaut user lacks hides one section, not the whole CRM', async () => {
+await check('a permission the Auti user lacks hides one section, not the whole CRM', async () => {
   crm.forgetCrmToken();
   const s = await crm.crmSnapshot(crm.crmClient(opts(fakeCrm({ deny: ['/invoices'] }))));
   assert.deepEqual(s.overdue_invoices, []);
@@ -117,7 +117,7 @@ await check('the owner\'s own change runs at once; bad input never reaches the C
   assert.equal(f.calls.filter((x) => x.method !== 'GET' && x.path !== '/auth/login').length, 1);
 });
 
-await check('a change Synaut proposes waits for the owner, then runs only on approval', async () => {
+await check('a change Auti proposes waits for the owner, then runs only on approval', async () => {
   crm.forgetCrmToken();
   const f = fakeCrm();
   const tools = crm.crmTools(db, { client: () => crm.crmClient(opts(f)) });

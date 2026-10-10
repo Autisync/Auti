@@ -30,7 +30,7 @@ export const FOLLOW_UP_TOOL = {
 
 function systemPrompt(config) {
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n') || '- (none)';
-  return `You are Synaut's retention agent for a small company. Your one job: keep clients and leads from going quiet.
+  return `You are Auti's retention agent for a small company. Your one job: keep clients and leads from going quiet.
 For each client listed, draft one short follow-up the owner can send as is.
 
 Rules:
@@ -81,9 +81,9 @@ Draft one follow-up for each client above.`;
     if (!clientId || !String(d.message || '').trim()) continue;            // a name not on the list is ignored
     byName.delete(String(d.client).toLowerCase().trim());                   // one draft per client
     const res = await db.query(
-      `INSERT INTO follow_up (client_id, channel, subject, body, rationale) VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO follow_up (client_id, channel, subject, body, rationale, model) VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT DO NOTHING RETURNING id`,
-      [clientId, CHANNELS.includes(d.channel) ? d.channel : 'email', d.subject || null, String(d.message).trim(), d.why || null]);
+      [clientId, CHANNELS.includes(d.channel) ? d.channel : 'email', d.subject || null, String(d.message).trim(), d.why || null, model ?? null]);
     drafted += res.rows.length;
   }
   return { considered: due.length, drafted };

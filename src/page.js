@@ -1,79 +1,87 @@
-// The dashboard page. One self-contained file: no build step, no outside requests.
+// The dashboard page. One self-contained file: no build step. The only outside request is the brand
+// fonts (Poppins, Roboto) from Google Fonts; everything else is served from here.
 // Everything from the database or the model is inserted with textContent, never as HTML.
-// Look: a dark HUD in the spirit of 21st.dev's glass/glow components, rebuilt in plain CSS
-// because the strict CSP and no-build setup rule out pulling React components in.
+// Look: Auti, in the brand palette: Black and Dark Charcoal surfaces, Gold Flash accents,
+// Poppins for titles and Roboto for body text, plain CSS because of the strict CSP and no-build setup.
+// Brand fonts: Poppins SemiBold/Medium for titles, Roboto Regular for body. System fonts stand in if they fail to load.
+const FONTS = '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+  + '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Roboto:wght@400;500;700&display=swap">';
+// The Auti mark (brandbook): the A takes the text colour (white on dark), the swoosh is always Gold Flash.
+const MARK_SYMBOL = '<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><symbol id="auti-mark" viewBox="50 18 742 430">'
+  + '<path fill="currentColor" d="M408.85,26.69l2.79.94,12.99,23.22,9.29,15.78,13.93,24.13,12.99,22.28,13.93,24.13,25.99,44.56,27.86,48.29,6.5,11.14-1.85,1.85-39.92,6.5-30.63,6.5h-1.85l-9.29-15.78-27.86-48.29-13.93-23.22-7.44,12.08-13.93,24.13-12.99,22.28-13.93,24.13-12.99,22.28-8.35,13.93-3.71,2.79-39.92,13.93-30.63,12.08-24.13,10.2-7.44,2.79,1.85-4.64,12.08-21.37,12.99-22.28,13.93-24.13,12.99-22.28,27.86-48.29,12.99-22.28,27.86-48.29,12.99-22.28,13.93-24.13,12.99-22.28,12.08-20.43-.05.02Z"/><path fill="#B98B2F" d="M533.28,192.91l5.58,1.85,83.57,37.15,37.15,16.72,38.07,16.72,37.15,16.72,33.42,14.85,14.85,6.5v.94l-11.14-.94-37.15-3.71-27.86-1.85-21.37-.94h-77.98l-39,1.85-45.5,3.71-52,6.5-41.77,6.5-60.35,12.08-52,12.99-48.29,13.93-39.92,12.99-42.71,15.78-25.99,10.2-30.63,12.99-26.93,12.08-21.37,10.2-20.43,10.2-1.85-.94,13.93-9.29,16.72-10.2,23.22-13.93,23.22-12.99,20.43-11.14,52-25.99,26.93-12.08,25.99-11.14,33.42-12.99,27.86-10.2,38.07-12.99,34.36-10.2,55.7-13.93,44.56-9.29,39.92-6.5,38.07-4.64v-1.85l-11.14-15.78-25.99-35.27-2.79-4.64-.02-.02Z"/><path fill="currentColor" d="M572.28,310.81l3.71.94,12.99,22.28,55.7,96.56,3.71,7.44h-81.71l-7.44-12.08-13.93-24.13-12.99-22.28-27.86-48.29-6.5-11.14v-1.85l22.28-2.79,52-4.64h.05Z"/><path fill="currentColor" d="M293.72,360.04h3.71l-1.85,4.64-10.2,18.58-8.35,13.93-13.93,24.13-9.29,15.78-.94.94h-81.71l6.5-12.99,12.99-22.28,5.58-10.2,35.27-12.99,42.71-13.93,19.49-5.58.02-.02Z"/>'
+  + '</symbol></svg>';
+const mark = (cls, label) => '<svg class="mark ' + cls + '" viewBox="50 18 742 430" ' + (label ? 'role="img" aria-label="' + label + '"' : 'aria-hidden="true" focusable="false"') + '><use href="#auti-mark"/></svg>';
 export const PAGE = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
-<meta name="theme-color" content="#05080d">
+<meta name="theme-color" content="#1C1C1C">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Synaut">
+<meta name="apple-mobile-web-app-title" content="Auti">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-<title>Synaut</title>
+${FONTS}
+<title>Auti</title>
 <style>
   :root {
-    --bg: #05080d; --panel: rgba(14, 22, 33, 0.72); --panel-solid: #0b131c;
-    --ink: #e6f1f8; --muted: #8094a6; --dim: #4b5b6b; --line: rgba(120, 200, 255, 0.12);
-    --cyan: #3ee0ff; --cyan-soft: rgba(62, 224, 255, 0.12); --cyan-glow: rgba(62, 224, 255, 0.35);
-    --violet: #a68bff; --violet-soft: rgba(166, 139, 255, 0.14);
-    --amber: #ffb547; --amber-soft: rgba(255, 181, 71, 0.10);
-    --green: #4dff9e; --green-soft: rgba(77, 255, 158, 0.12); --red: #ff6b6b;
-    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    /* Brand palette: Black #1C1C1C, Gold Flash #B98B2F, Cool White #FFFFFF, Dark Charcoal #333333.
+       Greys below are tints of those; warning/danger/success are muted and used sparingly. */
+    --bg: #1C1C1C; --panel: rgba(51, 51, 51, 0.42); --panel-solid: #262626;
+    --ink: #FFFFFF; --muted: #A8A8A8; --dim: #858585; --line: #333333; --line-strong: #474747;
+    --gold: #B98B2F; --gold-soft: rgba(185, 139, 47, 0.12); --gold-glow: rgba(185, 139, 47, 0.42);
+    --silver: #E6E6E6; --silver-soft: rgba(255, 255, 255, 0.07);
+    --amber: #D4874A; --amber-soft: rgba(212, 135, 74, 0.10);
+    --green: #7FB38A; --green-soft: rgba(127, 179, 138, 0.12); --red: #D46A5F;
+    --display: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --sans: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --code: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --r: 16px;
   }
   * { box-sizing: border-box; }
   html { scroll-padding-top: 120px; }
   body {
-    margin: 0; min-height: 100vh; min-height: 100dvh; color: var(--ink); font: 16px/1.6 var(--sans);
+    margin: 0; min-height: 100vh; min-height: 100dvh; color: var(--ink); font: 400 16px/1.6 var(--sans);
     background:
-      radial-gradient(900px 500px at 15% -10%, rgba(62, 224, 255, 0.13), transparent 60%),
-      radial-gradient(700px 400px at 100% 0%, rgba(120, 90, 255, 0.10), transparent 60%),
+      radial-gradient(900px 480px at 12% -12%, rgba(185, 139, 47, 0.10), transparent 62%),
+      linear-gradient(180deg, #1C1C1C 0%, #171717 100%) fixed,
       var(--bg);
     -webkit-font-smoothing: antialiased;
   }
-  body::before {
-    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
-    background-size: 48px 48px; opacity: 0.35;
-    mask-image: radial-gradient(ellipse at 50% 0%, #000 20%, transparent 75%);
-  }
+  h1, h2, h3, h4, .hello, .item-title, .agent-name, .q-title, .alert .headline, .intro b { font-family: var(--display); }
+  ::selection { background: rgba(185, 139, 47, 0.35); color: #FFFFFF; }
+  :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   main { position: relative; z-index: 1; max-width: 860px; margin: 0 auto; padding: 0 max(16px, env(safe-area-inset-right)) calc(130px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
   button { font-family: inherit; }
 
   /* top bar + tabs */
   .bar { position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(14px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
          backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-         background: linear-gradient(to bottom, rgba(5, 8, 13, 0.94), rgba(5, 8, 13, 0.7));
+         background: linear-gradient(to bottom, rgba(28, 28, 28, 0.94), rgba(28, 28, 28, 0.7));
          border-bottom: 1px solid var(--line); }
   .bar-in { display: flex; align-items: center; gap: 14px; }
-  .orb { width: 34px; height: 34px; border-radius: 50%; flex: none; position: relative;
-         background: radial-gradient(circle at 50% 50%, #c9f7ff 0 14%, var(--cyan) 28%, rgba(62,224,255,0.15) 62%, transparent 70%);
-         box-shadow: 0 0 22px var(--cyan-glow), inset 0 0 8px rgba(255,255,255,0.4); animation: pulse 3.2s ease-in-out infinite; }
-  .orb::after { content: ""; position: absolute; inset: -5px; border-radius: 50%;
-                border: 1px solid var(--cyan-glow); border-top-color: transparent; border-left-color: transparent; animation: spin 6s linear infinite; }
-  .brand { font: 600 15px/1 var(--mono); letter-spacing: 0.32em; }
-  .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font: 12px/1 var(--mono); color: var(--muted);
+  .mark { display: block; flex: none; }
+  .mark .a { fill: currentColor; } .mark .swoosh { fill: #B98B2F; }
+  .bar .mark { width: 40px; height: 23px; color: #FFFFFF; }
+  .brand { font: 600 17px/1 var(--display); letter-spacing: 0.24em; margin-left: -4px; }
+  .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font: 12px/1 var(--display); color: var(--muted);
             border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; background: var(--panel); min-width: 0; }
   .status .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); flex: none; }
-  .status.bad .dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex: none; }
+  .status.bad .dot { background: var(--red); }
   .icon-btn { border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 10px;
               width: 34px; height: 34px; display: grid; place-items: center; cursor: pointer; font-size: 16px; flex: none; }
-  .icon-btn:hover { color: var(--cyan); border-color: var(--cyan-glow); }
+  .icon-btn:hover { color: var(--gold); border-color: var(--gold-glow); }
   .tabs { display: flex; gap: 2px; margin-top: 12px; overflow-x: auto; scrollbar-width: none; }
   .tabs::-webkit-scrollbar { display: none; }
   .tab { flex: none; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer;
-         font: 600 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; padding: 12px 12px 13px; }
+         font: 500 12px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; padding: 12px 12px 13px; }
   .tab:hover { color: var(--ink); }
-  .tab[aria-selected="true"] { color: var(--cyan); border-bottom-color: var(--cyan); text-shadow: 0 0 12px var(--cyan-glow); }
+  .tab[aria-selected="true"] { color: var(--gold); border-bottom-color: var(--gold); }
   .tab .n { margin-left: 6px; color: var(--dim); }
   .tab.hot .n { color: var(--amber); }
 
@@ -82,216 +90,225 @@ export const PAGE = `<!doctype html>
   .sub { color: var(--muted); margin: 0; }
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 20px; }
   .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; cursor: pointer; text-align: left; color: inherit; font: inherit; }
-  .stat:hover { border-color: var(--cyan-glow); }
-  .stat b { display: block; font: 600 24px/1.1 var(--mono); color: var(--cyan); }
+  .stat:hover { border-color: var(--gold-glow); }
+  .stat b { display: block; font: 600 24px/1.1 var(--display); color: var(--ink); }
   .stat.warn b { color: var(--amber); }
   .stat span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
   section { margin-top: 34px; }
-  h2 { display: flex; align-items: center; gap: 10px; font: 600 12px/1 var(--mono); text-transform: uppercase;
+  h2 { display: flex; align-items: center; gap: 10px; font: 500 12px/1 var(--display); text-transform: uppercase;
        letter-spacing: 0.16em; color: var(--muted); margin: 0 0 12px; }
-  h2::before { content: ""; width: 14px; height: 1px; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
-  h2::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--line), transparent); }
+  h2::before { content: ""; width: 14px; height: 2px; background: var(--gold); }
+  h2::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--line-strong), transparent); }
   .card { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 18px 20px;
           backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
   .card + .card { margin-top: 12px; }
-  .alert { border-color: rgba(255, 181, 71, 0.35); background: linear-gradient(135deg, var(--amber-soft), var(--panel) 55%); }
-  .kicker { display: block; font: 600 11px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; margin-bottom: 10px; }
+  .alert { border-color: rgba(212, 135, 74, 0.35); background: linear-gradient(135deg, var(--amber-soft), var(--panel) 55%); }
+  .kicker { display: block; font: 600 11px/1 var(--display); letter-spacing: 0.16em; text-transform: uppercase; margin-bottom: 10px; }
   .alert .kicker { color: var(--amber); }
   .alert .headline { font-size: 19px; font-weight: 600; line-height: 1.45; margin: 0 0 8px; }
   .alert .why { color: var(--muted); margin: 0; }
-  .focus { border-color: var(--cyan-glow); background: linear-gradient(135deg, var(--cyan-soft), var(--panel) 60%);
-           box-shadow: 0 0 0 1px rgba(62,224,255,0.08), 0 10px 40px -12px var(--cyan-glow); font-size: 18px; font-weight: 500; }
-  .focus .kicker { color: var(--cyan); }
+  .focus { border-color: var(--gold-glow); background: linear-gradient(135deg, var(--gold-soft), var(--panel) 60%);
+           box-shadow: 0 10px 40px -18px rgba(0,0,0,0.8); font: 500 18px/1.5 var(--display); }
+  .focus .kicker { color: var(--gold); }
   .list { list-style: none; margin: 0; padding: 0; }
   .list li { display: grid; grid-template-columns: 38px 1fr; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
   .list li:first-child { border-top: 0; padding-top: 0; }
   .list li:last-child { padding-bottom: 0; }
-  .idx { font: 600 13px/1.7 var(--mono); color: var(--cyan); }
-  .bullet { width: 6px; height: 6px; margin: 10px 0 0 4px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+  .idx { font: 600 13px/1.7 var(--display); color: var(--gold); }
+  .bullet { width: 6px; height: 6px; margin: 10px 0 0 4px; border-radius: 50%; background: var(--gold); }
   .item-title { font-weight: 600; }
-  .tag { display: inline-block; font: 11px/1.6 var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 6px;
+  .tag { display: inline-block; font: 11px/1.6 var(--display); color: var(--muted); border: 1px solid var(--line); border-radius: 6px;
          padding: 0 7px; margin-left: 8px; vertical-align: 2px; font-weight: 400; letter-spacing: 0.02em; }
-  .tag.warn { color: var(--amber); border-color: rgba(255,181,71,0.4); }
-  .tag.bad { color: var(--red); border-color: rgba(255,107,107,0.4); }
-  .tag.ok { color: var(--green); border-color: rgba(77,255,158,0.35); }
+  .tag.warn { color: var(--amber); border-color: rgba(212,135,74,0.4); }
+  .tag.bad { color: var(--red); border-color: rgba(212,106,95,0.4); }
+  .tag.ok { color: var(--green); border-color: rgba(127,179,138,0.35); }
   .detail { color: var(--muted); margin-top: 3px; font-size: 15px; }
   .empty { color: var(--muted); margin: 0; }
   .error { color: var(--red); font-size: 14px; }
   .q { font-size: 16px; }
-  .more { margin-top: 14px; background: none; border: 1px solid var(--line); color: var(--cyan); border-radius: 10px; padding: 9px 14px; cursor: pointer; font: 600 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
-  .more:hover { border-color: var(--cyan-glow); }
+  .more { margin-top: 14px; background: none; border: 1px solid var(--line); color: var(--gold); border-radius: 10px; padding: 9px 14px; cursor: pointer; font: 600 12px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; }
+  .more:hover { border-color: var(--gold-glow); }
 
   /* plans */
   .plan h3 { margin: 0 0 6px; font-size: 18px; padding-right: 100px; }
-  .plan .label { font: 600 11px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+  .plan .label { font: 600 11px/1 var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
   .plan ol { margin: 0; padding-left: 0; list-style: none; counter-reset: s; }
   .plan ol li { counter-increment: s; position: relative; padding-left: 30px; }
   .plan ol li + li, .plan ul li + li { margin-top: 8px; }
-  .plan ol li::before { content: counter(s, decimal-leading-zero); position: absolute; left: 0; font: 600 12px/1.9 var(--mono); color: var(--cyan); }
+  .plan ol li::before { content: counter(s, decimal-leading-zero); position: absolute; left: 0; font: 600 12px/1.9 var(--display); color: var(--gold); }
   .plan ul { margin: 0; padding-left: 18px; }
   .follow .form { margin-top: 14px; }
   a.act { text-decoration: none; display: inline-block; }
-  .pending { position: absolute; top: 18px; right: 20px; font: 600 10px/1 var(--mono); letter-spacing: 0.14em; color: var(--amber);
-             border: 1px solid rgba(255,181,71,0.4); border-radius: 999px; padding: 5px 8px; }
+  .pending { position: absolute; top: 18px; right: 20px; font: 600 10px/1 var(--display); letter-spacing: 0.14em; color: var(--amber);
+             border: 1px solid rgba(212,135,74,0.4); border-radius: 999px; padding: 5px 8px; }
   .actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; align-items: center; }
-  button.act, a.act { font: 600 14px/1 var(--sans); border-radius: 10px; padding: 11px 18px; cursor: pointer;
+  button.act, a.act { font: 600 14px/1 var(--display); border-radius: 10px; padding: 11px 18px; cursor: pointer;
                border: 1px solid var(--line); background: transparent; color: var(--ink); transition: all .15s; }
   button.act:hover, a.act:hover { border-color: var(--dim); }
-  button.approve { background: var(--cyan); border-color: var(--cyan); color: #021018; box-shadow: 0 0 20px -4px var(--cyan-glow); }
-  button.confirm { background: var(--amber); border-color: var(--amber); color: #1a1003; }
+  button.approve { background: var(--gold); border-color: var(--gold); color: #1C1C1C; box-shadow: 0 6px 20px -8px var(--gold-glow); }
+  button.approve:hover { filter: brightness(1.08); }
+  button.confirm { background: var(--amber); border-color: var(--amber); color: #1C1C1C; }
   button:disabled { opacity: 0.5; cursor: default; }
   .hint { font-size: 13px; color: var(--muted); }
-  .done { display: inline-flex; align-items: center; gap: 8px; font: 600 13px/1 var(--mono); letter-spacing: 0.06em; border-radius: 10px; padding: 10px 14px; margin-top: 18px; }
+  .done { display: inline-flex; align-items: center; gap: 8px; font: 600 13px/1 var(--display); letter-spacing: 0.06em; border-radius: 10px; padding: 10px 14px; margin-top: 18px; }
   .done.ok { background: var(--green-soft); color: var(--green); }
-  .done.drop { background: rgba(128,148,166,0.12); color: var(--muted); }
+  .done.drop { background: rgba(166,166,166,0.12); color: var(--muted); }
 
   /* tables (projects, clients) */
   .rows { display: grid; gap: 10px; }
   .row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: start; }
-  .row .meta { font: 12px/1.6 var(--mono); color: var(--muted); text-align: right; white-space: nowrap; }
+  .row .meta { font: 12px/1.6 var(--display); color: var(--muted); text-align: right; white-space: nowrap; }
   .row .desc { grid-column: 1 / -1; color: var(--muted); font-size: 15px; }
   .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-  .chip { background: var(--panel); border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 6px 12px; cursor: pointer; font: 12px/1 var(--mono); }
-  .chip[aria-pressed="true"] { color: var(--cyan); border-color: var(--cyan-glow); }
+  .chip { background: var(--panel); border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 6px 12px; cursor: pointer; font: 12px/1 var(--display); }
+  .chip[aria-pressed="true"] { color: var(--gold); border-color: var(--gold-glow); }
 
   /* agents */
   .agent { display: grid; gap: 12px; }
   .agent-head { display: flex; align-items: center; gap: 12px; }
-  .agent-ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font: 700 15px/1 var(--mono); flex: none;
-               background: var(--cyan-soft); color: var(--cyan); border: 1px solid var(--cyan-glow); }
-  .agent-ico.companion { background: var(--violet-soft); color: var(--violet); border-color: rgba(166,139,255,0.4); }
-  .agent-ico.coordinator { background: var(--amber-soft); color: var(--amber); border-color: rgba(255,181,71,0.4); }
+  .agent-ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font: 600 15px/1 var(--display); flex: none;
+               background: var(--gold-soft); color: var(--gold); border: 1px solid var(--gold-glow); }
+  .agent-ico.companion { background: var(--silver-soft); color: var(--silver); border-color: rgba(230,230,230,0.4); }
+  .agent-ico.coordinator { background: var(--amber-soft); color: var(--amber); border-color: rgba(212,135,74,0.4); }
   .agent-name { font-weight: 600; font-size: 17px; }
-  .agent-state { margin-left: auto; font: 12px/1 var(--mono); color: var(--muted); display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+  details.memory { margin-top: 10px; } details.memory summary { cursor: pointer; color: var(--gold); font-size: 13px; } details.memory .detail { white-space: pre-wrap; margin-top: 6px; }
+  .agent-state { margin-left: auto; font: 12px/1 var(--display); color: var(--muted); display: flex; gap: 6px; align-items: center; white-space: nowrap; }
   .usage { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .use { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
-  .use .w { font: 600 10px/1 var(--mono); letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
-  .use .t { font: 600 18px/1.4 var(--mono); color: var(--ink); margin-top: 6px; }
-  .use .c { font: 12px/1.4 var(--mono); color: var(--muted); }
+  .use .w { font: 600 10px/1 var(--display); letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
+  .use .t { font: 600 18px/1.4 var(--display); color: var(--ink); margin-top: 6px; }
+  .use .c { font: 12px/1.4 var(--display); color: var(--muted); }
   .meter { height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; margin-top: 8px; }
-  .meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--violet)); box-shadow: 0 0 8px var(--cyan-glow); }
+  .meter i { display: block; height: 100%; background: linear-gradient(90deg, rgba(185,139,47,0.55), var(--gold)); }
   .total { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
-  .total b { font: 600 26px/1 var(--mono); color: var(--cyan); }
+  .total b { font: 600 26px/1 var(--display); color: var(--ink); }
 
   /* journal */
   .entry { display: grid; grid-template-columns: 92px 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
   .entry:first-child { border-top: 0; padding-top: 0; }
   .card.entry, .card.entry:first-child { border-top: 1px solid var(--line); padding: 14px 18px; }
   .entry .body { white-space: pre-wrap; }
-  .entry .when { font: 12px/1.6 var(--mono); color: var(--dim); }
-  .entry .who { font: 600 11px/1.6 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .entry .when { font: 12px/1.6 var(--display); color: var(--dim); }
+  .entry .who { font: 600 11px/1.6 var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 
   /* forms (new task, new client, log contact) */
   .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
-  .form label { display: grid; gap: 4px; font: 600 10px/1.2 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .form label { display: grid; gap: 4px; font: 600 10px/1.2 var(--display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
   .form label.wide { grid-column: 1 / -1; }
-  .form input, .form select, .form textarea { width: 100%; box-sizing: border-box; background: rgba(5,8,13,0.6); color: var(--ink); border: 1px solid var(--line);
+  .form input, .form select, .form textarea { width: 100%; box-sizing: border-box; background: rgba(20,20,20,0.6); color: var(--ink); border: 1px solid var(--line);
     border-radius: 10px; padding: 10px 12px; font: 15px/1.4 var(--sans); letter-spacing: 0; text-transform: none; color-scheme: dark; }
   .form textarea { min-height: 84px; resize: vertical; }
-  .form input:focus, .form select:focus, .form textarea:focus { outline: none; border-color: var(--cyan-glow); box-shadow: 0 0 0 3px var(--cyan-soft); }
+  .form input:focus, .form select:focus, .form textarea:focus { outline: none; border-color: var(--gold-glow); box-shadow: 0 0 0 3px var(--gold-soft); }
   .form .actions { grid-column: 1 / -1; margin-top: 4px; }
   .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 28px 0 12px; }
   .toolbar + section, .toolbar + .form + section { margin-top: 22px; }
   .toolbar .more { margin-top: 0; }
   .row .acts { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
   .list .acts { display: flex; gap: 8px; margin-top: 8px; }
-  .mini { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
-  .mini:hover { color: var(--cyan); border-color: var(--cyan-glow); }
-  .mini.go { color: var(--green); border-color: rgba(77,255,158,0.35); }
+  .mini { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; font: 600 11px/1 var(--display); letter-spacing: 0.06em; text-transform: uppercase; }
+  .mini:hover { color: var(--gold); border-color: var(--gold-glow); }
+  .mini.go { color: var(--gold); border-color: var(--gold-glow); }
   .mini.repo { text-transform: none; letter-spacing: 0; }
   .row.finished { opacity: 0.6; }
-  .row > .form { grid-column: 1 / -1; margin-top: 8px; background: rgba(5,8,13,0.35); }
+  .row > .form { grid-column: 1 / -1; margin-top: 8px; background: rgba(20,20,20,0.35); }
   .contacts { grid-column: 1 / -1; list-style: none; margin: 4px 0 0; padding: 0; font-size: 14px; color: var(--muted); }
   .contacts li { padding: 4px 0; border-top: 1px solid var(--line); }
-  .contacts .when { font: 11px/1.6 var(--mono); color: var(--dim); margin-right: 8px; }
+  .contacts .when { font: 11px/1.6 var(--display); color: var(--dim); margin-right: 8px; }
   .row.finished .item-title { text-decoration: line-through; text-decoration-color: var(--dim); }
 
-  footer { margin-top: 48px; text-align: center; font: 11px/1.6 var(--mono); color: var(--dim); letter-spacing: 0.1em; }
+  footer { margin-top: 48px; text-align: center; font: 11px/1.6 var(--display); color: var(--dim); letter-spacing: 0.1em; }
 
-  /* floating chat */
-  /* floating dock: main orb opens chat, the small mic jumps straight into hands-free companion */
+  /* floating dock: the Auti button opens chat, the small mic jumps straight into hands-free companion */
   .dock { position: fixed; right: max(20px, env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 20;
           display: flex; align-items: center; gap: 10px; }
   .dock[hidden] { display: none; }
-  .fab { position: relative; display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 20px 0 8px; border-radius: 999px; cursor: pointer;
-         border: 1px solid var(--cyan-glow); background: rgba(8, 14, 22, 0.88); color: var(--ink); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-         box-shadow: 0 0 0 1px rgba(62,224,255,0.06), 0 0 36px -6px var(--cyan-glow), 0 14px 34px rgba(0,0,0,0.55); transition: transform .2s, box-shadow .2s; }
-  .fab:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px rgba(62,224,255,0.12), 0 0 48px -4px var(--cyan-glow), 0 18px 40px rgba(0,0,0,0.6); }
+  .fab { position: relative; display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 22px 0 8px; border-radius: 999px; cursor: pointer;
+         border: 1px solid var(--gold-glow); background: rgba(28, 28, 28, 0.92); color: var(--ink); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+         box-shadow: 0 0 30px -12px var(--gold-glow), 0 14px 34px rgba(0,0,0,0.55); transition: transform .2s, box-shadow .2s, border-color .2s; }
+  .fab:hover { transform: translateY(-2px); border-color: var(--gold); box-shadow: 0 0 40px -10px var(--gold-glow), 0 18px 40px rgba(0,0,0,0.6); }
   .fab:active { transform: scale(0.97); }
-  .fab-orb { position: relative; width: 44px; height: 44px; border-radius: 50%; flex: none;
-             background: radial-gradient(circle at 50% 42%, #e6fdff 0 10%, var(--cyan) 40%, #0e6b80 100%);
-             box-shadow: 0 0 18px var(--cyan-glow), inset 0 -4px 10px rgba(0,0,0,0.35); }
-  .fab-orb::before, .fab-orb::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 1px solid var(--cyan-glow); animation: ripple 2.8s ease-out infinite; }
-  .fab-orb::after { animation-delay: 1.4s; }
-  .fab-orb svg { position: absolute; inset: 0; margin: auto; width: 22px; height: 22px; }
+  .fab-orb { position: relative; width: 44px; height: 44px; border-radius: 50%; flex: none; display: grid; place-items: center;
+             background: radial-gradient(circle at 50% 35%, #333333, #1C1C1C 72%); border: 1px solid rgba(185,139,47,0.55); }
+  .fab-orb::before, .fab-orb::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 1px solid var(--gold-glow); animation: ripple 3.2s ease-out infinite; }
+  .fab-orb::after { animation-delay: 1.6s; }
+  .fab-orb .mark { width: 30px; height: 17px; color: #FFFFFF; }
   .fab-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
-  .fab-text b { font: 600 14px/1.2 var(--sans); }
-  .fab-text span { font: 11px/1.3 var(--mono); color: var(--muted); letter-spacing: 0.06em; }
-  .fab-mic { width: 48px; height: 48px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; color: var(--violet);
-             border: 1px solid rgba(166,139,255,0.45); background: rgba(8, 14, 22, 0.88); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-             box-shadow: 0 0 26px -8px rgba(166,139,255,0.7), 0 10px 26px rgba(0,0,0,0.5); transition: transform .2s; }
-  .fab-mic:hover { transform: translateY(-2px); }
+  .fab-text b { font: 600 15px/1.2 var(--display); }
+  .fab-text span { font: 500 10px/1.4 var(--display); color: var(--gold); letter-spacing: 0.14em; }
+  .fab-mic { width: 48px; height: 48px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; color: var(--ink);
+             border: 1px solid var(--line-strong); background: rgba(28, 28, 28, 0.92); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+             box-shadow: 0 10px 26px rgba(0,0,0,0.5); transition: transform .2s, color .2s, border-color .2s; }
+  .fab-mic:hover { transform: translateY(-2px); color: var(--gold); border-color: var(--gold-glow); }
   .fab-mic svg { width: 20px; height: 20px; }
-  @keyframes ripple { from { transform: scale(0.9); opacity: 0.9; } to { transform: scale(1.5); opacity: 0; } }
+  @keyframes ripple { from { transform: scale(0.92); opacity: 0.8; } to { transform: scale(1.45); opacity: 0; } }
   .chat { position: fixed; z-index: 30; right: 20px; bottom: 20px; width: 410px; height: min(680px, calc(100vh - 40px)); height: min(680px, calc(100dvh - 40px));
-          display: flex; flex-direction: column; background: rgba(8, 13, 20, 0.94); border: 1px solid var(--cyan-glow); border-radius: 20px;
-          backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 0 60px -10px var(--cyan-glow), 0 20px 60px rgba(0,0,0,0.6); overflow: hidden; }
+          display: flex; flex-direction: column; background: rgba(28, 28, 28, 0.97); border: 1px solid var(--line-strong); border-top: 2px solid var(--gold); border-radius: 20px;
+          backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 0 60px -20px var(--gold-glow), 0 20px 60px rgba(0,0,0,0.6); overflow: hidden; }
   .chat[hidden] { display: none; }
   .chat-head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--line); }
   .seg { display: flex; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
-  .seg button { border: 0; background: none; color: var(--muted); padding: 7px 12px; border-radius: 7px; cursor: pointer; font: 600 12px/1 var(--mono); letter-spacing: 0.04em; }
-  .seg button[aria-pressed="true"] { background: var(--cyan-soft); color: var(--cyan); }
-  .seg button[data-agent="companion"][aria-pressed="true"] { background: var(--violet-soft); color: var(--violet); }
+  .seg button { border: 0; background: none; color: var(--muted); padding: 7px 12px; border-radius: 7px; cursor: pointer; font: 600 12px/1 var(--display); letter-spacing: 0.04em; }
+  .seg button[aria-pressed="true"] { background: var(--gold-soft); color: var(--gold); }
+  .seg button[data-agent="companion"][aria-pressed="true"] { background: var(--silver-soft); color: var(--silver); }
   .chat-head .icon-btn:first-of-type { margin-left: auto; }
   #speaker .on { display: none; } #speaker[aria-pressed="true"] .on { display: block; } #speaker[aria-pressed="true"] .off { display: none; }
   .msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 86%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; font-size: 15px; line-height: 1.5; }
-  .msg.user { align-self: flex-end; background: var(--cyan-soft); border: 1px solid var(--cyan-glow); border-bottom-right-radius: 4px; }
+  .msg.user { align-self: flex-end; background: rgba(185,139,47,0.16); border: 1px solid rgba(185,139,47,0.35); border-bottom-right-radius: 4px; }
   .msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
   .msg.err { align-self: center; color: var(--red); font-size: 13px; background: none; }
-  .msg.typing { color: var(--muted); font-family: var(--mono); font-size: 13px; }
+  .msg.typing { color: var(--muted); font-family: var(--display); font-size: 13px; }
   .intro { color: var(--muted); font-size: 14px; text-align: center; margin: auto 10px; }
   .intro b { display: block; color: var(--ink); font-size: 16px; margin-bottom: 6px; }
   .compose { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); align-items: flex-end; }
   .compose textarea { flex: 1; resize: none; max-height: 120px; background: var(--panel); border: 1px solid var(--line); color: var(--ink);
                       border-radius: 12px; padding: 10px 12px; font: 15px/1.4 var(--sans); outline: none; }
-  .compose textarea:focus { border-color: var(--cyan-glow); }
+  .compose textarea:focus { border-color: var(--gold-glow); }
   .round { width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; display: grid; place-items: center; flex: none; font-size: 17px; }
-  .round.send { background: var(--cyan); border-color: var(--cyan); color: #021018; }
-  .round.live { border-color: var(--red); color: var(--red); box-shadow: 0 0 14px rgba(255,107,107,0.5); }
+  .round.send { background: var(--gold); border-color: var(--gold); color: #1C1C1C; }
+  .round.live { border-color: var(--red); color: var(--red); box-shadow: 0 0 0 3px rgba(212,106,95,0.25); }
   .drive-toggle { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 12px 12px; }
-  .drive-toggle button { flex: 1; border: 1px dashed var(--line); background: none; color: var(--muted); border-radius: 12px; padding: 10px; cursor: pointer; font: 600 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
-  .drive-toggle button:hover { color: var(--violet); border-color: rgba(166,139,255,0.5); }
-  .drive { position: absolute; inset: 0; background: rgba(5, 8, 13, 0.97); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; padding: 24px; text-align: center; }
+  .drive-toggle button { flex: 1; border: 1px dashed var(--line); background: none; color: var(--muted); border-radius: 12px; padding: 10px; cursor: pointer; font: 600 12px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; }
+  .drive-toggle button:hover { color: var(--gold); border-color: var(--gold-glow); }
+  .drive { position: absolute; inset: 0; background: radial-gradient(420px 360px at 50% 46%, rgba(185,139,47,0.10), transparent 70%), #1C1C1C;
+           display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; padding: 24px; text-align: center; }
   .drive[hidden] { display: none; }
-  .big-orb { width: 170px; height: 170px; border-radius: 50%; border: 0; cursor: pointer;
-             background: radial-gradient(circle at 50% 45%, #f0e9ff 0 8%, var(--violet) 36%, rgba(166,139,255,0.15) 66%, transparent 72%);
-             box-shadow: 0 0 60px rgba(166,139,255,0.45); transition: transform .2s; }
-  .big-orb.listening { animation: breathe 1.2s ease-in-out infinite; background: radial-gradient(circle at 50% 45%, #e8fdff 0 8%, var(--cyan) 36%, rgba(62,224,255,0.15) 66%, transparent 72%); box-shadow: 0 0 70px var(--cyan-glow); }
-  .big-orb.thinking { animation: spin-slow 2s linear infinite; }
-  .big-orb.speaking { animation: breathe .7s ease-in-out infinite; }
-  .drive-state { font: 600 13px/1 var(--mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+  .big-orb { position: relative; width: 170px; height: 170px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; padding: 0;
+             background: radial-gradient(circle at 50% 32%, #333333, #1C1C1C 70%); border: 1px solid rgba(185,139,47,0.55);
+             box-shadow: 0 0 0 10px rgba(185,139,47,0.05), 0 0 60px -14px var(--gold-glow); transition: transform .2s, box-shadow .3s; }
+  .big-orb .mark { width: 96px; height: 56px; color: #FFFFFF; }
+  .big-orb::before { content: ""; position: absolute; inset: -12px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--gold); opacity: 0; transition: opacity .2s; }
+  .big-orb.listening { animation: breathe 1.4s ease-in-out infinite; border-color: var(--gold); box-shadow: 0 0 0 12px rgba(185,139,47,0.12), 0 0 80px -6px var(--gold-glow); }
+  .big-orb.thinking::before { opacity: 1; animation: spin 1.2s linear infinite; }
+  .big-orb.speaking { animation: breathe .8s ease-in-out infinite; border-color: var(--gold); box-shadow: 0 0 0 8px rgba(185,139,47,0.10), 0 0 70px -8px var(--gold-glow); }
+  .drive-state { font: 500 13px/1 var(--display); letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold); }
   .drive-heard { color: var(--ink); font-size: 18px; min-height: 2.8em; max-width: 320px; }
+  /* voice choice for spoken replies */
+  .voice-set { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .voice-set[hidden] { display: none; }
+  .voice-set label { font: 500 10px/1 var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); flex: none; }
+  .voice-set select { flex: 1; min-width: 0; background: var(--panel-solid); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 10px;
+                      padding: 8px 10px; font: 14px/1.2 var(--sans); color-scheme: dark; }
+  .voice-set select:focus { outline: none; border-color: var(--gold); }
+  .voice-set .mini { flex: none; color: var(--gold); border-color: var(--gold-glow); }
   .moods { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 10px 12px; border-bottom: 1px solid var(--line); }
   .moods::-webkit-scrollbar { display: none; }
   .moods[hidden] { display: none; }
   .mood { flex: none; display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--muted);
-          border-radius: 999px; padding: 7px 12px; cursor: pointer; font: 600 12px/1 var(--sans); }
+          border-radius: 999px; padding: 7px 12px; cursor: pointer; font: 500 12px/1 var(--display); }
   .mood:hover { color: var(--ink); }
-  .mood[aria-pressed="true"] { color: #fff; background: linear-gradient(135deg, rgba(166,139,255,0.35), rgba(62,224,255,0.18)); border-color: rgba(166,139,255,0.6); box-shadow: 0 0 16px -4px rgba(166,139,255,0.7); }
+  .mood[aria-pressed="true"] { color: #FFFFFF; background: rgba(185,139,47,0.22); border-color: var(--gold); }
   .drive .moods { position: absolute; top: env(safe-area-inset-top); left: 0; right: 0; border-bottom: 0; padding: 16px; justify-content: safe center; }
-  .note { align-self: center; font: 600 11px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--violet); padding: 4px 0; }
-  .drive-exit { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 10px 18px; cursor: pointer; font: 600 12px/1 var(--mono); letter-spacing: 0.1em; }
+  .note { align-self: center; font: 500 11px/1 var(--display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); padding: 4px 0; }
+  .drive-exit { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 10px 18px; cursor: pointer; font: 600 12px/1 var(--display); letter-spacing: 0.1em; }
 
   /* motion */
   .rise { opacity: 0; transform: translateY(8px); animation: rise .45s ease forwards; }
   @keyframes rise { to { opacity: 1; transform: none; } }
-  @keyframes pulse { 50% { box-shadow: 0 0 34px var(--cyan-glow), inset 0 0 8px rgba(255,255,255,0.5); } }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes spin-slow { to { transform: rotate(360deg) scale(0.96); } }
   @keyframes breathe { 50% { transform: scale(1.07); } }
   .skeleton { height: 92px; border-radius: var(--r); margin-top: 12px; border: 1px solid var(--line);
-              background: linear-gradient(90deg, var(--panel) 0%, rgba(62,224,255,0.06) 50%, var(--panel) 100%);
+              background: linear-gradient(90deg, var(--panel) 0%, rgba(185,139,47,0.06) 50%, var(--panel) 100%);
               background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
   @keyframes shimmer { to { background-position: -200% 0; } }
   /* CRM */
@@ -299,34 +316,34 @@ export const PAGE = `<!doctype html>
   .stats.six b { font-size: 19px; }
   .tbl-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
   table.grid { border-collapse: collapse; width: 100%; font-size: 14px; }
-  table.grid th { font: 600 10px/1.4 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.grid th { font: 600 10px/1.4 var(--display); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   table.grid td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
   table.grid tr:last-child td { border-bottom: 0; }
-  input.search { width: 100%; box-sizing: border-box; background: rgba(5,8,13,0.6); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; margin-bottom: 12px; }
-  input.search:focus { outline: none; border-color: var(--cyan-glow); }
+  input.search { width: 100%; box-sizing: border-box; background: rgba(20,20,20,0.6); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; margin-bottom: 12px; }
+  input.search:focus { outline: none; border-color: var(--gold-glow); }
   ol.steps { margin: 12px 0 0; padding-left: 20px; } ol.steps li + li { margin-top: 6px; }
-  .empty.small { font: 12px/1.6 var(--mono); color: var(--dim); margin-top: 18px; }
+  .empty.small { font: 12px/1.6 var(--display); color: var(--dim); margin-top: 18px; }
   /* today */
-  .today-head .sub { font: 13px/1.6 var(--mono); }
+  .today-head .sub { font: 13px/1.6 var(--display); }
   .pulse { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 20px; }
   .kpi { position: relative; display: flex; flex-direction: column; gap: 2px; text-align: left; color: inherit; cursor: pointer;
          background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px 13px; font: inherit; min-width: 0; }
-  .kpi:hover { border-color: var(--cyan-glow); }
-  .kpi::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 2px; border-radius: 2px; background: var(--cyan); opacity: 0.5; }
+  .kpi:hover { border-color: var(--gold-glow); }
+  .kpi::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 2px; border-radius: 2px; background: var(--gold); opacity: 0.8; }
   .kpi.warn::before { background: var(--amber); opacity: 1; } .kpi.bad::before { background: var(--red); opacity: 1; }
-  .kpi-group { font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); }
-  .kpi b { font: 600 22px/1.25 var(--mono); color: var(--cyan); margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kpi-group { font: 600 10px/1 var(--display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); }
+  .kpi b { font: 600 22px/1.25 var(--display); color: var(--ink); margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .kpi.warn b { color: var(--amber); } .kpi.bad b { color: var(--red); }
   .kpi-label { font-size: 12px; color: var(--ink); }
   .kpi-hint { font-size: 11px; color: var(--muted); }
   .queue { padding: 6px 0; }
   .q-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 12px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--line); }
   .q-row:first-child { border-top: 0; }
-  .q-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan-glow); }
-  .q-row.now .q-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
-  .q-row.soon .q-dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .q-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); }
+  .q-row.now .q-dot { background: var(--red); }
+  .q-row.soon .q-dot { background: var(--amber); }
   .q-title { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
-  .q-kind { font: 600 10px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  .q-kind { font: 600 10px/1 var(--display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
             border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; margin-right: 8px; vertical-align: 2px; }
   .q-why { font-size: 13px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
   .queue > .more { margin: 8px 18px 6px; }
@@ -335,7 +352,7 @@ export const PAGE = `<!doctype html>
   .mini-list { list-style: none; margin: 0; padding: 0; }
   .mini-list li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
   .mini-list li:first-child { border-top: 0; padding-top: 0; }
-  .mini-list .r { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+  .mini-list .r { font-family: var(--display); color: var(--muted); white-space: nowrap; }
 
   /* side menu on wide screens */
   .side { display: none; }
@@ -345,13 +362,13 @@ export const PAGE = `<!doctype html>
     .bar-in { padding-bottom: 14px; }
     .layout { display: grid; grid-template-columns: 188px minmax(0, 1fr); gap: 32px; }
     .side { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 84px; align-self: start; padding-top: 26px; }
-    .side-group { font: 600 10px/1 var(--mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); margin: 16px 0 6px 12px; }
+    .side-group { font: 600 10px/1 var(--display); letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); margin: 16px 0 6px 12px; }
     .side-group:first-child { margin-top: 0; }
     .side-tab { display: flex; justify-content: space-between; align-items: center; background: none; border: 1px solid transparent; border-radius: 10px;
-                color: var(--muted); cursor: pointer; font: 600 13px/1 var(--sans); padding: 10px 12px; text-align: left; }
+                color: var(--muted); cursor: pointer; font: 500 13px/1 var(--display); padding: 10px 12px; text-align: left; }
     .side-tab:hover { color: var(--ink); background: var(--panel); }
-    .side-tab[aria-selected="true"] { color: var(--cyan); background: var(--cyan-soft); border-color: var(--line); }
-    .side-tab .n { font: 12px/1 var(--mono); color: var(--dim); }
+    .side-tab[aria-selected="true"] { color: var(--gold); background: var(--gold-soft); border-color: rgba(185,139,47,0.25); }
+    .side-tab .n { font: 12px/1 var(--display); color: var(--dim); }
     .side-tab.hot .n { color: var(--amber); }
   }
   @media (max-width: 860px) { .two-col { grid-template-columns: minmax(0, 1fr); } .pulse { grid-template-columns: repeat(2, 1fr); } }
@@ -362,7 +379,7 @@ export const PAGE = `<!doctype html>
   .lead > .item-title { grid-column: 1; }
   .lead > .meta { grid-column: 2; }
   .lead .services { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-  .tag.svc { color: var(--cyan); }
+  .tag.svc { color: var(--gold); }
   .lead .links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 13px; }
   .lead .links a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
   .lead form.card { margin-top: 10px; }
@@ -370,13 +387,13 @@ export const PAGE = `<!doctype html>
 
   /* documents */
   .doc-row { cursor: pointer; }
-  .doc-row:hover, .doc-row:focus-visible { border-color: var(--cyan-glow); outline: none; }
+  .doc-row:hover, .doc-row:focus-visible { border-color: var(--gold-glow); outline: none; }
   .doc-bar .more { margin-top: 0; }
   .doc-bar .spacer { flex: 1; }
   .doc-paper h1.doc-title { font-size: 22px; line-height: 1.3; margin: 0 0 4px; }
-  .doc-paper .doc-meta { font: 12px/1.6 var(--mono); color: var(--dim); margin-bottom: 18px; }
+  .doc-paper .doc-meta { font: 12px/1.6 var(--display); color: var(--dim); margin-bottom: 18px; }
   .md { font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
-  .md h2, .md h3, .md h4, .md h5 { display: block; font: 600 15px/1.4 var(--sans); text-transform: none; letter-spacing: 0; color: var(--cyan); margin: 22px 0 8px; }
+  .md h2, .md h3, .md h4, .md h5 { display: block; font: 600 15px/1.4 var(--display); text-transform: none; letter-spacing: 0; color: var(--gold); margin: 22px 0 8px; }
   .md h2 { font-size: 18px; } .md h3 { font-size: 16px; }
   .md > :first-child { margin-top: 0; }
   .md p { margin: 0 0 12px; }
@@ -385,15 +402,15 @@ export const PAGE = `<!doctype html>
   .md li > ul, .md li > ol { margin: 4px 0 0; }
   .md ul.checks { list-style: none; padding-left: 4px; }
   .md ul.checks > li { padding-left: 1.6em; text-indent: -1.6em; }
-  .md .box { color: var(--cyan); display: inline-block; width: 1.6em; text-indent: 0; }
+  .md .box { color: var(--gold); display: inline-block; width: 1.6em; text-indent: 0; }
   .md strong { color: var(--ink); }
   .md .tbl { overflow-x: auto; margin: 0 0 14px; }
   .md table { border-collapse: collapse; width: 100%; font-size: 14px; }
   .md th, .md td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
-  .md th { font: 600 11px/1.4 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: rgba(62,224,255,0.04); }
+  .md th { font: 600 11px/1.4 var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: rgba(185,139,47,0.04); }
   .md hr { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
-  .doc-edit textarea[name="body"] { min-height: 60vh; font: 13px/1.55 var(--mono); }
-  .notice { color: var(--green); font: 12px/1.6 var(--mono); margin: 0 0 12px; }
+  .doc-edit textarea[name="body"] { min-height: 60vh; font: 13px/1.55 var(--code); }
+  .notice { color: var(--green); font: 12px/1.6 var(--display); margin: 0 0 12px; }
   @media print {
     body.printing { background: #fff; color: #000; }
     body.printing::before, body.printing .bar, body.printing .dock, body.printing .chat, body.printing .doc-bar { display: none !important; }
@@ -423,11 +440,12 @@ export const PAGE = `<!doctype html>
 </style>
 </head>
 <body>
+${MARK_SYMBOL}
 <main>
   <div class="bar">
     <div class="bar-in">
-      <div class="orb" aria-hidden="true"></div>
-      <span class="brand">SYNAUT</span>
+      ${mark('', '')}
+      <span class="brand">AUTI</span>
       <span class="status" id="status"><span class="dot"></span><span class="label" id="status-text">Connecting…</span></span>
       <button class="icon-btn" id="refresh" title="Refresh" aria-label="Refresh">↻</button>
       <button class="icon-btn" id="logout" title="Sign out" aria-label="Sign out">⏻</button>
@@ -445,33 +463,39 @@ export const PAGE = `<!doctype html>
   <button class="fab-mic" id="fab-mic" aria-label="Hands-free companion" title="Hands-free companion">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
   </button>
-  <button class="fab" id="fab" aria-label="Talk to Synaut" title="Talk to Synaut">
-    <span class="fab-orb"><svg viewBox="0 0 24 24" fill="none" stroke="#021018" stroke-width="2.2" stroke-linecap="round"><path d="M4 12h2M8 8v8M12 5v14M16 8v8M20 12h-2"/></svg></span>
-    <span class="fab-text"><b>Ask Synaut</b><span>TYPE OR TALK</span></span>
+  <button class="fab" id="fab" aria-label="Ask Auti" title="Ask Auti">
+    <span class="fab-orb">${mark('', '')}</span>
+    <span class="fab-text"><b>Ask Auti</b><span>TYPE OR TALK</span></span>
   </button>
 </div>
 <div class="chat" id="chat" hidden role="dialog" aria-label="Chat">
   <div class="chat-head">
     <div class="seg" id="seg">
-      <button data-agent="assistant" aria-pressed="true">Synaut</button>
+      <button data-agent="assistant" aria-pressed="true">Auti</button>
       <button data-agent="companion" aria-pressed="false">Companion</button>
     </div>
     <button class="icon-btn" id="speaker" title="Read replies aloud" aria-label="Read replies aloud" aria-pressed="false"><svg class="on" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg><svg class="off" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 5 6M21 9l-5 6"/></svg></button>
+    <button class="icon-btn" id="voice-btn" title="Choose the speaking voice" aria-label="Choose the speaking voice" aria-expanded="false" aria-controls="voice-set"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
     <button class="icon-btn" id="clear" title="New conversation" aria-label="New conversation">⟲</button>
     <button class="icon-btn" id="close" title="Close" aria-label="Close">✕</button>
+  </div>
+  <div class="voice-set" id="voice-set" hidden>
+    <label for="voice">Voice</label>
+    <select id="voice"></select>
+    <button type="button" class="mini" id="voice-test">Test</button>
   </div>
   <div class="moods" id="moods" role="group" aria-label="Companion mood" hidden></div>
   <div class="msgs" id="msgs" aria-live="polite"></div>
   <div class="drive-toggle"><button id="drive-on"><svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px;margin-right:6px" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>Hands-free voice</button></div>
   <form class="compose" id="compose">
-    <textarea id="input" rows="1" placeholder="Ask Synaut…" aria-label="Message"></textarea>
+    <textarea id="input" rows="1" placeholder="Ask Auti…" aria-label="Message"></textarea>
     <button type="button" class="round" id="mic" title="Speak" aria-label="Speak"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
     <button type="submit" class="round send" title="Send" aria-label="Send">↑</button>
   </form>
   <div class="drive" id="drive" hidden>
     <div class="moods" id="drive-moods" role="group" aria-label="Companion mood"></div>
     <div class="drive-state" id="drive-state">Tap to talk</div>
-    <button class="big-orb" id="big-orb" aria-label="Talk"></button>
+    <button class="big-orb" id="big-orb" aria-label="Talk">${mark('', '')}</button>
     <div class="drive-heard" id="drive-heard"></div>
     <button class="drive-exit" id="drive-off">EXIT HANDS-FREE</button>
   </div>
@@ -493,6 +517,15 @@ const fmtUsd = (c) => c == null ? 'n/a' : '$' + (c < 0.01 && c > 0 ? c.toFixed(4
 const human = (s) => String(s || '').replace(/_/g, ' ');
 const greeting = () => { const h = new Date().getHours(); return h < 5 ? 'Working late.' : h < 12 ? 'Good morning.' : h < 18 ? 'Good afternoon.' : 'Good evening.'; };
 const store = { get(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+// Saved chats and settings moved from 'synaut.*' to 'auti.*' with the rename: copy any old value across once, so nothing is lost.
+for (const where of ['localStorage', 'sessionStorage']) {
+  try {
+    const st = window[where];
+    const old = [];
+    for (let i = 0; i < st.length; i++) { const k = st.key(i); if (k && k.indexOf('synaut.') === 0) old.push(k); }
+    for (const k of old) if (st.getItem('auti.' + k.slice(7)) === null) st.setItem('auti.' + k.slice(7), st.getItem(k));
+  } catch {}
+}
 let delay = 0;
 const rise = (el) => { el.classList.add('rise'); el.style.animationDelay = (delay += 50) + 'ms'; return el; };
 const section = (title, ...children) => { const s = rise($('section')); s.append($('h2', null, title), ...children); return s; };
@@ -506,7 +539,7 @@ const TABS = [
   ['crm', 'CRM', 'Business'], ['leads', 'Leads', 'Business'], ['clients', 'Clients', 'Business'],
   ['tasks', 'Tasks', 'Delivery'], ['projects', 'Projects', 'Delivery'],
   ['documents', 'Documents', 'Library'], ['journal', 'Journal', 'Library'],
-  ['agents', 'Agents', 'Synaut'],
+  ['agents', 'Agents', 'Auti'],
 ];
 let data = null;
 let current = (location.hash || '#overview').slice(1);
@@ -540,7 +573,7 @@ function stat(n, label, warn, tab) {
   s.onclick = () => go(tab); return s;
 }
 
-// Today: the day's decisions first, then the numbers behind them, then Synaut's reading of the company.
+// Today: the day's decisions first, then the numbers behind them, then Auti's reading of the company.
 // CRM figures load on their own, so the page never waits on the CRM.
 function kpi(group, value, label, hint, tone, tab, target) {
   const s = $('button', 'kpi' + (tone ? ' ' + tone : ''));
@@ -550,12 +583,12 @@ function kpi(group, value, label, hint, tone, tab, target) {
   return s;
 }
 const SEV = { now: 0, soon: 1, info: 2 };
-// Everything waiting on the owner, from every corner of Synaut, in one ranked list.
+// Everything waiting on the owner, from every corner of Auti, in one ranked list.
 function decisionQueue() {
   const items = [];
   const add = (sev, kind, title, why, label, fn) => items.push({ sev, kind, title, why, label, fn });
   const b = data.latest?.brief;
-  (data.crmRequests || []).forEach((r) => add('now', 'CRM change', r.summary, r.reason || 'Proposed by Synaut', 'Review', () => go('approvals')));
+  (data.crmRequests || []).forEach((r) => add('now', 'CRM change', r.summary, r.reason || 'Proposed by Auti', 'Review', () => go('approvals')));
   (data.approvals || []).forEach((a) => add('soon', 'Plan', a.title, a.objective || 'A plan from the coordinator', 'Review', () => go('approvals')));
   if (data.followUps?.length) add('now', 'Follow-ups', data.followUps.length + ' message draft' + (data.followUps.length > 1 ? 's' : '') + ' ready to send',
     data.followUps.slice(0, 3).map((f) => f.client).join(', ') + (data.followUps.length > 3 ? ' and more' : ''), 'Review', () => go('approvals'));
@@ -658,7 +691,7 @@ function viewOverview(root) {
       });
       left.append(section('Suggestions', card(ul)));
     }
-  } else left.append(section('Situation', emptyCard('Synaut has not written a brief yet. The next scheduled run will.')));
+  } else left.append(section('Situation', emptyCard('Auti has not written a brief yet. The next scheduled run will.')));
 
   // The money and sales detail behind the numbers, for the decisions above.
   if (crm) {
@@ -732,7 +765,7 @@ function planCard(p) {
   const actions = $('div', 'actions');
   const yes = $('button', 'act approve', 'Approve plan');
   const no = $('button', 'act', 'Drop');
-  const discuss = $('button', 'act', 'Discuss with Synaut');
+  const discuss = $('button', 'act', 'Discuss with Auti');
   const hint = $('span', 'hint');
   let armed = null;
   const reset = () => { armed = null; yes.textContent = 'Approve plan'; no.textContent = 'Drop'; yes.className = 'act approve'; no.className = 'act'; hint.className = 'hint'; hint.textContent = ''; };
@@ -891,7 +924,7 @@ function viewTasks(root) {
       const title = $('div', 'item-title', t.title);
       title.append($('span', 'tag' + (t.state === 'blocked' ? ' bad' : t.state === 'doing' ? ' ok' : ''), STATE_LABEL[t.state]));
       if (t.overdue) title.append($('span', 'tag warn', 'overdue'));
-      if (t.by_synaut) title.append($('span', 'tag', 'by Synaut'));
+      if (t.by_synaut) title.append($('span', 'tag', 'by Auti'));
       const meta = $('div', 'meta', t.due_date ? 'due ' + day(t.due_date) : 'no due date');
       if (t.owner) meta.append($('div', null, t.owner));
       if (t.completed_at) meta.append($('div', null, 'done ' + ago(t.completed_at)));
@@ -930,7 +963,7 @@ function viewProjects(root) {
       c.append($('div', 'desc', [p.description || 'No brief yet.', p.markets?.length ? p.markets.join(', ') : null].filter(Boolean).join(' · ')));
       const acts = $('div', 'acts');
       const link = $('button', 'mini' + (p.github_repo ? ' repo' : ''), p.github_repo ? '⎇ ' + p.github_repo : 'Link GitHub repo');
-      link.title = p.github_repo ? 'Change the linked repository' : 'Synaut reads its latest push to tell if the project is moving';
+      link.title = p.github_repo ? 'Change the linked repository' : 'Auti reads its latest push to tell if the project is moving';
       link.onclick = () => { repoForm = repoForm === p.id ? null : p.id; draw(); };
       acts.append(link); c.append(acts);
       if (repoForm === p.id) {
@@ -1009,7 +1042,7 @@ function viewClients(root) {
       }
       return el;
     });
-  if (!data.clients.length) root.append(emptyCard('No clients recorded yet. Add them so Synaut can watch retention.'));
+  if (!data.clients.length) root.append(emptyCard('No clients recorded yet. Add them so Auti can watch retention.'));
 }
 
 function viewAgents(root) {
@@ -1047,12 +1080,26 @@ function viewAgents(root) {
     const meter = $('div', 'meter'); const bar = $('i'); bar.style.width = Math.round(100 * (a.usage.month.input + a.usage.month.output) / max) + '%'; meter.append(bar);
     c.append(head, $('div', 'detail', a.role), use, meter);
     if (a.models.length) c.append($('div', 'detail', 'Model: ' + a.models.join(', ')));
+    // Which model this agent uses now, learned from what you approve and dismiss.
+    const mc = a.model_choice;
+    if (mc && mc.choice) {
+      const fam = (m) => (m.includes('haiku') ? 'Haiku' : m.includes('opus') ? 'Opus' : m.includes('sonnet') ? 'Sonnet' : m);
+      const score = Object.entries(mc.scores || {}).map(([f, x]) => f[0].toUpperCase() + f.slice(1) + ' ' + Math.round(100 * x.rate) + '% accepted of ' + x.decided).join(' · ');
+      const box = $('div', 'detail');
+      box.append($('strong', '', 'Uses ' + fam(mc.choice.model) + (mc.choice.auto ? ', chosen by results' : ', pinned') + '. '),
+        document.createTextNode((mc.choice.reason || '') + (score ? ' ' + score + '.' : ' No decided work yet.')));
+      c.append(box);
+    }
+    if (a.id === 'coordinator' && data.latest && data.latest.brief && data.latest.brief.working_summary) {
+      const mem = $('details', 'memory'); mem.append($('summary', '', 'What Auti remembers between runs'), $('div', 'detail', data.latest.brief.working_summary));
+      c.append(mem);
+    }
     if (a.id !== 'coordinator') { const t = $('button', 'more', 'Talk to ' + a.name + ' →'); t.onclick = () => openChat(a.id); c.append(t); }
     if (a.id === 'coordinator') {
       const on = data.autonomy === true;
       const t = $('button', 'more', data.autonomy == null ? 'Acts on its own: after the next run' : 'Acts on its own: ' + (on ? 'on' : 'off'));
       t.setAttribute('aria-pressed', String(on));
-      t.title = data.autonomy == null ? 'The next scheduled run sets this up' : on ? 'Tap to stop automatic steps; everything then waits for you' : 'Tap to let Synaut take small internal steps itself';
+      t.title = data.autonomy == null ? 'The next scheduled run sets this up' : on ? 'Tap to stop automatic steps; everything then waits for you' : 'Tap to let Auti take small internal steps itself';
       t.disabled = data.autonomy == null;
       t.onclick = async () => { t.disabled = true; try { await post('/api/autonomy', { enabled: !on }); await load(); } catch (e) { t.disabled = false; t.textContent = e.message; } };
       c.append(t);
@@ -1249,8 +1296,8 @@ function docReader(root, d) {
   const print = $('button', 'mini', 'Print / PDF'); print.title = 'Print it, or choose Save as PDF in the print dialog';
   print.onclick = () => { document.body.classList.add('printing'); window.print(); };
   const edit = $('button', 'mini', 'Edit'); edit.onclick = () => { docEdit = { slug: d.slug, title: d.title, body: d.body }; draw(); };
-  const fill = $('button', 'mini go', 'Prepare with Synaut');
-  fill.title = 'Synaut fills in what it knows for a client and lists what only you can fill';
+  const fill = $('button', 'mini go', 'Prepare with Auti');
+  fill.title = 'Auti fills in what it knows for a client and lists what only you can fill';
   fill.onclick = () => openChat('assistant', 'Prepare the "' + d.title + '" for ');
   bar.append(back, $('span', 'spacer'), copy, print, edit, fill, hint);
   root.append(bar, rise(paper));
@@ -1298,9 +1345,9 @@ function viewCrm(root) {
   const d = crmData;
   if (!d.connected) {
     root.append(section('Connect your CRM', card(
-      $('p', null, 'Synaut reads your CRM through its API, signed in as its own CRM user, so its actions are audited under its name and you can cut it off by disabling that user.'),
+      $('p', null, 'Auti reads your CRM through its API, signed in as its own CRM user, so its actions are audited under its name and you can cut it off by disabling that user.'),
       (() => { const ol = $('ol', 'steps');
-        ['In the CRM, create a user for Synaut (for example synaut@ your domain) with the Sales role, or a wider role if Synaut should do more.',
+        ['In the CRM, create a user for Auti (for example auti@ your domain) with the Sales role, or a wider role if Auti should do more.',
          'In Vercel, add CRM_API_URL (your CRM API address, ending in /api), CRM_EMAIL and CRM_PASSWORD for that user, then redeploy.',
          'Add the same three as GitHub secrets, so the scheduled runs read the CRM too.'].forEach((s) => ol.append($('li', null, s))); return ol; })(),
     )));
@@ -1310,7 +1357,7 @@ function viewCrm(root) {
   [['client', '+ Client'], ['opportunity', '+ Opportunity']].forEach(([k, label]) => {
     const b = $('button', 'more', crmForm === k ? 'Close' : label); b.onclick = () => { crmForm = crmForm === k ? null : k; draw(); }; bar.append(b);
   });
-  const ask = $('button', 'more', 'Ask Synaut about the CRM'); ask.onclick = () => openChat('assistant', 'Looking at the CRM, ');
+  const ask = $('button', 'more', 'Ask Auti about the CRM'); ask.onclick = () => openChat('assistant', 'Looking at the CRM, ');
   const re = $('button', 'more', '↻ Refresh CRM'); re.onclick = () => { crmData = null; draw(); };
   bar.append(ask, re); root.append(bar);
   if (crmNotice) { root.append($('p', 'notice', crmNotice)); crmNotice = ''; }
@@ -1329,7 +1376,7 @@ function viewCrm(root) {
   if (crmForm === 'opportunity') {
     const stages = (d.pipelines || []).flatMap((p) => p.stages.map((s) => [p.id + '|' + s.id, p.name + ' · ' + s.name]));
     const clients = [['', 'No client yet'], ...(d.clients || []).map((c) => [c.id, c.company_name])];
-    if (!stages.length) root.append(rise(card($('p', 'empty', 'The CRM has no pipeline Synaut can see. Create one in the CRM first.'))));
+    if (!stages.length) root.append(rise(card($('p', 'empty', 'The CRM has no pipeline Auti can see. Create one in the CRM first.'))));
     else root.append(rise(formCard([
       ['name', 'Opportunity', 'text', null, { required: true, wide: true, placeholder: 'e.g. Email hosting, 12 mailboxes' }],
       ['stage', 'Pipeline stage', 'select', stages], ['contactId', 'Client', 'select', clients], ['value', 'Value', 'text', null, { placeholder: '0' }],
@@ -1348,7 +1395,7 @@ function viewCrm(root) {
     st(d.open_opportunities.length + ' · ' + money(d.pipeline_value), 'Open pipeline', false, 'crm-pipeline'),
   );
   root.append(stats);
-  if (d.unavailable?.length) root.append(rise(card($('p', 'empty', 'Not visible to Synaut\\'s CRM user: ' + d.unavailable.join('; ')))));
+  if (d.unavailable?.length) root.append(rise(card($('p', 'empty', 'Not visible to Auti\\'s CRM user: ' + d.unavailable.join('; ')))));
   if (d.alerts.length) {
     const ul = $('ul', 'list');
     d.alerts.forEach((a) => { const li = $('li'); const body = $('div'); const t = $('div', 'item-title', a.title); t.append($('span', 'tag' + (a.severity === 'high' ? ' bad' : a.severity === 'medium' ? ' warn' : ''), a.severity)); body.append(t); if (a.message) body.append($('div', 'detail', a.message)); li.append($('span', 'bullet'), body); ul.append(li); });
@@ -1388,14 +1435,14 @@ function viewCrm(root) {
       b.onclick = async () => { b.disabled = true; try { await change('update_client_status', { clientId: c.id, clientName: c.company_name, status }, c.company_name + ' is now ' + status + ' in the CRM.'); } catch (e) { b.disabled = false; acts.append($('span', 'error', e.message)); } };
       acts.append(b);
     });
-    const a = $('button', 'mini go', 'Ask Synaut'); a.onclick = () => openChat('assistant', 'About ' + (c.company_name || c.contact_name) + ' in the CRM: ');
+    const a = $('button', 'mini go', 'Ask Auti'); a.onclick = () => openChat('assistant', 'About ' + (c.company_name || c.contact_name) + ' in the CRM: ');
     acts.append(a); el.append(acts); rows.append(el);
   });
   sec.append(rows); root.append(sec);
   root.append($('p', 'empty small', 'Read from the CRM ' + ago(d.fetched_at) + '.'));
 }
 
-// Businesses the leads agent found. Nothing here contacts anyone: tracking adds a lead to Synaut's clients
+// Businesses the leads agent found. Nothing here contacts anyone: tracking adds a lead to Auti's clients
 // (so the retention agent drafts an introduction for the owner to send), and Add to CRM creates the client there.
 const MARKET_NAME = { angola: 'Angola', uk: 'UK', portugal: 'Portugal' };
 const SERVICE_NAME = { crm: 'CRM', domain: 'Domain', email: 'Business email', hosting: 'Hosting', software: 'Software' };
@@ -1408,7 +1455,7 @@ function viewLeads(root) {
   t.title = data.leadsOn == null ? 'The next scheduled run sets this up' : on ? 'Tap to stop the daily search' : 'Tap to search for new leads every day';
   t.disabled = data.leadsOn == null;
   t.onclick = async () => { t.disabled = true; try { await post('/api/leads', { enabled: !on }); await load(); } catch (e) { t.disabled = false; t.textContent = e.message; } };
-  const ask = $('button', 'more', 'Ask Synaut about leads'); ask.onclick = () => openChat('assistant', 'Looking at the leads the leads agent found, ');
+  const ask = $('button', 'more', 'Ask Auti about leads'); ask.onclick = () => openChat('assistant', 'Looking at the leads the leads agent found, ');
   bar.append(t, ask); root.append(bar);
 
   const fresh = leads.filter((l) => l.status === 'new');
@@ -1461,10 +1508,10 @@ function leadCard(l) {
   if (data.crmOn && (l.status === 'new' || l.status === 'tracking')) act(leadForm[l.id] === 'crm' ? 'Close' : 'Add to CRM', null, toggle('crm'));
   if (l.status === 'new') act(leadForm[l.id] === 'dismiss' ? 'Close' : 'Dismiss', null, toggle('dismiss'));
   if (l.status === 'dismissed') act('Reopen', null, () => decide({ action: 'reopen' }));
-  act('Ask Synaut', null, async () => openChat('assistant', 'About the lead ' + l.company + ' (' + (MARKET_NAME[l.market] || l.market) + ', needs ' + (l.services || []).join(', ') + '): '));
+  act('Ask Auti', null, async () => openChat('assistant', 'About the lead ' + l.company + ' (' + (MARKET_NAME[l.market] || l.market) + ', needs ' + (l.services || []).join(', ') + '): '));
   el.append(acts);
   if (leadForm[l.id] === 'crm') {
-    el.append($('p', 'empty small', 'The CRM needs a contact. Use a business contact you found or were given; Synaut never contacts them.'));
+    el.append($('p', 'empty small', 'The CRM needs a contact. Use a business contact you found or were given; Auti never contacts them.'));
     el.append(formCard([['contactName', 'Contact name', 'text', null, { required: true }], ['email', 'Email', 'text', null, { required: true }], ['phone', 'Phone', 'text', null, { required: true }]],
       'Add to CRM', (v) => decide({ action: 'crm', ...v }), () => { leadForm[l.id] = null; draw(); }));
   }
@@ -1475,12 +1522,12 @@ function leadCard(l) {
   return el;
 }
 
-// A change in the CRM that Synaut proposed. Approving runs it in the CRM straight away.
+// A change in the CRM that Auti proposed. Approving runs it in the CRM straight away.
 function crmRequestCard(r) {
   const c = $('div', 'card plan');
   c.append($('span', 'pending', 'CRM CHANGE'), $('h3', null, r.summary));
   if (r.reason) c.append($('div', 'detail', r.reason));
-  c.append($('div', 'detail', 'Proposed by ' + (r.proposed_by === 'assistant' ? 'Synaut chat' : r.proposed_by) + ' · ' + ago(r.created_at)));
+  c.append($('div', 'detail', 'Proposed by ' + (r.proposed_by === 'assistant' ? 'Auti chat' : r.proposed_by) + ' · ' + ago(r.created_at)));
   if (r.error) c.append($('div', 'error', 'Last try failed: ' + r.error));
   const actions = $('div', 'actions'); const yes = $('button', 'act approve', 'Approve and do it'); const no = $('button', 'act', 'Drop'); const hint = $('span', 'hint');
   const go = async (decision, btn) => {
@@ -1520,11 +1567,11 @@ setInterval(() => { if (!document.hidden && !document.querySelector('button.conf
 
 /* ---------- chat ---------- */
 const AGENT_INFO = {
-  assistant: { name: 'Synaut', placeholder: 'Ask Synaut about the company…', intro: 'Your coordinator, with the full picture of the company. Ask what to focus on, test a decision, or think out loud.' },
+  assistant: { name: 'Auti', placeholder: 'Ask Auti about the company…', intro: 'Your coordinator, with the full picture of the company. Ask what to focus on, test a decision, or think out loud.' },
   companion: { name: 'Companion', placeholder: 'Say anything…', intro: 'Company for the road. Pick a mood above, then ask about the news, a big idea, a bit of history, or just talk. Replies are read aloud; Hands-free voice lets you switch moods by saying, for example, "storyteller mode".' },
 };
-let agent = store.get('synaut.agent') || 'assistant';
-const convos = store.get('synaut.convos') || { assistant: [], companion: [] };
+let agent = store.get('auti.agent') || 'assistant';
+const convos = store.get('auti.convos') || { assistant: [], companion: [] };
 let busy = false, voiceTurn = false;
 const msgs = document.getElementById('msgs'); const input = document.getElementById('input');
 
@@ -1533,7 +1580,7 @@ const MOODS = [
   ['debate', 'Argumentative', '⚔️'], ['motivation', 'Motivation', '🔥'], ['therapist', 'Unlicensed therapist', '🛋️'],
   ['conspiracy', 'Conspiracy', '🛸'], ['quiz', 'Quiz master', '🎯'], ['saint', 'Latter-day Saint', '🕊️'], ['calm', 'Meditation', '🌙'],
 ];
-let mood = (() => { try { const m = localStorage.getItem('synaut.mood'); return MOODS.some(([k]) => k === m) ? m : 'witty'; } catch { return 'witty'; } })();
+let mood = (() => { try { const m = localStorage.getItem('auti.mood'); return MOODS.some(([k]) => k === m) ? m : 'witty'; } catch { return 'witty'; } })();
 let moodVoice = { rate: 0.96, pitch: 0.98 };
 function paintMoods() {
   for (const id of ['moods', 'drive-moods']) {
@@ -1550,7 +1597,7 @@ function paintMoods() {
 }
 function setMood(k, spoken) {
   if (k === mood) return;
-  mood = k; try { localStorage.setItem('synaut.mood', k); } catch {}
+  mood = k; try { localStorage.setItem('auti.mood', k); } catch {}
   paintMoods();
   const label = MOODS.find(([m]) => m === k)[1];
   if (agent === 'companion') { msgs.append($('div', 'note', 'Mood · ' + label)); msgs.scrollTop = msgs.scrollHeight; }
@@ -1569,7 +1616,7 @@ function paintChat() {
 }
 function openChat(which, draft) {
   if (which) agent = which;
-  store.set('synaut.agent', agent);
+  store.set('auti.agent', agent);
   document.getElementById('chat').hidden = false; document.getElementById('dock').hidden = true;
   paintChat();
   if (draft) { input.value = draft; }
@@ -1579,15 +1626,15 @@ function closeChat() { stopDrive(); document.getElementById('chat').hidden = tru
 document.getElementById('fab').onclick = () => { unlockSpeech(); openChat(); };
 document.getElementById('fab-mic').onclick = () => { openChat('companion'); startDrive(); };
 document.getElementById('close').onclick = closeChat;
-document.getElementById('clear').onclick = () => { convos[agent] = []; store.set('synaut.convos', convos); paintChat(); };
-document.querySelectorAll('#seg button').forEach((b) => b.onclick = () => { agent = b.dataset.agent; store.set('synaut.agent', agent); paintChat(); });
+document.getElementById('clear').onclick = () => { convos[agent] = []; store.set('auti.convos', convos); paintChat(); };
+document.querySelectorAll('#seg button').forEach((b) => b.onclick = () => { agent = b.dataset.agent; store.set('auti.agent', agent); paintChat(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !document.getElementById('chat').hidden) closeChat(); });
 
 async function ask(text) {
   text = text.trim(); if (!text || busy) return;
   busy = true;
   const who = agent;
-  convos[who].push({ role: 'user', content: text }); store.set('synaut.convos', convos); paintChat();
+  convos[who].push({ role: 'user', content: text }); store.set('auti.convos', convos); paintChat();
   const typing = $('div', 'msg assistant typing', '…'); msgs.append(typing); msgs.scrollTop = msgs.scrollHeight;
   let tick = 0; const t = setInterval(() => { typing.textContent = ['·', '··', '···'][tick++ % 3]; }, 350);
   try {
@@ -1595,13 +1642,13 @@ async function ask(text) {
       body: JSON.stringify({ agent: who, messages: convos[who], voice: voiceTurn || drive.on, mood }) });
     const out = await r.json();
     if (!r.ok) throw new Error(out.error || 'Something went wrong');
-    convos[who].push({ role: 'assistant', content: out.reply }); store.set('synaut.convos', convos);
+    convos[who].push({ role: 'assistant', content: out.reply }); store.set('auti.convos', convos);
     if (agent === who) paintChat();
     moodVoice = out.voice || { rate: 0.96, pitch: 0.98 };
     if (voiceTurn || drive.on || speakerOn(who)) speak(out.reply);
     else afterSpeak();
   } catch (e) {
-    convos[who].pop(); store.set('synaut.convos', convos); input.value = text;
+    convos[who].pop(); store.set('auti.convos', convos); input.value = text;
     if (agent === who) { paintChat(); msgs.append($('div', 'msg err', e.message)); }
     if (drive.on) { setDrive('error', e.message); speak(e.message); }
   } finally { clearInterval(t); busy = false; voiceTurn = false; }
@@ -1622,13 +1669,13 @@ const DICTATE = /Mac/.test(navigator.userAgent) && !/iPhone|iPad/.test(navigator
   ? 'press the fn (Globe) key twice' : /Windows/.test(navigator.userAgent) ? 'press Windows + H' : 'tap the microphone on your keyboard';
 // Plain words for why voice failed, and what to do instead.
 function voiceProblem(code) {
-  if (code === 'not-allowed') return 'Microphone access is blocked for Synaut. Allow the microphone for this site in your browser settings, then try again.';
+  if (code === 'not-allowed') return 'Microphone access is blocked for Auti. Allow the microphone for this site in your browser settings, then try again.';
   if (code === 'missing' && !STANDALONE) return 'This browser has no voice recognition. Use Chrome or Safari, or tap the microphone on your keyboard to dictate.';
   if (code === 'service-not-allowed' || code === 'unsupported' || code === 'missing') return STANDALONE
-    ? 'Voice recognition is not available inside the installed app on this device. Open Synaut in Safari or Chrome for voice, or tap the microphone on your keyboard to dictate here.'
+    ? 'Voice recognition is not available inside the installed app on this device. Open Auti in Safari or Chrome for voice, or tap the microphone on your keyboard to dictate here.'
     : 'Voice recognition is turned off on this device. On iPhone, turn on Siri or Dictation in Settings, or tap the microphone on your keyboard to dictate.';
   if (code === 'network' && navigator.onLine === false) return 'Voice recognition needs an internet connection. Check your signal and try again.';
-  if (code === 'network' && EDGE) return 'Microsoft Edge could not reach its voice service, which often fails in Edge. For voice, open Synaut in Chrome or Safari. To speak here instead, ' + DICTATE + ' and talk into the box.';
+  if (code === 'network' && EDGE) return 'Microsoft Edge could not reach its voice service, which often fails in Edge. For voice, open Auti in Chrome or Safari. To speak here instead, ' + DICTATE + ' and talk into the box.';
   if (code === 'network') return 'The browser\u2019s voice service did not answer. Try again, or ' + DICTATE + ' and talk into the box.';
   if (code === 'audio-capture') return 'No microphone was found. Check that one is connected and not used by another app.';
   return 'Voice stopped working (' + code + '). Try again, or type instead.';
@@ -1642,47 +1689,140 @@ function showVoiceProblem(code) {
   if (srBroken) input.focus();
 }
 
-// A calm, friendly British voice: the best en-GB voice this device has, a touch slower than default.
-const GB_PREFERRED = [/Sonia.*Natural/i, /Libby.*Natural/i, /Ryan.*Natural/i, /Serena/i, /Daniel.*(Enhanced|Premium)/i, /Kate.*(Enhanced|Premium)/i,
-  /Arthur/i, /Martha/i, /Google UK English Female/i, /Google UK English Male/i, /Daniel/i, /Kate/i, /Serena/i, /Stephanie/i];
-let voices = [];
-const loadVoices = () => { voices = synth ? synth.getVoices() : []; };
-if (synth) { loadVoices(); synth.addEventListener?.('voiceschanged', loadVoices); }
-function pickVoice() {
-  const gb = voices.filter((v) => /en[-_]GB/i.test(v.lang));
-  for (const re of GB_PREFERRED) { const v = gb.find((x) => re.test(x.name)) || voices.find((x) => re.test(x.name) && /^en/i.test(x.lang)); if (v) return v; }
-  return gb[0] || voices.find((v) => /^en/i.test(v.lang)) || null;
+// Voices, best first: neural/natural/premium voices before plain ones, then en-GB before other English.
+// With nothing chosen, Auti speaks with a calm British voice, a touch slower than default.
+const VOICE_QUALITY = /Natural|Neural|Premium|Enhanced|Siri|Google UK English/i;
+const GB_FAVOURITES = [/Sonia/i, /Libby/i, /Ryan/i, /Serena/i, /Daniel/i, /Kate/i, /Arthur/i, /Martha/i, /Google UK English Female/i, /Google UK English Male/i, /Stephanie/i];
+const NOVELTY = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Junior|Ralph|Fred|Kathy|Eloquence|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley|Flo/i;
+function voiceScore(v) {
+  let s = 0;
+  if (VOICE_QUALITY.test(v.name)) s += 100;
+  if (/en[-_]GB/i.test(v.lang)) s += 40; else if (/^en/i.test(v.lang)) s += 10;
+  const fav = GB_FAVOURITES.findIndex((re) => re.test(v.name));
+  if (fav >= 0 && /en[-_]GB/i.test(v.lang)) s += 20 - fav;
+  if (/compact/i.test(v.name) || NOVELTY.test(v.name)) s -= 80;
+  return s;
 }
+let voices = [];
+const loadVoices = () => { voices = synth ? synth.getVoices() : []; paintVoices(); };
+const englishVoices = () => voices.filter((v) => /^en/i.test(v.lang)).sort((a, b) => voiceScore(b) - voiceScore(a) || a.name.localeCompare(b.name));
+const savedVoice = () => { try { return localStorage.getItem('auti.voice') || ''; } catch { return ''; } };
+function pickVoice() {
+  const want = savedVoice();
+  const chosen = want && voices.find((v) => v.voiceURI === want || v.name === want);
+  return chosen || englishVoices()[0] || null;
+}
+function paintVoices() {
+  const sel = document.getElementById('voice'); if (!sel) return;
+  const list = englishVoices(); const want = savedVoice();
+  sel.replaceChildren();
+  const auto = $('option', null, list.length ? 'Automatic (' + list[0].name + ')' : 'Automatic'); auto.value = ''; sel.append(auto);
+  list.forEach((v) => { const o = $('option', null, v.name + ' · ' + v.lang.replace('_', '-')); o.value = v.voiceURI || v.name; sel.append(o); });
+  sel.value = list.some((v) => (v.voiceURI || v.name) === want) ? want : '';
+  sel.disabled = !synth;
+}
+
 // iOS and some browsers only allow speech that starts from a tap; call this inside every tap that may lead to a spoken reply.
 let unlocked = false;
 function unlockSpeech() {
   if (!synth || unlocked) return;
   const u = new SpeechSynthesisUtterance(' '); u.volume = 0; synth.speak(u); unlocked = true;
 }
-// Long replies are spoken sentence by sentence; Chrome cuts off single utterances after about 15 seconds.
-function speak(text) {
-  if (!synth) return afterSpeak();
+// Text as it should be heard: no links, markdown or emoji, and symbols that read badly spelled out.
+function speakable(text) {
+  return String(text)
+    .replace(/\\x60{3}[\\s\\S]*?\\x60{3}/g, ' ')
+    .replace(/\\[([^\\]]+)\\]\\([^)]*\\)/g, '$1')
+    .replace(/\\b(?:https?:\\/\\/|www\\.)\\S+/gi, '')
+    .replace(/\\p{Extended_Pictographic}|️|‍/gu, '')
+    .replace(/^\\s*(?:[-*•]|\\d+[.)])\\s+/gm, '')
+    .replace(/[*_#\\x60>|]+/g, ' ')
+    .replace(/([^.!?:;,\\s])[ \\t]*\\n+/g, '$1.\\n')
+    .replace(/\\be\\.g\\.,?/gi, 'for example,')
+    .replace(/\\bi\\.e\\.,?/gi, 'that is,')
+    .replace(/\\betc\\.(?=\\s*$|\\s+[A-Z])/g, 'and so on.')
+    .replace(/,?\\s*\\betc\\./gi, ', and so on')
+    .replace(/\\bvs\\.?(?=\\s)/gi, 'versus')
+    .replace(/\\s*&\\s*/g, ' and ')
+    .replace(/(\\d)\\s*%/g, '$1 percent').replace(/%/g, ' percent')
+    .replace(/\\band\\/or\\b/gi, 'and or')
+    .replace(/\\b([A-Za-z]+)\\/([A-Za-z]+)\\b/g, '$1 or $2')
+    .replace(/(\\d)\\/(\\d)/g, '$1\\u2044$2').replace(/\\s*\\/\\s*/g, ' ').replace(/\\u2044/g, '/')
+    .replace(/\\s+[—–-]\\s+/g, ', ')
+    .replace(/\\s*(?:->|→)\\s*/g, ' to ')
+    .replace(/\\s+/g, ' ').replace(/\\s+([.,!?;:])/g, '$1').trim();
+}
+// Natural phrases: short sentences are merged, long ones are split at commas or semicolons, so each
+// utterance stays well under Chrome's ~15 second cut-off without sounding chopped up.
+const PHRASE_MAX = 180, PHRASE_MIN = 40;
+function phrases(text) {
+  const clean = speakable(text).replace(/(\\d)\\.(\\d)/g, '$1․$2');           // keep decimals out of sentence splits
+  const sentences = (clean.match(/[^.!?]+[.!?]+["'’”)\\]]*|[^.!?]+$/g) || [clean]).map((p) => p.trim()).filter(Boolean);
+  const pieces = [];
+  for (let s of sentences) {
+    while (s.length > PHRASE_MAX) {
+      const head = s.slice(0, PHRASE_MAX);
+      let at = Math.max(head.lastIndexOf(', '), head.lastIndexOf('; '), head.lastIndexOf(': '));
+      if (at < PHRASE_MIN) at = head.lastIndexOf(' ');
+      if (at < PHRASE_MIN) at = PHRASE_MAX - 1;
+      pieces.push(s.slice(0, at + 1).trim()); s = s.slice(at + 1).trim();
+    }
+    if (s) pieces.push(s);
+  }
+  const out = [];
+  for (const p of pieces) {
+    const last = out[out.length - 1];
+    if (last && (last.length < PHRASE_MIN || p.length < 20) && last.length + p.length < PHRASE_MAX) out[out.length - 1] = last + ' ' + p;
+    else out.push(p);
+  }
+  return out.map((p) => p.replace(/․/g, '.'));
+}
+const wobble = (base, spread) => base * (1 + (Math.random() * 2 - 1) * spread);
+const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+// Each phrase gets a tiny rate/pitch variation around the mood's voice, so it doesn't sound robotic.
+let speakRun = 0;
+function speak(text, opts = {}) {
+  if (!synth) return opts.test ? undefined : afterSpeak();
   synth.cancel();
-  const parts = String(text).replace(/\\s+/g, ' ').match(/[^.!?]+[.!?]+["')]*|[^.!?]+$/g) || [String(text)];
+  const run = ++speakRun;
+  const parts = phrases(text);
+  if (!parts.length) return opts.test ? undefined : afterSpeak();
   const v = pickVoice();
-  if (drive.on) setDrive('speaking', text);
+  if (drive.on && !opts.test) setDrive('speaking', text);
   parts.forEach((p, i) => {
-    const u = new SpeechSynthesisUtterance(p.trim());
+    const u = new SpeechSynthesisUtterance(p);
     if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-GB';
-    u.rate = moodVoice.rate; u.pitch = moodVoice.pitch;
-    if (i === parts.length - 1) u.onend = afterSpeak;
-    u.onerror = (e) => { if (e.error !== 'interrupted' && e.error !== 'canceled') afterSpeak(); };
+    const last = i === parts.length - 1;
+    u.rate = clamp(wobble(moodVoice.rate, 0.025) * (last && parts.length > 1 ? 0.97 : 1), 0.5, 2);
+    u.pitch = clamp(wobble(moodVoice.pitch, 0.02), 0, 2);
+    if (last) u.onend = () => { if (run === speakRun && !opts.test) afterSpeak(); };
+    u.onerror = (e) => { if (e.error !== 'interrupted' && e.error !== 'canceled' && run === speakRun && !opts.test) afterSpeak(); };
     synth.speak(u);
   });
 }
+if (synth) { loadVoices(); synth.addEventListener?.('voiceschanged', loadVoices); }
+document.getElementById('voice').onchange = (e) => {
+  try { if (e.target.value) localStorage.setItem('auti.voice', e.target.value); else localStorage.removeItem('auti.voice'); } catch {}
+};
+document.getElementById('voice-test').onclick = () => {
+  unlockSpeech();
+  if (!synth) return;
+  if (!voices.length) loadVoices();
+  speak('Hello, I’m Auti. This is how I’ll sound on the road: calm, clear, and to the point, so you can keep your eyes where they belong.', { test: true });
+};
+document.getElementById('voice-btn').onclick = () => {
+  const set = document.getElementById('voice-set'); set.hidden = !set.hidden;
+  document.getElementById('voice-btn').setAttribute('aria-expanded', String(!set.hidden));
+  if (!set.hidden) { if (!voices.length) loadVoices(); else paintVoices(); }
+};
 const prefs = { get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v === '1'; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v ? '1' : '0'); } catch {} } };
-const speakerOn = (who) => prefs.get('synaut.speak.' + who, who === 'companion');
+const speakerOn = (who) => prefs.get('auti.speak.' + who, who === 'companion');
 function paintSpeaker() {
   const b = document.getElementById('speaker'); const on = speakerOn(agent);
   b.setAttribute('aria-pressed', String(on)); b.title = on ? 'Replies are read aloud' : 'Read replies aloud';
-  b.style.color = on ? 'var(--cyan)' : '';
+  b.style.color = on ? 'var(--gold)' : '';
 }
-document.getElementById('speaker').onclick = () => { unlockSpeech(); const on = !speakerOn(agent); prefs.set('synaut.speak.' + agent, on); if (!on) synth?.cancel(); paintSpeaker(); };
+document.getElementById('speaker').onclick = () => { unlockSpeech(); const on = !speakerOn(agent); prefs.set('auti.speak.' + agent, on); if (!on) synth?.cancel(); paintSpeaker(); };
 function afterSpeak() { if (drive.on) listen(); }
 
 function listen() {
@@ -1763,46 +1903,47 @@ export const LOGIN = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
-<meta name="theme-color" content="#05080d">
+<meta name="theme-color" content="#1C1C1C">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Synaut">
+<meta name="apple-mobile-web-app-title" content="Auti">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-<title>Synaut</title>
+${FONTS}
+<title>Auti</title>
 <style>
-  :root { --bg: #05080d; --ink: #e6f1f8; --muted: #8094a6; --line: rgba(120, 200, 255, 0.14); --cyan: #3ee0ff; --glow: rgba(62, 224, 255, 0.35); --red: #ff6b6b; }
+  :root { --bg: #1C1C1C; --ink: #FFFFFF; --muted: #A8A8A8; --line: #333333; --gold: #B98B2F; --glow: rgba(185, 139, 47, 0.42); --red: #D46A5F; }
   * { box-sizing: border-box; }
   body { margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; color: var(--ink);
-         font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
-         background: radial-gradient(700px 420px at 50% 20%, rgba(62, 224, 255, 0.14), transparent 65%), var(--bg); }
+         font: 400 16px/1.5 "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+         background: radial-gradient(640px 420px at 50% 22%, rgba(185, 139, 47, 0.12), transparent 65%), var(--bg); }
   form { width: 100%; max-width: 340px; text-align: center; }
-  .orb { width: 92px; height: 92px; margin: 0 auto 26px; border-radius: 50%; position: relative;
-         background: radial-gradient(circle, #d8fbff 0 12%, var(--cyan) 34%, rgba(62,224,255,0.15) 64%, transparent 70%);
-         box-shadow: 0 0 50px var(--glow); animation: pulse 3.2s ease-in-out infinite; }
-  .orb::after { content: ""; position: absolute; inset: -10px; border-radius: 50%; border: 1px solid var(--glow); border-top-color: transparent; animation: spin 6s linear infinite; }
-  h1 { font: 600 18px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.4em; margin: 0 0 8px; padding-left: 0.4em; }
-  p { color: var(--muted); margin: 0 0 26px; font-size: 15px; }
-  input { width: 100%; font: inherit; color: var(--ink); background: rgba(14, 22, 33, 0.8); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; outline: none; }
-  input:focus { border-color: var(--glow); box-shadow: 0 0 0 3px rgba(62, 224, 255, 0.12); }
-  button { width: 100%; margin-top: 12px; font: 600 15px/1 inherit; font-family: inherit; color: #021018; background: var(--cyan); border: 0; border-radius: 12px; padding: 15px; cursor: pointer; box-shadow: 0 0 24px -6px var(--glow); }
+  .mark { display: block; width: 132px; height: 77px; margin: 0 auto 28px; color: #FFFFFF; }
+  h1 { font: 600 22px/1 "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; letter-spacing: 0.32em; margin: 0 0 10px; padding-left: 0.32em; }
+  p { color: var(--muted); margin: 0 0 28px; font-size: 15px; }
+  input { width: 100%; font: inherit; color: var(--ink); background: #262626; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; outline: none; }
+  input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(185, 139, 47, 0.18); }
+  button { width: 100%; margin-top: 12px; font: 600 15px/1 "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: #1C1C1C; background: var(--gold);
+           border: 0; border-radius: 12px; padding: 15px; cursor: pointer; box-shadow: 0 8px 24px -10px var(--glow); }
+  button:hover { filter: brightness(1.08); }
+  button:focus-visible { outline: 2px solid #FFFFFF; outline-offset: 2px; }
   button:disabled { opacity: 0.6; }
   .err { color: var(--red); font-size: 14px; min-height: 1.5em; margin-top: 12px; }
-  @keyframes pulse { 50% { box-shadow: 0 0 70px var(--glow); } }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  .tag { margin-top: 28px; font: 500 11px/1.6 "Poppins", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: #858585; }
 </style>
 </head>
 <body>
+${MARK_SYMBOL}
 <form id="f">
-  <div class="orb" aria-hidden="true"></div>
-  <h1>SYNAUT</h1>
+  ${mark('', 'Auti')}
+  <h1>AUTI</h1>
   <p>Sign in to your coordinator.</p>
   <input id="pw" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" required autofocus>
   <button id="go" type="submit">Sign in</button>
   <div class="err" id="err" role="alert"></div>
+  <div class="tag">We don\u2019t sell leads. We build systems.</div>
 </form>
 <script>
 document.getElementById('f').onsubmit = async (e) => {

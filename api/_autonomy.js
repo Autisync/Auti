@@ -1,5 +1,5 @@
-// POST /api/autonomy {enabled}  : switch Synaut's automatic steps on or off.
-// POST /api/autonomy {undo: id} : undo one step Synaut took on its own.
+// POST /api/autonomy {enabled}  : switch Auti's automatic steps on or off.
+// POST /api/autonomy {undo: id} : undo one step Auti took on its own.
 import { guard, getDb } from './_shared.js';
 import { setAutonomy, undoAction } from '../src/autonomy.js';
 

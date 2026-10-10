@@ -2,7 +2,7 @@
   "name": "jarvis-coordinator",
   "version": "0.1.0",
   "private": true,
-  "description": "Synaut v1 coordinator: reads a company's state from Postgres, thinks with the Claude API, writes the morning brief back.",
+  "description": "Auti v1 coordinator: reads a company's state from Postgres, thinks with the Claude API, writes the morning brief back.",
   "type": "module",
   "engines": { "node": ">=22.9" },
   "scripts": {
@@ -13,7 +13,7 @@
     "brief": "node --env-file-if-exists=.env src/show.js",
     "compare": "node --env-file-if-exists=.env src/compare.js",
     "check:private": "node scripts/check-private.js",
-    "test": "node test/coordinator.test.js && node test/crm.test.js && node test/leads.test.js"
+    "test": "node test/coordinator.test.js && node test/crm.test.js && node test/leads.test.js && node test/models.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",

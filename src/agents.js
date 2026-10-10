@@ -1,4 +1,6 @@
-// The agents Synaut runs, and how much each one uses. The dashboard's Agents tab reads agentsSummary().
+import { modelSummary } from './models.js';
+
+// The agents Auti runs, and how much each one uses. The dashboard's Agents tab reads agentsSummary().
 
 export const AGENTS = [
   {
@@ -21,7 +23,7 @@ export const AGENTS = [
   },
   {
     id: 'assistant',
-    name: 'Synaut (chat)',
+    name: 'Auti (chat)',
     role: 'Answers your questions about the company, with the same view of it as the coordinator, and can look at your GitHub repos. It can advise but never approve or change anything.',
     schedule: 'On demand, from the chat button',
   },
@@ -59,6 +61,7 @@ export async function agentsSummary(db) {
       FROM agent_usage WHERE created_at > now() - interval '30 days'`)).rows;
   const lastCoordinator = (await db.query(`
     SELECT mode, started_at, finished_at, error IS NOT NULL AS failed FROM coordinator_run ORDER BY started_at DESC LIMIT 1`)).rows[0] || null;
+  const learned = await modelSummary(db);       // which model each scheduled agent uses now, and why
 
   const now = Date.now();
   const ms = { day: 864e5, week: 7 * 864e5, month: 30 * 864e5 };
@@ -80,6 +83,6 @@ export async function agentsSummary(db) {
     if (a.id === 'coordinator' && lastCoordinator) {
       status = lastCoordinator.failed ? 'last run failed' : !lastCoordinator.finished_at ? 'running' : 'idle';
     }
-    return { ...a, status, last_active: last, models: [...new Set(mine.map((r) => r.model).filter(Boolean))], usage };
+    return { ...a, status, last_active: last, models: [...new Set(mine.map((r) => r.model).filter(Boolean))], usage, model_choice: learned[a.id] || null };
   });
 }

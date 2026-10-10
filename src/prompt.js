@@ -3,12 +3,16 @@
 
 export const BRIEF_TOOL = {
   name: 'write_morning_brief',
-  description: 'Record the brief the owner will see when they open Synaut. Call exactly once.',
+  description: 'Record the brief the owner will see when they open Auti. Call exactly once.',
   input_schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['weakest_link', 'one_thing_today', 'priorities', 'suggestions', 'proposed_initiatives', 'questions_for_owner', 'actions'],
+    required: ['weakest_link', 'one_thing_today', 'priorities', 'suggestions', 'proposed_initiatives', 'questions_for_owner', 'actions', 'working_summary'],
     properties: {
+      working_summary: {
+        type: 'string',
+        description: 'Your memory for the next run, which will see this instead of re-reading all the history. A detailed running summary: the situation of each active project and client that matters, decisions the owner made, what you suggested and how it went, what you are watching and why, and open questions. Start from memory.working_summary in the data, keep what still holds, update what changed, drop what is finished. Plain prose, up to about 500 words.',
+      },
       weakest_link: {
         type: 'object',
         additionalProperties: false,
@@ -60,7 +64,7 @@ export const BRIEF_TOOL = {
                 type: 'object', additionalProperties: false, required: ['action', 'owner'],
                 properties: {
                   action: { type: 'string' },
-                  owner: { type: 'string', description: "The owner, a partner (by name if known), or 'Synaut'." },
+                  owner: { type: 'string', description: "The owner, a partner (by name if known), or 'Auti'." },
                   due: { type: 'string', description: 'YYYY-MM-DD if known.' },
                 },
               },
@@ -108,7 +112,7 @@ export const BRIEF_TOOL = {
 
 export function systemPrompt(config) {
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n');
-  return `You are Synaut, the coordinator and strategic partner for the company described in the standing instructions below. You run on a schedule, read the company's current state, and write the brief the owner reads when they open the dashboard.
+  return `You are Auti, the coordinator and strategic partner for the company described in the standing instructions below. You run on a schedule, read the company's current state, and write the brief the owner reads when they open the dashboard.
 
 Standing instructions (set by the owner, follow them):
 ${standing}
@@ -120,6 +124,7 @@ How to work:
 - When crm is present it is live from the company CRM (clients, MRR, subscriptions expiring, overdue invoices, open opportunities). It is the source of truth for money and renewals: renewals in the next weeks and overdue invoices are leaks to plug first. If crm.unavailable lists parts, say what you could not see.
 - leads lists businesses the leads agent found that wait for the owner (strongest first). New sales count, but keeping current clients and collecting money come first; when leads.waiting is high, suggest the owner spends time on the strongest ones, never contact them yourself.
 - Keep work moving between the owner's visits. Where the standing instructions allow it (autonomy), take the small internal steps yourself through actions instead of only suggesting them. recentActions shows what you did lately and what the owner undid; learn from the undos.
+- memory.working_summary is what you wrote last run. Build on it rather than working everything out again: journal and recentContacts only hold what happened since then. Always hand an updated working_summary forward.
 - Keep everything short, specific and doable. The owner is one person carrying many projects, so less is more.
 
 Record your brief by calling write_morning_brief exactly once.`;
@@ -134,5 +139,5 @@ export function userPrompt(context, mode) {
 Today is ${context.today}.
 
 Company state (JSON):
-${JSON.stringify(context, null, 1)}`;
+${JSON.stringify(context)}`;
 }

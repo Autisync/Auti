@@ -98,6 +98,7 @@ await check('the brief is stored for the dashboard', async () => {
 });
 
 await check('a second run does not duplicate an open initiative, and sees its own past suggestions', async () => {
+  await db.query(`INSERT INTO journal (kind, author, body) VALUES ('standup', 'owner', 'Back at my desk.')`);   // something new, so the stand-up isn't skipped
   const second = await runCoordinator({ db, brain, mode: 'standup' });
   assert.deepEqual(second.brief.skipped_duplicates, ['Client contact rhythm']);
   const n = (await db.query(`SELECT count(*)::int AS n FROM initiatives`)).rows[0].n;
@@ -140,10 +141,10 @@ await check('the real Claude client sends a forced tool call and parses the answ
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const { claudeBrain } = await import('../src/llm.js');
-  const real = claudeBrain({ apiKey: 'test-key', model: 'claude-sonnet-5-5', fetch: fakeFetch });
-  const out = await runCoordinator({ db, brain: real, mode: 'standup' });
+  const real = claudeBrain({ apiKey: 'test-key', model: 'claude-sonnet-5', fetch: fakeFetch });
+  const out = await runCoordinator({ db, brain: real, mode: 'standup', skipUnchanged: false });
   assert.match(sent.url, /\/v1\/messages$/);
-  assert.equal(sent.body.model, 'claude-sonnet-5-5');
+  assert.equal(sent.body.model, 'claude-sonnet-5');
   assert.deepEqual(sent.body.tool_choice, { type: 'tool', name: 'write_morning_brief' });
   assert.equal(sent.body.tools[0].name, 'write_morning_brief');
   assert.equal(out.brief.one_thing_today, answer.one_thing_today);
@@ -398,17 +399,34 @@ await check('dropping a plan takes it off the dashboard without approving it', a
 await check('the page escapes nothing into HTML: data goes in through textContent only', async () => {
   const { PAGE } = await import('../src/page.js');
   const { LOGIN } = await import('../src/page.js');
-  assert.match(PAGE, /<title>Synaut<\/title>/);
+  assert.match(PAGE, /<title>Auti<\/title>/);
   assert.doesNotMatch(PAGE + LOGIN, /innerHTML|insertAdjacentHTML|document\.write/);
   assert.doesNotMatch(PAGE + LOGIN, /Jarvis/i);                         // renamed everywhere on screen
   new Function(PAGE.match(/<script>([\s\S]*)<\/script>/)[1]);           // the page's script parses
   new Function(LOGIN.match(/<script>([\s\S]*)<\/script>/)[1]);
 });
 
+await check('the page carries the Auti brand: name, Gold Flash, Poppins, and the mark', async () => {
+  const { PAGE, LOGIN } = await import('../src/page.js');
+  for (const html of [PAGE, LOGIN]) {
+    assert.match(html, /Auti/);
+    assert.match(html, /#B98B2F/i);                                       // Gold Flash
+    assert.match(html, /fonts\.googleapis\.com\/css2\?family=Poppins/);
+    assert.match(html, /<symbol id="auti-mark"/);
+    assert.doesNotMatch(html, /Synaut|SYNAUT|#3ee0ff/);                   // old visible name and cyan are gone
+  }
+  assert.match(PAGE, /Ask Auti/);
+  assert.match(PAGE, /'auti\.voice'/);                                   // the chosen voice is remembered
+  const { default: handler } = await import('../api/page.js');
+  const headers = {}; const res = { setHeader: (k, v) => { headers[k] = v; }, status: () => res, send: () => res };
+  handler({ headers: {} }, res);
+  assert.match(headers['Content-Security-Policy'], /font-src 'self' https:\/\/fonts\.gstatic\.com/);
+});
+
 await check('the app can be installed: manifest, icons and service worker are in place', async () => {
   const fs = await import('node:fs');
   const m = JSON.parse(fs.readFileSync(new URL('../public/manifest.webmanifest', import.meta.url)));
-  assert.equal(m.name, 'Synaut');
+  assert.equal(m.name, 'Auti');
   assert.equal(m.display, 'standalone');
   for (const i of m.icons) assert.ok(fs.existsSync(new URL('../public' + i.src, import.meta.url)), i.src);
   assert.ok(m.icons.some((i) => i.purpose === 'maskable' && i.sizes === '512x512'));
@@ -581,19 +599,19 @@ await check('a brief whose nested parts arrive as JSON strings is still accepted
     proposed_initiatives: JSON.stringify([{ ...answer.proposed_initiatives[0], title: 'Stringly plan', steps: JSON.stringify(answer.proposed_initiatives[0].steps) }]),
   };
   const b2 = { model: 'fake', async think() { return { output: stringly, model: 'fake-model', usage: { input: 1, output: 1 } }; } };
-  const { brief } = await runCoordinator({ db, brain: b2, mode: 'standup' });
+  const { brief } = await runCoordinator({ db, brain: b2, mode: 'standup', skipUnchanged: false });
   assert.equal(brief.weakest_link.headline, answer.weakest_link.headline);
   assert.equal(brief.priorities.length, 1);
   assert.deepEqual(brief.created_initiatives.map((i) => i.title), ['Stringly plan']);
   await db.query(`DELETE FROM initiatives WHERE title = 'Stringly plan'`);
   const b3 = { model: 'fake', async think() { return { output: { ...answer, weakest_link: 'Just a sentence.' }, model: 'f', usage: {} }; } };
-  assert.equal((await runCoordinator({ db, brain: b3, mode: 'standup' })).brief.weakest_link.headline, 'Just a sentence.');
+  assert.equal((await runCoordinator({ db, brain: b3, mode: 'standup', skipUnchanged: false })).brief.weakest_link.headline, 'Just a sentence.');
 });
 
 await check('leaked tool-call markup in the weakest link is cleaned, in new runs and on the dashboard', async () => {
   const leaked = '<parameter name="headline">Zero clients tracked.</parameter>\n<parameter name="why">Example Client was lost to silence.';
   const b4 = { model: 'fake', async think() { return { output: { ...answer, weakest_link: leaked }, model: 'f', usage: {} }; } };
-  const { brief } = await runCoordinator({ db, brain: b4, mode: 'standup' });
+  const { brief } = await runCoordinator({ db, brain: b4, mode: 'standup', skipUnchanged: false });
   assert.deepEqual(brief.weakest_link, { headline: 'Zero clients tracked.', why: 'Example Client was lost to silence.' });
   // A brief already stored with the markup is repaired when the dashboard reads it.
   await db.query(`UPDATE coordinator_run SET brief = jsonb_set(brief, '{weakest_link}', $1::jsonb)
