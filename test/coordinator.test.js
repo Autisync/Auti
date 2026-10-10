@@ -398,17 +398,34 @@ await check('dropping a plan takes it off the dashboard without approving it', a
 await check('the page escapes nothing into HTML: data goes in through textContent only', async () => {
   const { PAGE } = await import('../src/page.js');
   const { LOGIN } = await import('../src/page.js');
-  assert.match(PAGE, /<title>Synaut<\/title>/);
+  assert.match(PAGE, /<title>Auti<\/title>/);
   assert.doesNotMatch(PAGE + LOGIN, /innerHTML|insertAdjacentHTML|document\.write/);
   assert.doesNotMatch(PAGE + LOGIN, /Jarvis/i);                         // renamed everywhere on screen
   new Function(PAGE.match(/<script>([\s\S]*)<\/script>/)[1]);           // the page's script parses
   new Function(LOGIN.match(/<script>([\s\S]*)<\/script>/)[1]);
 });
 
+await check('the page carries the Auti brand: name, Gold Flash, Poppins, and the mark', async () => {
+  const { PAGE, LOGIN } = await import('../src/page.js');
+  for (const html of [PAGE, LOGIN]) {
+    assert.match(html, /Auti/);
+    assert.match(html, /#B98B2F/i);                                       // Gold Flash
+    assert.match(html, /fonts\.googleapis\.com\/css2\?family=Poppins/);
+    assert.match(html, /<symbol id="auti-mark"/);
+    assert.doesNotMatch(html, /Synaut|SYNAUT|#3ee0ff/);                   // old visible name and cyan are gone
+  }
+  assert.match(PAGE, /Ask Auti/);
+  assert.match(PAGE, /'auti\.voice'/);                                   // the chosen voice is remembered
+  const { default: handler } = await import('../api/page.js');
+  const headers = {}; const res = { setHeader: (k, v) => { headers[k] = v; }, status: () => res, send: () => res };
+  handler({ headers: {} }, res);
+  assert.match(headers['Content-Security-Policy'], /font-src 'self' https:\/\/fonts\.gstatic\.com/);
+});
+
 await check('the app can be installed: manifest, icons and service worker are in place', async () => {
   const fs = await import('node:fs');
   const m = JSON.parse(fs.readFileSync(new URL('../public/manifest.webmanifest', import.meta.url)));
-  assert.equal(m.name, 'Synaut');
+  assert.equal(m.name, 'Auti');
   assert.equal(m.display, 'standalone');
   for (const i of m.icons) assert.ok(fs.existsSync(new URL('../public' + i.src, import.meta.url)), i.src);
   assert.ok(m.icons.some((i) => i.purpose === 'maskable' && i.sizes === '512x512'));
