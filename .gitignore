@@ -7,6 +7,9 @@
 seed/*
 !seed/example.sql
 
+# model comparisons hold company data (npm run compare)
+compare-*.md
+
 # build and local junk
 node_modules/
 *.zip

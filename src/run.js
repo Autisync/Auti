@@ -55,7 +55,8 @@ async function coordinator() {
 
 async function retention() {
   // Drafts only; the owner sends. Counts only, never client names.
-  const out = await runRetention({ db, brain: claudeBrain() });
+  // Filling in one draft form per client is simple work, and every draft waits for the owner: Haiku is enough.
+  const out = await runRetention({ db, brain: claudeBrain({ model: process.env.SYNAUT_RETENTION_MODEL || 'claude-haiku-5-5' }) });
   console.log(`[${new Date().toISOString()}] retention done. clients_due=${out.considered} drafts=${out.drafted}`);
 }
 

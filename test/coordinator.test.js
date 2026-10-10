@@ -529,14 +529,20 @@ await check('the road companion talks for the ear, can search the web, and keeps
   const fakeFetch = async (url, init) => {
     bodies.push(JSON.parse(init.body));
     const r = replies.shift();
-    return new Response(JSON.stringify({ id: 'msg_r', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', stop_sequence: null, ...r }),
+    bodies.at(-1).url = String(url);
+    return new Response(JSON.stringify({ id: 'msg_r', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', stop_sequence: null, ...r }),
       { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const brain = chatMod.chatBrain({ apiKey: 'test-key', fetch: fakeFetch });
   const out = await chatMod.chat(db, brain, { agent: 'companion', voice: true, messages: [{ role: 'user', content: 'Anything new?' }] });
   assert.equal(out.reply, 'Big day in space news.');
   assert.equal(bodies.length, 2);
+  // The companion runs on Haiku: the basic web search, and no fallback beta (Haiku has none).
+  assert.equal(bodies[0].model, 'claude-haiku-5-5');
   assert.equal(bodies[0].tools[0].name, 'web_search');
+  assert.equal(bodies[0].tools[0].type, 'web_search_20250305');
+  assert.equal(bodies[0].fallbacks, undefined);
+  assert.doesNotMatch(bodies[0].url, /beta=true/);
   assert.match(bodies[0].system[0].text, /read aloud/);
   assert.doesNotMatch(bodies[0].system[0].text, /Example Client/);   // the companion doesn't get company data
   assert.equal(bodies[1].messages.at(-1).role, 'assistant');
@@ -828,10 +834,33 @@ await check('the dashboard and chat work before migration 006 has run', async ()
   await assert.rejects(auto.setAutonomy(fresh, true), /not ready yet/);
 });
 
-await check('the schedule runs every two hours on weekdays and is kept alive', async () => {
+await check('cheaper models: Haiku is priced, and a side-by-side comparison saves nothing and reports the saving', async () => {
+  const agents = await import('../src/agents.js');
+  assert.equal(agents.cost('claude-haiku-5-5', 1e6, 1e6), 0.6);
+  assert.equal(agents.cost('claude-sonnet-5-5', 1e6, 1e6), 12);
+  const { webSearchTool } = await import('../src/llm.js');
+  assert.equal(webSearchTool('claude-haiku-5-5', 3).type, 'web_search_20250305');
+  assert.equal(webSearchTool('claude-sonnet-5', 8).type, 'web_search_20260209');
+  const cmp = await import('../src/compare.js');
+  const before = (await db.query(`SELECT count(*)::int AS n FROM coordinator_run`)).rows[0].n;
+  const results = await cmp.compareModels(async (model) => {
+    if (model === 'broken') throw new Error('nope');
+    return { output: { one_thing_today: `from ${model}` }, model, usage: { input: 10000, output: 2000 } };
+  }, ['claude-sonnet-5-5', 'claude-haiku-5-5', 'broken']);
+  assert.deepEqual(results.map((r) => r.cost), [0.04, 0.002, undefined]);
+  assert.equal(results[2].error, 'nope');
+  const report = cmp.renderComparison('coordinator', results.slice(0, 2));
+  assert.match(report, /from claude-haiku-5-5/);
+  assert.match(report, /cost 20\.0x less/);
+  assert.equal((await db.query(`SELECT count(*)::int AS n FROM coordinator_run`)).rows[0].n, before);
+  const ignored = fs0.readFileSync(new URL('../.gitignore', import.meta.url), 'utf8');
+  assert.match(ignored, /^compare-\*\.md$/m);                      // the reports hold company data
+});
+
+await check('the schedule runs three stand-ups on weekdays and is kept alive', async () => {
   const yml = fs0.readFileSync(new URL('../.github/workflows/coordinator.yml', import.meta.url), 'utf8');
   assert.match(yml, /cron: '17 4 \* \* \*'/);                        // the nightly run is still recognised by its exact cron
-  assert.match(yml, /cron: '23 6-18\/2 \* \* 1-5'/);
+  assert.match(yml, /cron: '23 7,12,17 \* \* 1-5'/);
   assert.match(yml, /github\.event\.schedule }}" = "17 4 \* \* \*"/);
   const keep = fs0.readFileSync(new URL('../.github/workflows/keepalive.yml', import.meta.url), 'utf8');
   assert.match(keep, /actions: write/);

@@ -2,6 +2,12 @@
 // Swappable: tests pass a fake with the same think() signature.
 import Anthropic from '@anthropic-ai/sdk';
 
+// The newer web search (with dynamic filtering) runs on Sonnet and Opus only; Haiku uses the basic one.
+export function webSearchTool(model, maxUses) {
+  const type = /haiku/.test(model) ? 'web_search_20250305' : 'web_search_20260209';
+  return { type, name: 'web_search', max_uses: maxUses };
+}
+
 export function claudeBrain({
   apiKey = process.env.ANTHROPIC_API_KEY,
   model = process.env.JARVIS_MODEL || 'claude-sonnet-5-5',
@@ -37,7 +43,7 @@ export function claudeBrain({
 // one last request forces the call. maxSearches caps the cost of a run.
 export function claudeResearcher({
   apiKey = process.env.ANTHROPIC_API_KEY,
-  model = process.env.JARVIS_MODEL || 'claude-sonnet-5-5',
+  model = process.env.SYNAUT_LEADS_MODEL || process.env.JARVIS_MODEL || 'claude-sonnet-5-5',
   maxSearches = Number(process.env.SYNAUT_LEADS_SEARCHES) || 8,
   fetch,
 } = {}) {
@@ -47,7 +53,7 @@ export function claudeResearcher({
   return {
     model,
     async research({ system, user, tool }) {
-      const search = { type: 'web_search_20260209', name: 'web_search', max_uses: maxSearches };
+      const search = webSearchTool(model, maxSearches);
       const usage = { input: 0, output: 0, searches: 0 };
       let messages = [{ role: 'user', content: user }];
       let served = model;
@@ -56,11 +62,13 @@ export function claudeResearcher({
         if (last && messages.at(-1).role === 'assistant') messages.push({ role: 'user', content: `Now record what you found with ${tool.name}.` });
         const res = await client.messages.create({
           model, max_tokens: 8000, system, messages,
+          // Each round re-sends everything found so far; caching makes those repeats about 10x cheaper.
+          cache_control: { type: 'ephemeral' },
           tools: last ? [tool] : [search, tool],
           tool_choice: last ? { type: 'tool', name: tool.name } : { type: 'auto' },
         });
         served = res.model || served;
-        usage.input += res.usage?.input_tokens || 0;
+        usage.input += (res.usage?.input_tokens || 0) + (res.usage?.cache_read_input_tokens || 0) + (res.usage?.cache_creation_input_tokens || 0);
         usage.output += res.usage?.output_tokens || 0;
         usage.searches += res.usage?.server_tool_use?.web_search_requests || 0;
         const call = res.content.find((b) => b.type === 'tool_use' && b.name === tool.name);

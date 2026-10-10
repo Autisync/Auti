@@ -11,6 +11,7 @@
     "nightly": "node --env-file-if-exists=.env src/run.js nightly",
     "standup": "node --env-file-if-exists=.env src/run.js standup",
     "brief": "node --env-file-if-exists=.env src/show.js",
+    "compare": "node --env-file-if-exists=.env src/compare.js",
     "check:private": "node scripts/check-private.js",
     "test": "node test/coordinator.test.js && node test/crm.test.js && node test/leads.test.js"
   },

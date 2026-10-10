@@ -3,6 +3,7 @@
 //   companion: a witty, curious companion for the road that teaches and keeps you up to date
 // Only token counts are stored (agent_usage). The conversation lives in the browser, never in the database.
 import Anthropic from '@anthropic-ai/sdk';
+import { webSearchTool } from './llm.js';
 import { gatherContext } from './context.js';
 import { githubTools } from './github.js';
 import { documentTools, combineTools } from './documents.js';
@@ -102,20 +103,24 @@ ${VOICE}`;
 export function chatBrain({
   apiKey = process.env.ANTHROPIC_API_KEY,
   model = process.env.JARVIS_CHAT_MODEL || 'claude-sonnet-5-5',
+  // Casual talk at low effort doesn't need Sonnet. Ask Synaut, which works through the owner's tools, keeps it.
+  companionModel = process.env.SYNAUT_COMPANION_MODEL || 'claude-haiku-5-5',
   fetch,
 } = {}) {
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set.');
   const client = new Anthropic({ apiKey, ...(fetch ? { fetch } : {}) });
   return {
     model,
+    companionModel,
     async reply({ agent, system, messages, clientTools }) {
-      const tools = agent === 'companion' ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }] : [...(clientTools?.defs || [])];
+      const useModel = agent === 'companion' ? companionModel : model;
+      const tools = agent === 'companion' ? [webSearchTool(useModel, 3)] : [...(clientTools?.defs || [])];
       let convo = messages;
       let input = 0, output = 0, searches = 0, toolCalls = 0, res;
       // A web search can pause the turn, and the assistant's own tools need a round trip each; cap both.
       for (let i = 0; i < 8; i++) {
         const body = {
-          model,
+          model: useModel,
           max_tokens: agent === 'companion' ? 2000 : 4000,
           output_config: { effort: agent === 'companion' ? 'low' : 'medium' },
           system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
@@ -124,7 +129,10 @@ export function chatBrain({
         };
         try {
           // If a safety check declines, the API retries on a fallback model instead of stopping.
-          res = await client.beta.messages.create({ ...body, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+          // Haiku has no server-side fallback, so it goes straight to the plain call.
+          res = /haiku/.test(useModel)
+            ? await client.messages.create(body)
+            : await client.beta.messages.create({ ...body, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
         } catch (err) {
           if (err.status !== 400 || !/fallback|beta/i.test(err.message)) throw err;
           res = await client.messages.create(body);   // fallbacks not available for this model or account
@@ -147,7 +155,7 @@ export function chatBrain({
         return { text: "I can't help with that one. Ask me something else?", model: res.model, usage: { input, output, searches, toolCalls } };
       }
       const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-      return { text: text || 'Sorry, I lost my train of thought. Say that again?', model: res.model || model, usage: { input, output, searches, toolCalls } };
+      return { text: text || 'Sorry, I lost my train of thought. Say that again?', model: res.model || useModel, usage: { input, output, searches, toolCalls } };
     },
   };
 }

@@ -112,12 +112,35 @@ await check('the researcher searches first, carries on after a pause, and forces
   assert.deepEqual(out.usage, { input: 60, output: 17, searches: 5 });
   assert.deepEqual(out.output, { leads: [] });
   assert.equal(sent[0].tools[0].type, 'web_search_20260209');
+  assert.deepEqual(sent[0].cache_control, { type: 'ephemeral' });   // each round re-sends the research so far
   assert.equal(sent[0].tools[0].max_uses, 8);
   assert.deepEqual(sent[0].tool_choice, { type: 'auto' });
   assert.equal(sent[1].messages.at(-1).role, 'assistant');      // continued after the pause
   assert.deepEqual(sent[2].tool_choice, { type: 'tool', name: 'record_leads' });
   assert.equal(sent[2].tools.length, 1);
   assert.match(sent[2].messages.at(-1).content, /record what you found/);
+});
+
+await check('the researcher on Haiku uses the basic web search and counts cached tokens', async () => {
+  const sent = [];
+  const fetch = async (url, init) => {
+    sent.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ id: 'msg', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', stop_sequence: null, stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', id: 'toolu_1', name: 'record_leads', input: { leads: [] } }],
+      usage: { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 50, output_tokens: 7 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const { claudeResearcher } = await import('../src/llm.js');
+  const out = await claudeResearcher({ apiKey: 'k', model: 'claude-haiku-5-5', fetch }).research({ system: 's', user: 'u', tool: leads.LEADS_TOOL });
+  assert.equal(sent[0].tools[0].type, 'web_search_20250305');
+  assert.deepEqual(out.usage, { input: 1050, output: 7, searches: 0 });
+});
+
+await check('the leads request can be read without running the agent', async () => {
+  const before = (await db.query(`SELECT count(*)::int AS n FROM lead_run`)).rows[0].n;
+  const req = await leads.leadsRequest(db, { now: new Date('2026-10-10T04:00:00Z'), focus: { market: 'uk', angle: 'CRM' } });
+  assert.match(req.system, /leads agent/);
+  assert.match(req.user, /the United Kingdom\. Angle: CRM/);
+  assert.equal((await db.query(`SELECT count(*)::int AS n FROM lead_run`)).rows[0].n, before);
 });
 
 await check('the coordinator, the dashboard and the page see the leads', async () => {

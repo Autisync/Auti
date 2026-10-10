@@ -5,7 +5,7 @@ export const AGENTS = [
     id: 'coordinator',
     name: 'Coordinator',
     role: 'Studies the whole company on a schedule and writes the brief. Between your visits it also takes small internal steps on its own (adds tasks, sets first contact dates, reviews its own suggestions), each one logged on the Overview with an Undo. Plans, client messages, documents and money still wait for you.',
-    schedule: 'Daily 04:17 UTC, and every 2 hours on weekdays from 06:23 to 18:23 UTC',
+    schedule: 'Daily 04:17 UTC, and at 07:23, 12:23 and 17:23 UTC on weekdays',
   },
   {
     id: 'retention',
@@ -37,6 +37,7 @@ export const AGENTS = [
 const PRICES = {
   'claude-sonnet-5-5': [2, 10], 'claude-sonnet-5': [2, 10], 'claude-sonnet-4-6': [3, 15],
   'claude-opus-5-5': [4, 20], 'claude-opus-5': [5, 25], 'claude-haiku-4-5': [1, 5],
+  'claude-haiku-5-5': [0.1, 0.5],
 };
 const WEB_SEARCH_PER_USE = 0.01;
 

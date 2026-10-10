@@ -74,12 +74,8 @@ export async function waitingLeads(db) {
   return Number((await db.query(`SELECT count(*)::int AS n FROM lead WHERE status = 'new'`)).rows[0].n);
 }
 
-// The researcher is a brain with web search (claudeResearcher in llm.js); tests pass a fake.
-export async function runLeads({ db, researcher, now = new Date(), focus = focusFor(now) }) {
-  if (!(await leadsAgentOn(db))) return { skipped: 'switched off', found: 0, saved: 0 };
-  const waiting = await waitingLeads(db);
-  if (waiting >= MAX_WAITING) return { skipped: `${waiting} leads already wait for review`, found: 0, saved: 0 };
-
+// What the researcher is asked, read from the database without changing anything (npm run compare uses it too).
+export async function leadsRequest(db, { now = new Date(), focus = focusFor(now) } = {}) {
   const config = (await db.query(`SELECT key, value FROM coordinator_config WHERE enabled ORDER BY key`)).rows;
   const known = (await db.query(`
     SELECT company AS name FROM lead WHERE market = $1
@@ -97,8 +93,18 @@ Already known (skip these): ${JSON.stringify(known)}
 Leads the owner turned down, and why (learn from these): ${JSON.stringify(dismissed)}
 ${lastNote ? `Your note from last time: ${lastNote}\n` : ''}
 Research, then call ${LEADS_TOOL.name} once.`;
+  return { system: systemPrompt(config), user };
+}
 
-  const { output, model, usage } = await researcher.research({ system: systemPrompt(config), user, tool: LEADS_TOOL });
+// The researcher is a brain with web search (claudeResearcher in llm.js); tests pass a fake.
+export async function runLeads({ db, researcher, now = new Date(), focus = focusFor(now) }) {
+  if (!(await leadsAgentOn(db))) return { skipped: 'switched off', found: 0, saved: 0 };
+  const waiting = await waitingLeads(db);
+  if (waiting >= MAX_WAITING) return { skipped: `${waiting} leads already wait for review`, found: 0, saved: 0 };
+
+  const { system, user } = await leadsRequest(db, { now, focus });
+
+  const { output, model, usage } = await researcher.research({ system, user, tool: LEADS_TOOL });
   await db.query(`INSERT INTO agent_usage (agent, model, input_tokens, output_tokens, web_searches) VALUES ('leads', $1, $2, $3, $4)`,
     [model ?? null, usage?.input ?? 0, usage?.output ?? 0, usage?.searches ?? 0]);
 
