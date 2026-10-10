@@ -294,6 +294,18 @@ export const PAGE = `<!doctype html>
               background: linear-gradient(90deg, var(--panel) 0%, rgba(62,224,255,0.06) 50%, var(--panel) 100%);
               background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
   @keyframes shimmer { to { background-position: -200% 0; } }
+  /* CRM */
+  .stats.six { grid-template-columns: repeat(3, 1fr); margin-top: 8px; }
+  .stats.six b { font-size: 19px; }
+  .tbl-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+  table.grid { border-collapse: collapse; width: 100%; font-size: 14px; }
+  table.grid th { font: 600 10px/1.4 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.grid td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.grid tr:last-child td { border-bottom: 0; }
+  input.search { width: 100%; box-sizing: border-box; background: rgba(5,8,13,0.6); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; margin-bottom: 12px; }
+  input.search:focus { outline: none; border-color: var(--cyan-glow); }
+  ol.steps { margin: 12px 0 0; padding-left: 20px; } ol.steps li + li { margin-top: 6px; }
+  .empty.small { font: 12px/1.6 var(--mono); color: var(--dim); margin-top: 18px; }
   /* documents */
   .doc-row { cursor: pointer; }
   .doc-row:hover, .doc-row:focus-visible { border-color: var(--cyan-glow); outline: none; }
@@ -333,6 +345,7 @@ export const PAGE = `<!doctype html>
   }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } .rise { opacity: 1; transform: none; } }
   @media (max-width: 600px) {
+    .stats.six { grid-template-columns: repeat(2, 1fr); }
     .hello { font-size: 22px; }
     .stats { grid-template-columns: repeat(2, 1fr); }
     .stat b { font-size: 20px; }
@@ -423,7 +436,7 @@ const emptyCard = (text) => card($('p', 'empty', text));
 
 /* ---------- tabs ---------- */
 const TABS = [
-  ['overview', 'Overview'], ['approvals', 'Approvals'], ['tasks', 'Tasks'], ['projects', 'Projects'],
+  ['overview', 'Overview'], ['approvals', 'Approvals'], ['crm', 'CRM'], ['tasks', 'Tasks'], ['projects', 'Projects'],
   ['clients', 'Clients'], ['documents', 'Documents'], ['agents', 'Agents'], ['journal', 'Journal'],
 ];
 let data = null;
@@ -432,7 +445,7 @@ if (!TABS.some(([id]) => id === current)) current = 'overview';
 
 function drawTabs() {
   const el = document.getElementById('tabs'); el.replaceChildren();
-  const counts = data ? { approvals: data.approvals.length + (data.followUps?.length || 0), tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.length } : {};
+  const counts = data ? { approvals: data.approvals.length + (data.followUps?.length || 0) + (data.crmRequests?.length || 0), tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.length } : {};
   TABS.forEach(([id, label]) => {
     const b = $('button', 'tab' + (id === 'approvals' && counts.approvals ? ' hot' : ''), label);
     b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(id === current));
@@ -636,6 +649,7 @@ function followUpCard(f) {
 function viewApprovals(root) {
   const fu = data.followUps || [];
   root.append(section('Plans', ...(data.approvals.length ? data.approvals.map(planCard) : [emptyCard('No plans are waiting for you.')])));
+  if (data.crmRequests?.length) root.append(section('CRM changes', ...data.crmRequests.map(crmRequestCard)));
   root.append(section('Follow-ups to send', ...(fu.length ? fu.map(followUpCard)
     : [emptyCard('No drafts. The retention agent writes one when a client is due for contact.')])));
 }
@@ -856,7 +870,7 @@ function viewAgents(root) {
     const ul = $('ul', 'list');
     data.tools.forEach((t) => {
       const li = $('li'); const body = $('div'); const title = $('div', 'item-title', t.name);
-      title.append($('span', 'tag' + (t.connected ? ' ok' : t.access === 'planned' ? '' : ' warn'), t.connected ? 'connected · ' + t.access : t.access === 'planned' ? 'coming later' : 'limited'));
+      title.append($('span', 'tag' + (t.connected ? ' ok' : t.access === 'planned' ? '' : ' warn'), t.connected ? 'connected · ' + t.access : t.access === 'planned' ? 'coming later' : t.access === 'not connected' ? 'not connected' : 'limited'));
       body.append(title, $('div', 'detail', t.detail));
       li.append($('span', 'bullet'), body); ul.append(li);
     });
@@ -1103,7 +1117,148 @@ function docEditor(root) {
 }
 window.addEventListener('afterprint', () => document.body.classList.remove('printing'));
 
-const VIEWS = { overview: viewOverview, approvals: viewApprovals, tasks: viewTasks, projects: viewProjects, clients: viewClients, agents: viewAgents, journal: viewJournal, documents: viewDocuments };
+/* ---------- CRM ---------- */
+// Live from the company CRM. Reading is free; every change here is the owner's own tap.
+let crmData = null, crmLoading = false, crmForm = null, crmNotice = '', crmSearch = '';
+const money = (n, cur) => n == null || n === '' || Number.isNaN(Number(n)) ? 'n/a'
+  : Number(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + (cur ? ' ' + cur : '');
+async function loadCrm() {
+  if (crmLoading) return; crmLoading = true;
+  try {
+    const r = await fetch('/api/crm', { cache: 'no-store' });
+    if (r.status === 401) return location.reload();
+    const out = await r.json().catch(() => ({}));
+    crmData = r.ok ? out : { connected: true, error: out.error || 'Could not reach the CRM (' + r.status + ')' };
+  } catch (e) { crmData = { connected: true, error: e.message }; }
+  finally { crmLoading = false; }
+  if (current === 'crm') draw();
+}
+function crmTable(cols, rows) {
+  const wrap = $('div', 'tbl-wrap'); const t = $('table', 'grid');
+  const head = $('tr'); cols.forEach(([, label]) => head.append($('th', null, label))); t.append(head);
+  rows.forEach((r) => { const tr = $('tr'); cols.forEach(([k, , fmt]) => tr.append($('td', null, fmt ? fmt(r[k], r) : (r[k] ?? '')))); t.append(tr); });
+  wrap.append(t); return wrap;
+}
+function viewCrm(root) {
+  if (crmData === null) { root.append($('div', 'skeleton'), $('div', 'skeleton')); loadCrm(); return; }
+  const d = crmData;
+  if (!d.connected) {
+    root.append(section('Connect your CRM', card(
+      $('p', null, 'Synaut reads your CRM through its API, signed in as its own CRM user, so its actions are audited under its name and you can cut it off by disabling that user.'),
+      (() => { const ol = $('ol', 'steps');
+        ['In the CRM, create a user for Synaut (for example synaut@ your domain) with the Sales role, or a wider role if Synaut should do more.',
+         'In Vercel, add CRM_API_URL (your CRM API address, ending in /api), CRM_EMAIL and CRM_PASSWORD for that user, then redeploy.',
+         'Add the same three as GitHub secrets, so the scheduled runs read the CRM too.'].forEach((s) => ol.append($('li', null, s))); return ol; })(),
+    )));
+    return;
+  }
+  const bar = rise($('div', 'toolbar'));
+  [['client', '+ Client'], ['opportunity', '+ Opportunity']].forEach(([k, label]) => {
+    const b = $('button', 'more', crmForm === k ? 'Close' : label); b.onclick = () => { crmForm = crmForm === k ? null : k; draw(); }; bar.append(b);
+  });
+  const ask = $('button', 'more', 'Ask Synaut about the CRM'); ask.onclick = () => openChat('assistant', 'Looking at the CRM, ');
+  const re = $('button', 'more', '↻ Refresh CRM'); re.onclick = () => { crmData = null; draw(); };
+  bar.append(ask, re); root.append(bar);
+  if (crmNotice) { root.append($('p', 'notice', crmNotice)); crmNotice = ''; }
+  if (d.error) { root.append(rise(card($('p', 'error', d.error)))); return; }
+  const change = async (kind, payload, done) => {
+    const r = await post('/api/crm', { change: kind, payload });
+    crmNotice = done; crmForm = null; crmData = null; draw(); return r;
+  };
+  if (crmForm === 'client') {
+    root.append(rise(formCard([
+      ['companyName', 'Company', 'text', null, { required: true }], ['contactName', 'Contact', 'text', null, { required: true }],
+      ['email', 'Email', 'text', null, { required: true }], ['phone', 'Phone', 'text', null, { required: true }],
+      ['country', 'Country', 'text'], ['website', 'Website', 'text'], ['notes', 'Notes', 'textarea'],
+    ], 'Add to CRM', (v) => change('create_client', v, 'Added ' + v.companyName + ' to the CRM.'), () => { crmForm = null; draw(); })));
+  }
+  if (crmForm === 'opportunity') {
+    const stages = (d.pipelines || []).flatMap((p) => p.stages.map((s) => [p.id + '|' + s.id, p.name + ' · ' + s.name]));
+    const clients = [['', 'No client yet'], ...(d.clients || []).map((c) => [c.id, c.company_name])];
+    if (!stages.length) root.append(rise(card($('p', 'empty', 'The CRM has no pipeline Synaut can see. Create one in the CRM first.'))));
+    else root.append(rise(formCard([
+      ['name', 'Opportunity', 'text', null, { required: true, wide: true, placeholder: 'e.g. Email hosting, 12 mailboxes' }],
+      ['stage', 'Pipeline stage', 'select', stages], ['contactId', 'Client', 'select', clients], ['value', 'Value', 'text', null, { placeholder: '0' }],
+    ], 'Add to pipeline', (v) => { const [pipelineId, stageId] = v.stage.split('|'); return change('create_opportunity', { name: v.name, pipelineId, stageId, contactId: v.contactId || null, value: v.value || null, source: 'synaut' }, 'Added "' + v.name + '" to the pipeline.'); },
+    () => { crmForm = null; draw(); })));
+  }
+  const s = d.summary || {};
+  const stats = rise($('div', 'stats six'));
+  const st = (n, label, warn, target) => { const x = stat(n, label, warn, 'crm'); if (target) x.onclick = () => document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' }); return x; };
+  stats.append(
+    st(s.activeClients ?? d.clients_total ?? '–', 'Active clients', false, 'crm-clients'),
+    st(money(s.monthlyRecurringRevenue), 'MRR', false),
+    st(money(s.revenueThisMonth), 'Revenue this month', false),
+    st(s.outstandingInvoices ? s.outstandingInvoices.count + ' · ' + money(s.outstandingInvoices.total) : '–', 'Outstanding', (s.outstandingInvoices?.count || 0) > 0, 'crm-overdue'),
+    st(d.expiring_subscriptions.length, 'Renewals in 45 days', d.expiring_subscriptions.length > 0, 'crm-renewals'),
+    st(d.open_opportunities.length + ' · ' + money(d.pipeline_value), 'Open pipeline', false, 'crm-pipeline'),
+  );
+  root.append(stats);
+  if (d.unavailable?.length) root.append(rise(card($('p', 'empty', 'Not visible to Synaut\\'s CRM user: ' + d.unavailable.join('; ')))));
+  if (d.alerts.length) {
+    const ul = $('ul', 'list');
+    d.alerts.forEach((a) => { const li = $('li'); const body = $('div'); const t = $('div', 'item-title', a.title); t.append($('span', 'tag' + (a.severity === 'high' ? ' bad' : a.severity === 'medium' ? ' warn' : ''), a.severity)); body.append(t); if (a.message) body.append($('div', 'detail', a.message)); li.append($('span', 'bullet'), body); ul.append(li); });
+    root.append(section('Alerts', card(ul)));
+  }
+  const renew = section('Renewals coming up', d.expiring_subscriptions.length
+    ? crmTable([['client_name', 'Client'], ['service_name', 'Service'], ['end_date', 'Ends', (v) => v ? day(v) : ''], ['monthly_cost', 'Monthly', (v) => money(v)], ['auto_renew', 'Auto-renew', (v) => v ? 'yes' : 'no']], d.expiring_subscriptions)
+    : emptyCard('Nothing renews in the next 45 days.'));
+  renew.id = 'crm-renewals'; root.append(renew);
+  const overdue = section('Overdue invoices', d.overdue_invoices.length
+    ? crmTable([['client_name', 'Client'], ['invoice_number', 'Invoice'], ['due_date', 'Due', (v) => v ? day(v) : ''], ['total', 'Total', (v, r) => money(v, r.currency)], ['amount_paid', 'Paid', (v, r) => money(v, r.currency)]], d.overdue_invoices)
+    : emptyCard('No overdue invoices.'));
+  overdue.id = 'crm-overdue'; root.append(overdue);
+  const pipe = section('Pipeline', d.open_opportunities.length
+    ? crmTable([['name', 'Opportunity'], ['stage', 'Stage', (v, r) => [r.pipeline, v].filter(Boolean).join(' · ')], ['value', 'Value', (v) => money(v)], ['updated_at', 'Last change', (v) => v ? ago(v) : '']], d.open_opportunities)
+    : emptyCard('No open opportunities.'));
+  pipe.id = 'crm-pipeline'; root.append(pipe);
+  const STATUS_NEXT = { prospect: [['active', 'Won']], active: [['inactive', 'Pause'], ['churned', 'Churned']], inactive: [['active', 'Reactivate']], churned: [['active', 'Reactivate']] };
+  const list = (d.clients || []).filter((c) => !crmSearch || [c.company_name, c.contact_name, c.email].join(' ').toLowerCase().includes(crmSearch.toLowerCase()));
+  const sec = rise($('section')); sec.id = 'crm-clients';
+  sec.append($('h2', null, 'Clients' + (d.clients_total != null ? ' (' + d.clients_total + ')' : '')));
+  const search = $('input', 'search'); search.placeholder = 'Filter by name, contact or email'; search.value = crmSearch;
+  search.oninput = () => { crmSearch = search.value; const pos = search.selectionStart; draw(); const n = document.querySelector('input.search'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  sec.append(search);
+  const rows = $('div', 'rows');
+  if (!list.length) rows.append(emptyCard('No clients match.'));
+  list.forEach((c) => {
+    const el = $('div', 'card row'); const t = $('div', 'item-title', c.company_name || c.contact_name);
+    t.append($('span', 'tag' + (c.status === 'active' ? ' ok' : c.status === 'churned' ? ' bad' : ''), c.status || 'unknown'));
+    if (Number(c.outstanding_invoices) > 0) t.append($('span', 'tag warn', c.outstanding_invoices + ' unpaid'));
+    const meta = $('div', 'meta', Number(c.active_subscriptions || 0) + ' services');
+    if (c.country) meta.append($('div', null, c.country));
+    el.append(t, meta, $('div', 'desc', [c.contact_name, c.email, c.phone].filter(Boolean).join(' · ')));
+    const acts = $('div', 'acts');
+    (STATUS_NEXT[c.status] || []).forEach(([status, label]) => {
+      const b = $('button', 'mini', label);
+      b.onclick = async () => { b.disabled = true; try { await change('update_client_status', { clientId: c.id, clientName: c.company_name, status }, c.company_name + ' is now ' + status + ' in the CRM.'); } catch (e) { b.disabled = false; acts.append($('span', 'error', e.message)); } };
+      acts.append(b);
+    });
+    const a = $('button', 'mini go', 'Ask Synaut'); a.onclick = () => openChat('assistant', 'About ' + (c.company_name || c.contact_name) + ' in the CRM: ');
+    acts.append(a); el.append(acts); rows.append(el);
+  });
+  sec.append(rows); root.append(sec);
+  root.append($('p', 'empty small', 'Read from the CRM ' + ago(d.fetched_at) + '.'));
+}
+
+// A change in the CRM that Synaut proposed. Approving runs it in the CRM straight away.
+function crmRequestCard(r) {
+  const c = $('div', 'card plan');
+  c.append($('span', 'pending', 'CRM CHANGE'), $('h3', null, r.summary));
+  if (r.reason) c.append($('div', 'detail', r.reason));
+  c.append($('div', 'detail', 'Proposed by ' + (r.proposed_by === 'assistant' ? 'Synaut chat' : r.proposed_by) + ' · ' + ago(r.created_at)));
+  if (r.error) c.append($('div', 'error', 'Last try failed: ' + r.error));
+  const actions = $('div', 'actions'); const yes = $('button', 'act approve', 'Approve and do it'); const no = $('button', 'act', 'Drop'); const hint = $('span', 'hint');
+  const go = async (decision, btn) => {
+    yes.disabled = no.disabled = true; hint.className = 'hint'; hint.textContent = decision === 'approve' ? 'Doing it in the CRM…' : 'Dropping…';
+    try { await post('/api/crm', { request: r.id, decision }); crmData = null; await load(); }
+    catch (e) { hint.className = 'error'; hint.textContent = e.message; yes.disabled = no.disabled = false; }
+  };
+  yes.onclick = () => go('approve', yes); no.onclick = () => go('drop', no);
+  actions.append(yes, no, hint); c.append(actions); return c;
+}
+
+const VIEWS = { overview: viewOverview, approvals: viewApprovals, tasks: viewTasks, projects: viewProjects, clients: viewClients, agents: viewAgents, journal: viewJournal, documents: viewDocuments, crm: viewCrm };
 function draw() {
   if (!data) return;
   delay = 0;
@@ -1126,7 +1281,7 @@ async function load() {
   } catch (e) { status.className = 'status bad'; statusText.textContent = e.message; }
   finally { btn.disabled = false; }
 }
-document.getElementById('refresh').onclick = () => { if (current === 'documents' && !docEdit) docs = null; load(); };
+document.getElementById('refresh').onclick = () => { if (current === 'documents' && !docEdit) docs = null; if (current === 'crm') crmData = null; load(); };
 setInterval(() => { if (!document.hidden && !document.querySelector('button.confirm, form.form')) load(); }, 5 * 60 * 1000);
 
 /* ---------- chat ---------- */

@@ -1,9 +1,11 @@
 import { listDocuments } from './documents.js';
+import { crmForContext } from './crm.js';
 
 // Reads everything the coordinator needs to think, in one snapshot.
 // Kept as plain data so it can be logged, tested and sent to the model as JSON.
 
-export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new Date() } = {}) {
+// crm: a crmSnapshot() taken just before (the CRM is another system, so the caller fetches it and decides what a failure means).
+export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new Date(), crm = null } = {}) {
   const q = async (sql, params) => (await db.query(sql, params)).rows;
 
   const [
@@ -68,5 +70,6 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     recentContacts,                      // logged client touchpoints, last 30 days
     documents,                           // the company's contract templates, policies and checklists
     recentActions,                       // steps Synaut took on its own, last 14 days
+    ...(crm ? { crm: crmForContext(crm) } : {}),   // live from the company CRM: money, renewals, pipeline
   };
 }

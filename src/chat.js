@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { gatherContext } from './context.js';
 import { githubTools } from './github.js';
 import { documentTools, combineTools } from './documents.js';
+import { crmTools, crmConfigured } from './crm.js';
 
 const MAX_TURNS = 30;
 const MAX_CHARS = 4000;
@@ -70,6 +71,7 @@ How to talk:
 - Be direct and disagree when the evidence says so. Small, doable next steps beat big plans.
 - You cannot approve, change or send anything. If the owner wants something done, say what you'd propose and that it goes through approval on the dashboard.
 - You can look at the owner's GitHub repositories with the github_ tools (read-only): list repos, see recent commits, open pull requests and issues, and read files. Use them when a question is about code, a project's progress or what the team shipped, and say which repo you looked at. If a tool says a repo is not visible, tell the owner a read-only GITHUB_TOKEN in Vercel would let you see it.
+- The company CRM is in the crm_ tools when connected: clients, subscriptions (hosting, email, domains), invoices, the dashboard and the pipeline. Look there before answering anything about clients, revenue, renewals or what someone owes, and name the numbers. To change anything in the CRM (add a client or opportunity, change a client's status), use crm_propose_change: it waits on the owner's Approvals tab and only runs when they approve, so say that it is waiting rather than that it is done. If the crm_ tools are missing, the CRM is not connected yet.
 - The company's business documents (contracts, service schedules, policies, checklists, proposal and change forms) are in the documents_ tools. Open the right one before answering a question about terms, prices, obligations or process, and quote it. When asked to prepare one for a client, fill in the [PLACEHOLDERS] you can from the company state, list the ones only the owner can fill, and remind them it is a template a lawyer should review before first use. You draft; the owner sends.
 ${voice ? `\n${VOICE}\n` : ''}
 Latest brief (JSON):
@@ -155,7 +157,9 @@ export async function chat(db, brain, { agent, messages, voice = false, mood = '
   const history = cleanHistory(messages);
   const system = await systemFor(agent, db, { voice, mood, now });
   // Only the assistant gets the owner's tools; the companion never sees company data or repos.
-  const clientTools = agent === 'assistant' ? (tools ?? combineTools(githubTools(), documentTools(db))) : undefined;
+  const clientTools = agent === 'assistant'
+    ? (tools ?? combineTools(githubTools(), documentTools(db), crmConfigured() ? crmTools(db) : null))
+    : undefined;
   const out = await brain.reply({ agent, system, messages: history, clientTools });
   await db.query(
     `INSERT INTO agent_usage (agent, model, input_tokens, output_tokens, web_searches) VALUES ($1, $2, $3, $4, $5)`,
