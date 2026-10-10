@@ -1,4 +1,4 @@
-// What Synaut may do on its own, without waiting for the owner: small internal steps that keep work moving.
+// What Auti may do on its own, without waiting for the owner: small internal steps that keep work moving.
 // Every step is checked here (the model's word is never enough), logged in coordinator_action, and undoable.
 // Contacting clients, sending documents, spending money and approving plans are never on this list.
 
@@ -33,7 +33,7 @@ export async function applyActions(tx, actions, { runId }) {
   };
 
   for (const a of Array.isArray(actions) ? actions : []) {
-    if (!a || !ACTION_KINDS.includes(a.type)) { skip(a, 'not an action Synaut may take on its own'); continue; }
+    if (!a || !ACTION_KINDS.includes(a.type)) { skip(a, 'not an action Auti may take on its own'); continue; }
     if ((used[a.type] = (used[a.type] || 0) + 1) > PER_RUN[a.type]) { skip(a, 'per-run limit reached'); continue; }
 
     if (a.type === 'add_task') {
@@ -45,7 +45,7 @@ export async function applyActions(tx, actions, { runId }) {
       const open = (await tx.query(
         `SELECT count(*)::int AS n FROM coordinator_action ca JOIN tasks t ON t.id = ca.target_id
           WHERE ca.kind = 'add_task' AND ca.undone_at IS NULL AND t.state NOT IN ('done', 'cancelled')`)).rows[0].n;
-      if (open >= MAX_OPEN_SYNAUT_TASKS) { skip(a, `already ${open} open tasks added by Synaut`); continue; }
+      if (open >= MAX_OPEN_SYNAUT_TASKS) { skip(a, `already ${open} open tasks added by Auti`); continue; }
       const project = a.project
         ? (await tx.query(`SELECT id FROM projects WHERE lower(name) = lower($1) LIMIT 1`, [String(a.project).trim()])).rows[0] : null;
       const due = validDay(a.due) && (await tx.query(`SELECT $1::date >= current_date AS ok`, [a.due])).rows[0].ok ? a.due : null;
@@ -106,7 +106,7 @@ export async function undoAction(db, id) {
       if (a.before.review_id) await tx.query(`DELETE FROM journal WHERE id = $1`, [a.before.review_id]);
     }
     await tx.query(`INSERT INTO journal (kind, author, body) VALUES ('decision', 'owner', $1)`,
-      [`Undid an automatic step by Synaut (${a.kind.replace(/_/g, ' ')}).`]);
+      [`Undid an automatic step by Auti (${a.kind.replace(/_/g, ' ')}).`]);
     return { id, undone: true };
   });
 }

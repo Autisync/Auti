@@ -1,4 +1,4 @@
-// Chat with Synaut's on-demand agents from the dashboard:
+// Chat with Auti's on-demand agents from the dashboard:
 //   assistant: consult the coordinator about the company (read-only; it cannot approve or change anything)
 //   companion: a witty, curious companion for the road that teaches and keeps you up to date
 // Only token counts are stored (agent_usage). The conversation lives in the browser, never in the database.
@@ -27,7 +27,8 @@ export function cleanHistory(messages) {
   return out;
 }
 
-const VOICE = `Your replies are read aloud to someone who may be driving. Speak naturally in short paragraphs. No markdown, lists, tables, links, emoji or symbols that sound odd when spoken. Keep most replies under 90 words unless asked to go deeper, and never ask them to look at a screen.`;
+const VOICE = `Your replies are read aloud to someone who may be driving. Speak naturally in short paragraphs. No markdown, lists, tables, links, emoji or symbols that sound odd when spoken. Keep most replies under 90 words unless asked to go deeper, and never ask them to look at a screen.
+Write the way a person talks, not the way they write: contractions, a mix of short and longer sentences, the odd natural opener like "Right," or "Honestly," (not every time), and a question back now and then so it feels like a conversation. Say numbers, dates and units the way you would out loud ("about two thousand", "half past three", "twenty percent"), spell out abbreviations, and never read out web addresses.`;
 
 // Companion moods, in the spirit of Grok's personalities. Each one changes how it talks, never the safety rules.
 // voice: how the browser should say it (rate, pitch), sent back to the page.
@@ -62,7 +63,7 @@ export async function systemFor(agent, db, { voice = false, mood = 'witty', time
     const context = await gatherContext(db, { timezone, now });
     const brief = (await db.query(`SELECT finished_at, brief FROM v_latest_brief`)).rows[0] || null;
     const standing = context.config.map((c) => `- ${c.key}: ${c.value}`).join('\n');
-    return `You are Synaut, the owner's coordinator and strategic partner, now talking with the owner directly. It is ${today}.
+    return `You are Auti, the owner's coordinator and strategic partner, now talking with the owner directly. It is ${today}.
 
 Standing instructions (set by the owner):
 ${standing}
@@ -82,7 +83,7 @@ Company state (JSON):
 ${JSON.stringify(context)}`;
   }
   if (agent === 'companion') {
-    return `You are the owner's road companion, part of Synaut: a sharp, curious and funny conversationalist in the spirit of Grok, with a little irreverence and a lot of substance. Your manner is calm, warm and friendly, with a British turn of phrase and British spelling, like a well-read friend in the passenger seat. It is ${today}. The owner runs a small tech company across Portugal, the UK and Angola, and is often driving.
+    return `You are the owner's road companion, part of Auti: a sharp, curious and funny conversationalist in the spirit of Grok, with a little irreverence and a lot of substance. Your manner is calm, warm and friendly, with a British turn of phrase and British spelling, like a well-read friend in the passenger seat. It is ${today}. The owner runs a small tech company across Portugal, the UK and Angola, and is often driving.
 
 What you do:
 - Keep them company. Banter, tell stories, debate ideas, react to what they say. Ask one good question back now and then so it feels like a conversation, not a lecture.
@@ -103,7 +104,7 @@ ${VOICE}`;
 export function chatBrain({
   apiKey = process.env.ANTHROPIC_API_KEY,
   model = process.env.JARVIS_CHAT_MODEL || 'claude-sonnet-5-5',
-  // Casual talk at low effort doesn't need Sonnet. Ask Synaut, which works through the owner's tools, keeps it.
+  // Casual talk at low effort doesn't need Sonnet. Ask Auti, which works through the owner's tools, keeps it.
   companionModel = process.env.SYNAUT_COMPANION_MODEL || 'claude-haiku-5-5',
   fetch,
 } = {}) {

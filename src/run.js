@@ -8,10 +8,26 @@ import { syncGithub } from './github.js';
 import { runRetention } from './retention.js';
 import { runLeads } from './leads.js';
 import { crmClient, crmConfigured, crmSnapshot } from './crm.js';
+import { chooseModel, agentModels } from './models.js';
 
 const mode = process.argv[2] || 'nightly';
 const quiet = process.env.CI === 'true' || process.env.JARVIS_QUIET === '1';
 const db = connect();
+
+// Each agent's model is learned from what the owner does with its work (src/models.js). If a trial of the
+// other model fails outright, the run is repeated once on the stronger model so the owner still gets the work.
+async function withModel(agent, make, work) {
+  const pick = await chooseModel(db, agent);
+  console.log(`${agent}: ${pick.model} (${pick.reason})`);
+  try {
+    return await work(make(pick.model));
+  } catch (err) {
+    const { strong } = agentModels(agent);
+    if (pick.model === strong) throw err;
+    console.error(`${agent}: ${pick.model} failed (${err.message}); running again on ${strong}`);
+    return work(make(strong));
+  }
+}
 
 async function coordinator() {
   // Fresh project activity first. Only counts are printed: repository names can be private.
@@ -31,13 +47,13 @@ async function coordinator() {
       console.error(`crm skipped: ${err.message}`);
     }
   }
-  const { runId, brief } = await runCoordinator({
+  const { runId, brief } = await withModel('coordinator', (model) => claudeBrain({ model }), (brain) => runCoordinator({
     crm,
     db,
-    brain: claudeBrain(),
+    brain,
     mode,
     timezone: process.env.JARVIS_TIMEZONE || 'Europe/Lisbon',
-  });
+  }));
   console.log(`[${new Date().toISOString()}] ${mode} run ${runId} done.`);
   if (quiet) {
     console.log(`priorities=${brief.priorities.length} suggestions=${brief.suggestions.length} ` +
@@ -55,14 +71,13 @@ async function coordinator() {
 
 async function retention() {
   // Drafts only; the owner sends. Counts only, never client names.
-  // Filling in one draft form per client is simple work, and every draft waits for the owner: Haiku is enough.
-  const out = await runRetention({ db, brain: claudeBrain({ model: process.env.SYNAUT_RETENTION_MODEL || 'claude-haiku-5-5' }) });
+  const out = await withModel('retention', (model) => claudeBrain({ model }), (brain) => runRetention({ db, brain }));
   console.log(`[${new Date().toISOString()}] retention done. clients_due=${out.considered} drafts=${out.drafted}`);
 }
 
 async function leads() {
   // Research only; nothing is ever sent. Counts only, never company names.
-  const out = await runLeads({ db, researcher: claudeResearcher() });
+  const out = await withModel('leads', (model) => claudeResearcher({ model }), (researcher) => runLeads({ db, researcher }));
   console.log(`[${new Date().toISOString()}] leads done. ` + (out.skipped ? `skipped: ${out.skipped}` : `found=${out.found} saved=${out.saved} searches=${out.searches}`));
 }
 

@@ -11,7 +11,7 @@ export async function runCoordinator({ db, brain, mode = 'nightly', timezone = '
   )).rows[0];
 
   try {
-    const context = await gatherContext(db, { timezone, now, crm });
+    const context = await gatherContext(db, { timezone, now, crm, incremental: true });
     const { output, model, usage } = await brain.think({
       system: systemPrompt(context.config),
       user: userPrompt(context, mode),
@@ -36,11 +36,11 @@ export async function runCoordinator({ db, brain, mode = 'nightly', timezone = '
         const row = (await tx.query(
           `INSERT INTO initiatives
              (title, project_id, source_context, objective, expected_result, plan, risks,
-              status, requires_approval, created_by_agent)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, 'awaiting_approval', true, 'coordinator')
+              status, requires_approval, created_by_agent, model)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, 'awaiting_approval', true, 'coordinator', $8)
            RETURNING id`,
           [ini.title, projectIds.get(lower(ini.project)) ?? null, `${mode} run`,
-           ini.objective, ini.expected_result, JSON.stringify(plan), JSON.stringify(ini.risks)],
+           ini.objective, ini.expected_result, JSON.stringify(plan), JSON.stringify(ini.risks), model ?? brain.model ?? null],
         )).rows[0];
         created.push({ id: row.id, title: ini.title });
       }
@@ -133,6 +133,7 @@ function normalise(raw) {
       .map((i) => ({ ...i, risks: arr(i.risks) })),
     questions_for_owner: arr(o.questions_for_owner).slice(0, 3),
     actions: arr(o.actions).slice(0, 6),
+    working_summary: typeof o.working_summary === 'string' ? o.working_summary.trim().slice(0, 6000) : '',
   };
 }
 

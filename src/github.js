@@ -41,7 +41,7 @@ export async function syncGithub(db, { token = process.env.GITHUB_TOKEN, fetch =
   return out;
 }
 
-// Read-only GitHub tools for the Synaut chat. It can look at repositories, never change them.
+// Read-only GitHub tools for the Auti chat. It can look at repositories, never change them.
 // Uses GITHUB_TOKEN when set (a read-only fine-grained token sees your private repos); without one, public repos only.
 const MAX_FILE_CHARS = 12000;
 

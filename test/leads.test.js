@@ -60,7 +60,7 @@ await check('the next run in that market hears the last note and the owner\'s re
   assert.deepEqual(await leads.decideLead(db, { id: l.id, action: 'reopen' }), { id: l.id, status: 'new' });
 });
 
-await check('tracking a lead adds it to Synaut\'s clients with a first contact in two days, once', async () => {
+await check('tracking a lead adds it to Auti\'s clients with a first contact in two days, once', async () => {
   const [l] = await leads.listLeads(db);
   const out = await leads.decideLead(db, { id: l.id, action: 'track' });
   assert.equal(out.status, 'tracking');

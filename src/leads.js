@@ -54,7 +54,7 @@ export const LEADS_TOOL = {
 
 function systemPrompt(config) {
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n') || '- (none)';
-  return `You are Synaut's leads agent for a small technology company that sells CRM, domains, business email, web hosting, and software development.
+  return `You are Auti's leads agent for a small technology company that sells CRM, domains, business email, web hosting, and software development.
 Your job: find real businesses that clearly need those services, and record the evidence so the owner can decide in seconds.
 
 How to work:
@@ -114,11 +114,11 @@ export async function runLeads({ db, researcher, now = new Date(), focus = focus
     const l = cleanLead(raw, focus.market);
     if (!l) continue;
     const res = await db.query(`
-      INSERT INTO lead (company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources)
-      SELECT $1, $2::market, $3, $4, $5, $6, $7, $8, $9, $10, $11
+      INSERT INTO lead (company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources, model)
+      SELECT $1, $2::market, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
        WHERE NOT EXISTS (SELECT 1 FROM clients WHERE lower(name) = lower($1) AND market = $2::market)
       ON CONFLICT DO NOTHING RETURNING id`,
-      [l.company, l.market, l.city, l.sector, l.website, l.services, l.fit, l.signals, l.pitch, l.contact_route, l.sources]);
+      [l.company, l.market, l.city, l.sector, l.website, l.services, l.fit, l.signals, l.pitch, l.contact_route, l.sources, model ?? null]);
     saved += res.rows.length;
   }
   await db.query(`INSERT INTO lead_run (market, angle, found, saved, searches, notes) VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -156,7 +156,7 @@ export async function listLeads(db) {
     .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;
 }
 
-// The owner's decision on a lead. 'track' adds it to Synaut's clients as a lead with a first contact date in two days,
+// The owner's decision on a lead. 'track' adds it to Auti's clients as a lead with a first contact date in two days,
 // so the retention agent drafts an introduction for the owner to send. 'crm' is recorded after the CRM accepted it.
 export async function decideLead(db, { id, action, reason, crm_id } = {}) {
   if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw new Error('bad lead id');
