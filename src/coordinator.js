@@ -2,16 +2,40 @@
 import { gatherContext } from './context.js';
 import { BRIEF_TOOL, systemPrompt, userPrompt } from './prompt.js';
 import { applyActions, autonomyEnabled } from './autonomy.js';
+import { createHash } from 'node:crypto';
 
-export async function runCoordinator({ db, brain, mode = 'nightly', timezone = 'Europe/Lisbon', now = new Date(), crm = null }) {
+// A fingerprint of the company as the owner and the world left it, leaving out what the coordinator itself
+// wrote (its suggestions, its own plans awaiting approval, its automatic steps) and its memory.
+// A stand-up whose fingerprint matches the last run's has nothing new to think about, so it is skipped.
+export function worldFingerprint(c) {
+  const mine = (i) => i.created_by_agent === 'coordinator' && i.status === 'awaiting_approval';
+  const world = {
+    projects: c.projects, goingCold: c.goingCold, overdue: c.overdue, openTasksByProject: c.openTasksByProject,
+    clientWatch: c.clientWatch, clients: c.clients, recentContacts: c.recentContacts, documents: c.documents,
+    leads: c.leads, crm: c.crm ?? null, config: c.config,
+    initiatives: (c.initiatives || []).filter((i) => !mine(i)),
+    journal: (c.journal || []).filter((j) => j.author !== 'coordinator'),
+  };
+  return createHash('sha256').update(JSON.stringify(world)).digest('hex').slice(0, 32);
+}
+
+export async function runCoordinator({ db, brain, mode = 'nightly', timezone = 'Europe/Lisbon', now = new Date(), crm = null, skipUnchanged = true }) {
   if (!['nightly', 'standup'].includes(mode)) throw new Error(`Unknown mode '${mode}'. Use nightly or standup.`);
+
+  // Nothing changed since the last brief: a stand-up would only say the same again. The nightly run always thinks.
+  const context = await gatherContext(db, { timezone, now, crm, incremental: true });
+  const fingerprint = worldFingerprint(context);
+  if (mode === 'standup' && skipUnchanged) {
+    const last = (await db.query(`SELECT id, brief->>'fingerprint' AS fp FROM coordinator_run
+      WHERE error IS NULL AND brief IS NOT NULL ORDER BY finished_at DESC LIMIT 1`)).rows[0];
+    if (last?.fp === fingerprint) return { runId: last.id, skipped: 'nothing changed since the last brief' };
+  }
 
   const run = (await db.query(
     `INSERT INTO coordinator_run (mode) VALUES ($1) RETURNING id`, [mode],
   )).rows[0];
 
   try {
-    const context = await gatherContext(db, { timezone, now, crm, incremental: true });
     const { output, model, usage } = await brain.think({
       system: systemPrompt(context.config),
       user: userPrompt(context, mode),
@@ -66,7 +90,7 @@ export async function runCoordinator({ db, brain, mode = 'nightly', timezone = '
 
     const stored = {
       ...brief, created_initiatives: written.created, skipped_duplicates: written.skipped,
-      actions_taken: written.auto.taken, actions_skipped: written.auto.skipped,
+      actions_taken: written.auto.taken, actions_skipped: written.auto.skipped, fingerprint,
     };
     await db.query(
       `UPDATE coordinator_run

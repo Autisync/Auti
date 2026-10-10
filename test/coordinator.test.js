@@ -98,6 +98,7 @@ await check('the brief is stored for the dashboard', async () => {
 });
 
 await check('a second run does not duplicate an open initiative, and sees its own past suggestions', async () => {
+  await db.query(`INSERT INTO journal (kind, author, body) VALUES ('standup', 'owner', 'Back at my desk.')`);   // something new, so the stand-up isn't skipped
   const second = await runCoordinator({ db, brain, mode: 'standup' });
   assert.deepEqual(second.brief.skipped_duplicates, ['Client contact rhythm']);
   const n = (await db.query(`SELECT count(*)::int AS n FROM initiatives`)).rows[0].n;
@@ -141,7 +142,7 @@ await check('the real Claude client sends a forced tool call and parses the answ
   };
   const { claudeBrain } = await import('../src/llm.js');
   const real = claudeBrain({ apiKey: 'test-key', model: 'claude-sonnet-5', fetch: fakeFetch });
-  const out = await runCoordinator({ db, brain: real, mode: 'standup' });
+  const out = await runCoordinator({ db, brain: real, mode: 'standup', skipUnchanged: false });
   assert.match(sent.url, /\/v1\/messages$/);
   assert.equal(sent.body.model, 'claude-sonnet-5');
   assert.deepEqual(sent.body.tool_choice, { type: 'tool', name: 'write_morning_brief' });
@@ -598,19 +599,19 @@ await check('a brief whose nested parts arrive as JSON strings is still accepted
     proposed_initiatives: JSON.stringify([{ ...answer.proposed_initiatives[0], title: 'Stringly plan', steps: JSON.stringify(answer.proposed_initiatives[0].steps) }]),
   };
   const b2 = { model: 'fake', async think() { return { output: stringly, model: 'fake-model', usage: { input: 1, output: 1 } }; } };
-  const { brief } = await runCoordinator({ db, brain: b2, mode: 'standup' });
+  const { brief } = await runCoordinator({ db, brain: b2, mode: 'standup', skipUnchanged: false });
   assert.equal(brief.weakest_link.headline, answer.weakest_link.headline);
   assert.equal(brief.priorities.length, 1);
   assert.deepEqual(brief.created_initiatives.map((i) => i.title), ['Stringly plan']);
   await db.query(`DELETE FROM initiatives WHERE title = 'Stringly plan'`);
   const b3 = { model: 'fake', async think() { return { output: { ...answer, weakest_link: 'Just a sentence.' }, model: 'f', usage: {} }; } };
-  assert.equal((await runCoordinator({ db, brain: b3, mode: 'standup' })).brief.weakest_link.headline, 'Just a sentence.');
+  assert.equal((await runCoordinator({ db, brain: b3, mode: 'standup', skipUnchanged: false })).brief.weakest_link.headline, 'Just a sentence.');
 });
 
 await check('leaked tool-call markup in the weakest link is cleaned, in new runs and on the dashboard', async () => {
   const leaked = '<parameter name="headline">Zero clients tracked.</parameter>\n<parameter name="why">Example Client was lost to silence.';
   const b4 = { model: 'fake', async think() { return { output: { ...answer, weakest_link: leaked }, model: 'f', usage: {} }; } };
-  const { brief } = await runCoordinator({ db, brain: b4, mode: 'standup' });
+  const { brief } = await runCoordinator({ db, brain: b4, mode: 'standup', skipUnchanged: false });
   assert.deepEqual(brief.weakest_link, { headline: 'Zero clients tracked.', why: 'Example Client was lost to silence.' });
   // A brief already stored with the markup is repaired when the dashboard reads it.
   await db.query(`UPDATE coordinator_run SET brief = jsonb_set(brief, '{weakest_link}', $1::jsonb)

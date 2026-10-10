@@ -139,5 +139,5 @@ export function userPrompt(context, mode) {
 Today is ${context.today}.
 
 Company state (JSON):
-${JSON.stringify(context, null, 1)}`;
+${JSON.stringify(context)}`;
 }

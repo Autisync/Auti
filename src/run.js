@@ -47,13 +47,14 @@ async function coordinator() {
       console.error(`crm skipped: ${err.message}`);
     }
   }
-  const { runId, brief } = await withModel('coordinator', (model) => claudeBrain({ model }), (brain) => runCoordinator({
+  const { runId, brief, skipped } = await withModel('coordinator', (model) => claudeBrain({ model }), (brain) => runCoordinator({
     crm,
     db,
     brain,
     mode,
     timezone: process.env.JARVIS_TIMEZONE || 'Europe/Lisbon',
   }));
+  if (skipped) return console.log(`[${new Date().toISOString()}] ${mode} run skipped: ${skipped}.`);
   console.log(`[${new Date().toISOString()}] ${mode} run ${runId} done.`);
   if (quiet) {
     console.log(`priorities=${brief.priorities.length} suggestions=${brief.suggestions.length} ` +

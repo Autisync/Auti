@@ -138,4 +138,22 @@ await check('models that refuse a forced tool call get "auto" and one reminder',
   assert.match(sent[1].messages.at(-1).content, /Now call write_morning_brief/);
 });
 
+await check('a stand-up with nothing new is skipped without calling the model; any change or the nightly run thinks again', async () => {
+  const seen = [];
+  const b = brainOn('claude-haiku-5-5', brief(), seen);
+  const first = await runCoordinator({ db, brain: b, mode: 'standup' });
+  assert.ok(!first.skipped);
+  const again = await runCoordinator({ db, brain: b, mode: 'standup' });
+  assert.equal(again.skipped, 'nothing changed since the last brief');
+  assert.equal(seen.length, 1);
+  await runCoordinator({ db, brain: b, mode: 'nightly' });
+  assert.equal(seen.length, 2);
+  assert.equal((await runCoordinator({ db, brain: b, mode: 'standup' })).skipped, 'nothing changed since the last brief');
+  await db.query(`INSERT INTO journal (kind, author, body) VALUES ('standup', 'owner', 'Called the client, they renew.')`);
+  const changed = await runCoordinator({ db, brain: b, mode: 'standup' });
+  assert.ok(!changed.skipped);
+  assert.equal(seen.length, 3);
+  assert.doesNotMatch(seen[2].user, /\n {1,}"/);              // compact JSON: no pretty-print indentation
+});
+
 console.log(`\n${passed} passed`);
