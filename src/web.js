@@ -5,6 +5,7 @@ import { agentsSummary } from './agents.js';
 import { normaliseRepo } from './github.js';
 import { repairWeakestLink } from './coordinator.js';
 import { crmConfigured } from './crm.js';
+import { listLeads, leadsAgentOn } from './leads.js';
 
 // Two ways in, both checked against DASHBOARD_PASSWORD:
 //   - a session cookie set by the login page (what the browser and the installed app use)
@@ -103,11 +104,14 @@ export async function getDashboard(db) {
   const crmRequests = (await db.query(`
     SELECT id, kind, summary, reason, proposed_by, error, created_at FROM crm_request
      WHERE status = 'awaiting_approval' ORDER BY created_at`).catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;
+  // Businesses the leads agent found. Missing until migration 008 runs.
+  const leads = await listLeads(db);
+  const leadsOn = await leadsAgentOn(db);
   const agents = await agentsSummary(db);
   return {
     latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools(),
     actions, autonomy: autonomy ? autonomy.enabled : null,   // null: not set up yet
-    crmRequests,
+    crmRequests, crmOn: crmConfigured(), leads, leadsOn,
   };
 }
 

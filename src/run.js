@@ -1,11 +1,12 @@
-// Entry point for the scheduler:  node src/run.js nightly|standup|retention
+// Entry point for the scheduler:  node src/run.js nightly|standup|retention|leads
 // In CI (GitHub Actions) logs can be public, so the brief's content is never
 // printed there; only counts. Read the brief with `npm run brief` instead.
 import { connect } from './db.js';
-import { claudeBrain } from './llm.js';
+import { claudeBrain, claudeResearcher } from './llm.js';
 import { runCoordinator } from './coordinator.js';
 import { syncGithub } from './github.js';
 import { runRetention } from './retention.js';
+import { runLeads } from './leads.js';
 import { crmClient, crmConfigured, crmSnapshot } from './crm.js';
 
 const mode = process.argv[2] || 'nightly';
@@ -58,8 +59,14 @@ async function retention() {
   console.log(`[${new Date().toISOString()}] retention done. clients_due=${out.considered} drafts=${out.drafted}`);
 }
 
+async function leads() {
+  // Research only; nothing is ever sent. Counts only, never company names.
+  const out = await runLeads({ db, researcher: claudeResearcher() });
+  console.log(`[${new Date().toISOString()}] leads done. ` + (out.skipped ? `skipped: ${out.skipped}` : `found=${out.found} saved=${out.saved} searches=${out.searches}`));
+}
+
 try {
-  await (mode === 'retention' ? retention() : coordinator());
+  await (mode === 'retention' ? retention() : mode === 'leads' ? leads() : coordinator());
 } catch (err) {
   console.error(`[${new Date().toISOString()}] ${mode} run failed: ${err.message}`);
   process.exitCode = 1;

@@ -29,7 +29,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       CI: 'true'
       JARVIS_QUIET: '1'          # logs are public: never print the brief itself
@@ -73,3 +73,10 @@ jobs:
       # and at most one draft waits per client. Drafts wait on the owner; nothing is ever sent from here.
       - name: Retention agent
         run: node src/run.js retention
+      # Once a day, after the overnight run: look for businesses that need what the company sells.
+      # At most 8 web searches a run (SYNAUT_LEADS_SEARCHES). Research only; it never contacts anyone.
+      # A failure here never fails the run. Switch it off from the Leads tab.
+      - name: Leads agent
+        if: steps.mode.outputs.mode == 'nightly'
+        continue-on-error: true
+        run: node src/run.js leads

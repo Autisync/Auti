@@ -14,6 +14,12 @@ export const AGENTS = [
     schedule: 'After every coordinator run',
   },
   {
+    id: 'leads',
+    name: 'Leads',
+    role: 'Searches the web for businesses in Angola, the UK and Portugal that need CRM, domains, business email or hosting, and records the evidence it saw. It never contacts anyone: you track, add to the CRM or dismiss each lead on the Leads tab.',
+    schedule: 'Daily, after the overnight run',
+  },
+  {
     id: 'assistant',
     name: 'Synaut (chat)',
     role: 'Answers your questions about the company, with the same view of it as the coordinator, and can look at your GitHub repos. It can advise but never approve or change anything.',
