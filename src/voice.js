@@ -133,13 +133,24 @@ export async function usedThisMonth(db, now = new Date()) {
   const r = await db.query(`SELECT chars FROM voice_usage WHERE month = $1`, [billingMonth(now)]);
   return r.rows[0]?.chars || 0;
 }
-// True if the characters fit under the cap and are now counted; false if they would go over it.
+// Returns the month's new total, or null if the characters would go over the cap.
 async function reserve(db, chars, cap, now) {
   await ensureTable(db);
   const r = await db.query(`INSERT INTO voice_usage AS u (month, chars) SELECT $1::text, $2::int WHERE $2::int <= $3::int
       ON CONFLICT (month) DO UPDATE SET chars = u.chars + EXCLUDED.chars WHERE u.chars + EXCLUDED.chars <= $3::int
       RETURNING chars`, [billingMonth(now), chars, cap]);
-  return r.rows.length > 0;
+  return r.rows.length ? r.rows[0].chars : null;
+}
+// For the page: how much of this month's allowance is used. null when no natural voice is set up.
+export async function voiceUsage(db, env = process.env, now = new Date()) {
+  const p = voiceProvider(env);
+  if (!p) return null;
+  const month = billingMonth(now);
+  const [y, m] = month.split('-').map(Number);
+  const resets = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  let used = null;
+  if (db) used = await usedThisMonth(db, now).catch(() => null);
+  return { provider: PROVIDERS[p].label, used, cap: monthlyCap(env), month, resets };
 }
 const release = (db, chars, now) => db.query(`UPDATE voice_usage SET chars = GREATEST(0, chars - $2::int) WHERE month = $1`, [billingMonth(now), chars]);
 
@@ -155,8 +166,9 @@ export async function synthesize({ text, voice, speed, previous, next }, { env =
   const allowed = voiceList(env).voices.map((v) => v.id);
   const voiceId = allowed.includes(voice) ? voice : allowed[0];
   // Every request is counted before it is sent.
+  let used = null;
   const counted = async (send) => {
-    if (cap !== null && !(await reserve(db, clean.length, cap, now))) {
+    if (cap !== null && (used = await reserve(db, clean.length, cap, now)) === null) {
       throw fail(429, 'This month\'s free natural-voice allowance is used up, so the device voice takes over until next month.');
     }
     try { return await send(); } catch (err) {
@@ -166,5 +178,5 @@ export async function synthesize({ text, voice, speed, previous, next }, { env =
     }
   };
   const audio = await SYNTH[provider]({ text: clean, voiceId, speed: clamp(Number(speed) || 1, 0.8, 1.15), previous, next, counted }, env, fetch);
-  return { audio, type: 'audio/mpeg', chars: clean.length };
+  return { audio, type: 'audio/mpeg', chars: clean.length, used, cap };
 }
