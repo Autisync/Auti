@@ -71,30 +71,35 @@ async function failure(provider, res) {
 }
 
 const SYNTH = {
-  async google({ text, voiceId, speed }, env, fetch) {
-    const send = (audioConfig) => fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(env.GOOGLE_TTS_API_KEY)}`, {
+  async google({ text, voiceId, speed, counted }, env, fetch) {
+    const send = (audioConfig) => counted(() => fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(env.GOOGLE_TTS_API_KEY)}`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ input: { text }, voice: { languageCode: voiceId.slice(0, 5), name: voiceId }, audioConfig }),
-    });
-    let res = await send({ audioEncoding: 'MP3', speakingRate: speed });
-    if (res.status === 400 && speed !== 1) res = await send({ audioEncoding: 'MP3' });     // a voice without rate control
+    }).then((r) => (r.ok || r.status !== 400 ? r : r.text().then((t) => { throw Object.assign(new Error(t), { refused: r.status }); }))));
+    let res;
+    try {
+      res = await send({ audioEncoding: 'MP3', speakingRate: speed });
+    } catch (err) {
+      if (!err.refused || speed === 1) throw err.refused ? fail(502, `The natural voice failed: Google answered ${err.refused}.`) : err;
+      res = await send({ audioEncoding: 'MP3' });       // a voice without rate control
+    }
     if (!res.ok) throw await failure('Google', res);
     return Buffer.from((await res.json()).audioContent || '', 'base64');
   },
-  async azure({ text, voiceId, speed }, env, fetch) {
+  async azure({ text, voiceId, speed, counted }, env, fetch) {
     const region = env.AZURE_SPEECH_REGION || 'westeurope';
     if (!/^[a-z0-9]+$/.test(region)) throw fail(500, 'AZURE_SPEECH_REGION looks wrong.');
     const rate = `${Math.round((speed - 1) * 100)}%`;
     const ssml = `<speak version="1.0" xml:lang="en-GB"><voice name="${xml(voiceId)}"><prosody rate="${rate}">${xml(text)}</prosody></voice></speak>`;
-    const res = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+    const res = await counted(() => fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
       method: 'POST',
       headers: { 'Ocp-Apim-Subscription-Key': env.AZURE_SPEECH_KEY, 'content-type': 'application/ssml+xml', 'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3', 'user-agent': 'auti' },
       body: ssml,
-    });
+    }));
     if (!res.ok) throw await failure('Microsoft', res);
     return Buffer.from(await res.arrayBuffer());
   },
-  async elevenlabs({ text, voiceId, speed, previous, next }, env, fetch) {
+  async elevenlabs({ text, voiceId, speed, previous, next, counted }, env, fetch) {
     const body = {
       text, model_id: env.ELEVENLABS_MODEL || 'eleven_flash_v2_5',
       voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true, speed },
@@ -102,28 +107,41 @@ const SYNTH = {
     // Neighbouring sentences keep the intonation flowing across pieces.
     if (previous) body.previous_text = String(previous).slice(-300);
     if (next) body.next_text = String(next).slice(0, 300);
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_64`, {
+    const res = await counted(() => fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_64`, {
       method: 'POST', headers: { 'xi-api-key': env.ELEVENLABS_API_KEY, 'content-type': 'application/json', accept: 'audio/mpeg' },
       body: JSON.stringify(body),
-    });
+    }));
     if (!res.ok) throw await failure('ElevenLabs', res);
     return Buffer.from(await res.arrayBuffer());
   },
 };
 
-// Characters spoken this month (voice_usage, migration 010). Without the table, no cap is enforced.
+// The cap is enforced in the database, before any request goes out:
+// - each request reserves its characters in one atomic statement, so pieces fetched in parallel can't overshoot;
+// - a retry reserves again; only a request the provider refused gives its characters back;
+// - months follow Google's billing calendar (Pacific time), so the free allowance and Auti's count reset together;
+// - with a cap set, no database means no natural voice (the page falls back to the device voice).
+const BILLING_TZ = 'America/Los_Angeles';
+export function billingMonth(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: BILLING_TZ, year: 'numeric', month: '2-digit' }).formatToParts(now);
+  return `${parts.find((x) => x.type === 'year').value}-${parts.find((x) => x.type === 'month').value}`;
+}
+const ensureTable = (db) => db.query(`CREATE TABLE IF NOT EXISTS voice_usage (month text PRIMARY KEY, chars integer NOT NULL DEFAULT 0)`);
+
 export async function usedThisMonth(db, now = new Date()) {
-  try {
-    const r = await db.query(`SELECT chars FROM voice_usage WHERE month = $1`, [now.toISOString().slice(0, 7)]);
-    return r.rows[0]?.chars || 0;
-  } catch (err) { if (err.code === '42P01') return 0; throw err; }
+  await ensureTable(db);
+  const r = await db.query(`SELECT chars FROM voice_usage WHERE month = $1`, [billingMonth(now)]);
+  return r.rows[0]?.chars || 0;
 }
-async function recordUse(db, chars, now = new Date()) {
-  try {
-    await db.query(`INSERT INTO voice_usage (month, chars) VALUES ($1, $2)
-      ON CONFLICT (month) DO UPDATE SET chars = voice_usage.chars + EXCLUDED.chars`, [now.toISOString().slice(0, 7), chars]);
-  } catch (err) { if (err.code !== '42P01') throw err; }
+// True if the characters fit under the cap and are now counted; false if they would go over it.
+async function reserve(db, chars, cap, now) {
+  await ensureTable(db);
+  const r = await db.query(`INSERT INTO voice_usage AS u (month, chars) SELECT $1::text, $2::int WHERE $2::int <= $3::int
+      ON CONFLICT (month) DO UPDATE SET chars = u.chars + EXCLUDED.chars WHERE u.chars + EXCLUDED.chars <= $3::int
+      RETURNING chars`, [billingMonth(now), chars, cap]);
+  return r.rows.length > 0;
 }
+const release = (db, chars, now) => db.query(`UPDATE voice_usage SET chars = GREATEST(0, chars - $2::int) WHERE month = $1`, [billingMonth(now), chars]);
 
 // Returns { audio: Buffer, type, chars } or throws an Error with .status for the HTTP answer.
 export async function synthesize({ text, voice, speed, previous, next }, { env = process.env, fetch = globalThis.fetch, db = null, now = new Date() } = {}) {
@@ -133,12 +151,20 @@ export async function synthesize({ text, voice, speed, previous, next }, { env =
   if (!clean) throw fail(400, 'Nothing to say.');
   if (clean.length > MAX_CHARS) throw fail(413, `Too long to speak in one piece (${MAX_CHARS} characters at most).`);
   const cap = monthlyCap(env);
-  if (db && cap !== null && (await usedThisMonth(db, now)) + clean.length > cap) {
-    throw fail(429, 'This month\'s free natural-voice allowance is used up, so the device voice takes over until next month.');
-  }
+  if (cap !== null && !db) throw fail(503, 'The natural voice needs the database to keep within its monthly allowance.');
   const allowed = voiceList(env).voices.map((v) => v.id);
   const voiceId = allowed.includes(voice) ? voice : allowed[0];
-  const audio = await SYNTH[provider]({ text: clean, voiceId, speed: clamp(Number(speed) || 1, 0.8, 1.15), previous, next }, env, fetch);
-  if (db) await recordUse(db, clean.length, now);
+  // Every request is counted before it is sent.
+  const counted = async (send) => {
+    if (cap !== null && !(await reserve(db, clean.length, cap, now))) {
+      throw fail(429, 'This month\'s free natural-voice allowance is used up, so the device voice takes over until next month.');
+    }
+    try { return await send(); } catch (err) {
+      // Only a request the provider turned away is given back; a lost connection may still have been billed.
+      if (cap !== null && err.refused) await release(db, clean.length, now).catch(() => {});
+      throw err;
+    }
+  };
+  const audio = await SYNTH[provider]({ text: clean, voiceId, speed: clamp(Number(speed) || 1, 0.8, 1.15), previous, next, counted }, env, fetch);
   return { audio, type: 'audio/mpeg', chars: clean.length };
 }
