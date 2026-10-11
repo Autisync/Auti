@@ -1707,6 +1707,17 @@ let voices = [];
 const loadVoices = () => { voices = synth ? synth.getVoices() : []; paintVoices(); };
 const englishVoices = () => voices.filter((v) => /^en/i.test(v.lang)).sort((a, b) => voiceScore(b) - voiceScore(a) || a.name.localeCompare(b.name));
 const savedVoice = () => { try { return localStorage.getItem('auti.voice') || ''; } catch { return ''; } };
+// Natural voices from a cloud provider (Google, Microsoft or ElevenLabs) through /api/voice, once its key is set on Vercel.
+// Saved choices start with "cloud:"; with nothing chosen and the natural voice set up, the first natural voice speaks.
+let cloud = { enabled: false, voices: [] };
+let cloudDown = false;          // set after a failure, so the rest of this visit uses the device voice
+fetch('/api/voice').then((r) => (r.ok ? r.json() : null)).then((v) => { if (v && v.enabled) { cloud = v; paintVoices(); } }).catch(() => {});
+function cloudVoice() {
+  if (!cloud.enabled || cloudDown) return null;
+  const want = savedVoice();
+  if (want.startsWith('cloud:')) { const id = want.slice(6); return cloud.voices.some((v) => v.id === id) ? id : cloud.voices[0].id; }
+  return want ? null : cloud.voices[0].id;
+}
 function pickVoice() {
   const want = savedVoice();
   const chosen = want && voices.find((v) => v.voiceURI === want || v.name === want);
@@ -1716,17 +1727,30 @@ function paintVoices() {
   const sel = document.getElementById('voice'); if (!sel) return;
   const list = englishVoices(); const want = savedVoice();
   sel.replaceChildren();
-  const auto = $('option', null, list.length ? 'Automatic (' + list[0].name + ')' : 'Automatic'); auto.value = ''; sel.append(auto);
-  list.forEach((v) => { const o = $('option', null, v.name + ' · ' + v.lang.replace('_', '-')); o.value = v.voiceURI || v.name; sel.append(o); });
-  sel.value = list.some((v) => (v.voiceURI || v.name) === want) ? want : '';
-  sel.disabled = !synth;
+  const first = cloud.enabled ? cloud.voices[0].name + ', natural' : list.length ? list[0].name : '';
+  const auto = $('option', null, first ? 'Automatic (' + first + ')' : 'Automatic'); auto.value = ''; sel.append(auto);
+  const values = [];
+  const group = (label, items) => {
+    if (!items.length) return;
+    const g = document.createElement('optgroup'); g.label = label;
+    items.forEach(([value, text]) => { const o = $('option', null, text); o.value = value; g.append(o); values.push(value); });
+    sel.append(g);
+  };
+  group('Natural (' + (cloud.provider || 'online') + ')', cloud.enabled ? cloud.voices.map((v) => ['cloud:' + v.id, v.name + ' · ' + v.note]) : []);
+  group(cloud.enabled ? 'On this device' : 'Voices', list.map((v) => [v.voiceURI || v.name, v.name + ' · ' + v.lang.replace('_', '-')]));
+  sel.value = values.includes(want) ? want : '';
+  sel.disabled = !synth && !cloud.enabled;
 }
 
 // iOS and some browsers only allow speech that starts from a tap; call this inside every tap that may lead to a spoken reply.
 let unlocked = false;
+const player = new Audio();     // one element, unlocked in a tap, reused for every natural-voice reply (iOS needs this)
+const SILENCE = 'data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
 function unlockSpeech() {
-  if (!synth || unlocked) return;
-  const u = new SpeechSynthesisUtterance(' '); u.volume = 0; synth.speak(u); unlocked = true;
+  if (unlocked) return;
+  unlocked = true;
+  if (synth) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; synth.speak(u); }
+  if (!player.src || player.src === SILENCE) { player.src = SILENCE; player.play().catch(() => {}); }
 }
 // Text as it should be heard: no links, markdown or emoji, and symbols that read badly spelled out.
 function speakable(text) {
@@ -1781,10 +1805,59 @@ const wobble = (base, spread) => base * (1 + (Math.random() * 2 - 1) * spread);
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 // Each phrase gets a tiny rate/pitch variation around the mood's voice, so it doesn't sound robotic.
 let speakRun = 0;
+let cloudPlaying = false;
+const isSpeaking = () => cloudPlaying || Boolean(synth?.speaking);
+function stopSpeech() { speakRun++; cloudPlaying = false; player.pause(); synth?.cancel(); }
+
+// Natural voice: the first phrase is fetched on its own so speech starts quickly; the rest follows in larger pieces,
+// fetched while the first one plays. Any failure hands the unspoken part to the device voice.
+function cloudPieces(parts) {
+  const out = parts.length ? [parts[0]] : [];
+  for (const p of parts.slice(1)) {
+    const last = out.length > 1 ? out[out.length - 1] : null;
+    if (last !== null && last.length + p.length < 600) out[out.length - 1] = last + ' ' + p; else out.push(p);
+  }
+  return out;
+}
+async function speakCloud(text, voice, opts, run) {
+  const pieces = cloudPieces(phrases(text));
+  if (!pieces.length) return opts.test ? undefined : afterSpeak();
+  if (drive.on && !opts.test) setDrive('speaking', text);
+  const speed = Math.min(1.15, Math.max(0.8, moodVoice.rate || 1));
+  const audio = pieces.map((p, i) => fetch('/api/voice', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: p, voice, speed, previous: pieces[i - 1] || '', next: pieces[i + 1] || '' }),
+  }).then((r) => (r.ok ? r.blob() : Promise.reject(new Error('voice ' + r.status)))));
+  audio.forEach((a) => a.catch(() => {}));
+  cloudPlaying = true;
+  for (let i = 0; i < pieces.length; i++) {
+    let url;
+    try {
+      url = URL.createObjectURL(await audio[i]);
+      if (run !== speakRun) return;
+      player.src = url;
+      await player.play();
+      await new Promise((done, failed) => { player.onended = done; player.onerror = failed; player.onpause = () => { if (!player.ended) done(); }; });
+    } catch (err) {
+      if (run !== speakRun) return;
+      cloudPlaying = false; cloudDown = true;
+      return speak(pieces.slice(i).join(' '), opts);          // device voice for the rest
+    } finally {
+      player.onended = player.onerror = player.onpause = null;
+      if (url) URL.revokeObjectURL(url);
+    }
+    if (run !== speakRun) return;
+  }
+  cloudPlaying = false;
+  if (!opts.test) afterSpeak();
+}
+
 function speak(text, opts = {}) {
+  stopSpeech();
+  const run = speakRun;
+  const cv = cloudVoice();
+  if (cv) return speakCloud(text, cv, opts, run);
   if (!synth) return opts.test ? undefined : afterSpeak();
-  synth.cancel();
-  const run = ++speakRun;
   const parts = phrases(text);
   if (!parts.length) return opts.test ? undefined : afterSpeak();
   const v = pickVoice();
@@ -1803,11 +1876,12 @@ function speak(text, opts = {}) {
 if (synth) { loadVoices(); synth.addEventListener?.('voiceschanged', loadVoices); }
 document.getElementById('voice').onchange = (e) => {
   try { if (e.target.value) localStorage.setItem('auti.voice', e.target.value); else localStorage.removeItem('auti.voice'); } catch {}
+  if (e.target.value.startsWith('cloud:') || !e.target.value) cloudDown = false;      // picking a natural voice tries it again
 };
 document.getElementById('voice-test').onclick = () => {
   unlockSpeech();
-  if (!synth) return;
-  if (!voices.length) loadVoices();
+  if (!synth && !cloud.enabled) return;
+  if (synth && !voices.length) loadVoices();
   speak('Hello, I’m Auti. This is how I’ll sound on the road: calm, clear, and to the point, so you can keep your eyes where they belong.', { test: true });
 };
 document.getElementById('voice-btn').onclick = () => {
@@ -1822,7 +1896,7 @@ function paintSpeaker() {
   b.setAttribute('aria-pressed', String(on)); b.title = on ? 'Replies are read aloud' : 'Read replies aloud';
   b.style.color = on ? 'var(--gold)' : '';
 }
-document.getElementById('speaker').onclick = () => { unlockSpeech(); const on = !speakerOn(agent); prefs.set('auti.speak.' + agent, on); if (!on) synth?.cancel(); paintSpeaker(); };
+document.getElementById('speaker').onclick = () => { unlockSpeech(); const on = !speakerOn(agent); prefs.set('auti.speak.' + agent, on); if (!on) stopSpeech(); paintSpeaker(); };
 function afterSpeak() { if (drive.on) listen(); }
 
 function listen() {
@@ -1858,7 +1932,7 @@ function listen() {
 document.getElementById('mic').onclick = () => {
   unlockSpeech();
   if (document.getElementById('mic').classList.contains('live')) { rec?.stop(); return; }
-  synth?.cancel(); listen();
+  stopSpeech(); listen();
 };
 
 function setDrive(state, text) {
@@ -1875,13 +1949,13 @@ function startDrive() {
 document.getElementById('drive-on').onclick = startDrive;
 document.getElementById('big-orb').onclick = () => {
   unlockSpeech();
-  if (synth?.speaking) { synth.cancel(); return; }       // interrupt; onend restarts listening
+  if (isSpeaking()) { stopSpeech(); afterSpeak(); return; }       // interrupt and listen again
   if (busy) return;
   listen();
 };
 function stopDrive() {
   drive.on = false; document.getElementById('drive').hidden = true;
-  try { rec?.abort(); } catch {} synth?.cancel(); paintChat();
+  try { rec?.abort(); } catch {} stopSpeech(); paintChat();
 }
 document.getElementById('drive-off').onclick = stopDrive;
 
