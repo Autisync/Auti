@@ -286,6 +286,11 @@ ${FONTS}
   /* voice choice for spoken replies */
   .voice-set { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
   .voice-set[hidden] { display: none; }
+  .voice-set { flex-wrap: wrap; }
+  .voice-use { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+  .voice-use[hidden] { display: none; }
+  .voice-use .meter { margin-top: 6px; }
+  .meter.warn i { background: #d9a441; } .meter.full i { background: #d9534f; }
   .voice-set label { font: 500 10px/1 var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); flex: none; }
   .voice-set select { flex: 1; min-width: 0; background: var(--panel-solid); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 10px;
                       padding: 8px 10px; font: 14px/1.2 var(--sans); color-scheme: dark; }
@@ -483,6 +488,7 @@ ${MARK_SYMBOL}
     <label for="voice">Voice</label>
     <select id="voice"></select>
     <button type="button" class="mini" id="voice-test">Test</button>
+    <div class="voice-use" id="voice-use" hidden></div>
   </div>
   <div class="moods" id="moods" role="group" aria-label="Companion mood" hidden></div>
   <div class="msgs" id="msgs" aria-live="polite"></div>
@@ -1094,6 +1100,7 @@ function viewAgents(root) {
       const mem = $('details', 'memory'); mem.append($('summary', '', 'What Auti remembers between runs'), $('div', 'detail', data.latest.brief.working_summary));
       c.append(mem);
     }
+    if (a.id === 'companion') { const vb = voiceUseBox(data.voice, 'detail'); if (vb) c.append(vb); }
     if (a.id !== 'coordinator') { const t = $('button', 'more', 'Talk to ' + a.name + ' →'); t.onclick = () => openChat(a.id); c.append(t); }
     if (a.id === 'coordinator') {
       const on = data.autonomy === true;
@@ -1711,7 +1718,41 @@ const savedVoice = () => { try { return localStorage.getItem('auti.voice') || ''
 // Saved choices start with "cloud:"; with nothing chosen and the natural voice set up, the first natural voice speaks.
 let cloud = { enabled: false, voices: [] };
 let cloudDown = false;          // set after a failure, so the rest of this visit uses the device voice
-fetch('/api/voice').then((r) => (r.ok ? r.json() : null)).then((v) => { if (v && v.enabled) { cloud = v; paintVoices(); } }).catch(() => {});
+fetch('/api/voice').then((r) => (r.ok ? r.json() : null)).then((v) => { if (v && v.enabled) { cloud = v; paintVoices(); paintVoiceUse(); } }).catch(() => {});
+// The monthly character counter, shown in the voice settings and on the Agents tab.
+function voiceUseView(u) {
+  if (!u || u.used == null) return null;
+  const n = (x) => Number(x).toLocaleString('en-GB');
+  const resets = new Date(u.resets + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
+  if (u.cap == null) return { text: u.provider + ' voice this month: ' + n(u.used) + ' characters.', pct: 0, level: '' };
+  const pct = u.cap ? Math.min(100, Math.round((100 * u.used) / u.cap)) : 100;
+  const full = u.used >= u.cap;
+  const text = full
+    ? u.provider + ' voice: this month\u2019s ' + n(u.cap) + ' free characters are used up, so the device voice speaks until ' + resets + '.'
+    : u.provider + ' voice this month: ' + n(u.used) + ' of ' + n(u.cap) + ' free characters (' + pct + '%). Resets on ' + resets + '.';
+  return { text, pct, level: full ? 'full' : pct >= 80 ? 'warn' : '' };
+}
+function voiceUseBox(u, cls) {
+  const v = voiceUseView(u); if (!v) return null;
+  const box = $('div', cls, v.text);
+  if (u.cap != null) { const meter = $('div', 'meter' + (v.level ? ' ' + v.level : '')); const bar = $('i'); bar.style.width = v.pct + '%'; meter.append(bar); box.append(meter); }
+  return box;
+}
+function paintVoiceUse() {
+  const el = document.getElementById('voice-use'); if (!el) return;
+  const box = voiceUseBox(cloud.usage, 'x');
+  el.replaceChildren(...(box ? box.childNodes : []));
+  el.hidden = !box;
+}
+// Each spoken piece reports the new total, so the counter stays current while Auti talks.
+function noteVoiceUse(r) {
+  if (!cloud.usage) return;
+  const used = r.headers.get('X-Voice-Used');
+  if (used !== null) cloud.usage.used = Number(used);
+  else if (r.status === 429 && cloud.usage.cap != null) cloud.usage.used = cloud.usage.cap;
+  else return;
+  paintVoiceUse();
+}
 function cloudVoice() {
   if (!cloud.enabled || cloudDown) return null;
   const want = savedVoice();
@@ -1827,7 +1868,7 @@ async function speakCloud(text, voice, opts, run) {
   const audio = pieces.map((p, i) => fetch('/api/voice', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ text: p, voice, speed, previous: pieces[i - 1] || '', next: pieces[i + 1] || '' }),
-  }).then((r) => (r.ok ? r.blob() : Promise.reject(new Error('voice ' + r.status)))));
+  }).then((r) => { noteVoiceUse(r); return r.ok ? r.blob() : Promise.reject(new Error('voice ' + r.status)); }));
   audio.forEach((a) => a.catch(() => {}));
   cloudPlaying = true;
   for (let i = 0; i < pieces.length; i++) {

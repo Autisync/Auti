@@ -2,6 +2,7 @@
 // The Vercel functions in api/ are thin wrappers around these, so the tests can drive them with PGlite.
 import crypto from 'node:crypto';
 import { agentsSummary } from './agents.js';
+import { voiceUsage } from './voice.js';
 import { normaliseRepo } from './github.js';
 import { repairWeakestLink } from './coordinator.js';
 import { crmConfigured } from './crm.js';
@@ -108,10 +109,11 @@ export async function getDashboard(db) {
   const leads = await listLeads(db);
   const leadsOn = await leadsAgentOn(db);
   const agents = await agentsSummary(db);
+  const voice = await voiceUsage(db).catch(() => null);      // the natural voice's characters this month, if set up
   return {
     latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools(),
     actions, autonomy: autonomy ? autonomy.enabled : null,   // null: not set up yet
-    crmRequests, crmOn: crmConfigured(), leads, leadsOn,
+    crmRequests, crmOn: crmConfigured(), leads, leadsOn, voice,
   };
 }
 
