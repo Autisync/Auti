@@ -1707,7 +1707,7 @@ let voices = [];
 const loadVoices = () => { voices = synth ? synth.getVoices() : []; paintVoices(); };
 const englishVoices = () => voices.filter((v) => /^en/i.test(v.lang)).sort((a, b) => voiceScore(b) - voiceScore(a) || a.name.localeCompare(b.name));
 const savedVoice = () => { try { return localStorage.getItem('auti.voice') || ''; } catch { return ''; } };
-// Natural voices from ElevenLabs, through /api/voice, when the owner has set ELEVENLABS_API_KEY on Vercel.
+// Natural voices from a cloud provider (Google, Microsoft or ElevenLabs) through /api/voice, once its key is set on Vercel.
 // Saved choices start with "cloud:"; with nothing chosen and the natural voice set up, the first natural voice speaks.
 let cloud = { enabled: false, voices: [] };
 let cloudDown = false;          // set after a failure, so the rest of this visit uses the device voice
@@ -1736,7 +1736,7 @@ function paintVoices() {
     items.forEach(([value, text]) => { const o = $('option', null, text); o.value = value; g.append(o); values.push(value); });
     sel.append(g);
   };
-  group('Natural (online)', cloud.enabled ? cloud.voices.map((v) => ['cloud:' + v.id, v.name + ' · ' + v.note]) : []);
+  group('Natural (' + (cloud.provider || 'online') + ')', cloud.enabled ? cloud.voices.map((v) => ['cloud:' + v.id, v.name + ' · ' + v.note]) : []);
   group(cloud.enabled ? 'On this device' : 'Voices', list.map((v) => [v.voiceURI || v.name, v.name + ' · ' + v.lang.replace('_', '-')]));
   sel.value = values.includes(want) ? want : '';
   sel.disabled = !synth && !cloud.enabled;
