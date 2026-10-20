@@ -162,6 +162,10 @@ ${FONTS}
   .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
   .chip { background: var(--panel); border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 6px 12px; cursor: pointer; font: 12px/1 var(--display); }
   .chip[aria-pressed="true"] { color: var(--gold); border-color: var(--gold-glow); }
+  .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+  .pager .more { margin-top: 0; }
+  .pager .more:disabled { opacity: 0.35; cursor: default; border-color: var(--line); }
+  .pager-text { font: 12px/1 var(--display); color: var(--muted); }
 
   /* agents */
   .agent { display: grid; gap: 12px; }
@@ -351,7 +355,7 @@ ${FONTS}
   .q-kind { font: 600 10px/1 var(--display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
             border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; margin-right: 8px; vertical-align: 2px; }
   .q-why { font-size: 13px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
-  .queue > .more { margin: 8px 18px 6px; }
+  .queue > .more, .queue .pager { margin: 8px 18px 6px; }
   .two-col { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0 24px; align-items: start; }
   .two-col > .col:only-child { grid-column: 1 / -1; }
   .mini-list { list-style: none; margin: 0; padding: 0; }
@@ -538,6 +542,29 @@ const section = (title, ...children) => { const s = rise($('section')); s.append
 const card = (...children) => { const c = $('div', 'card'); c.append(...children); return c; };
 const emptyCard = (text) => card($('p', 'empty', text));
 
+// Long lists show 12 at a time with a pager underneath; 12 or fewer show no pager. Counts elsewhere stay the full total.
+const PAGE_SIZE = 12;
+const pages = {};   // remembers each list's page across refreshes
+function paged(key, items, build) {
+  const box = $('div', 'paged');
+  const paint = () => {
+    const last = Math.max(0, Math.ceil(items.length / PAGE_SIZE) - 1);
+    const page = pages[key] = Math.min(Math.max(0, pages[key] || 0), last);
+    const from = page * PAGE_SIZE;
+    box.replaceChildren(build(items.slice(from, from + PAGE_SIZE)));
+    if (!last) return;
+    const nav = $('nav', 'pager'); nav.setAttribute('aria-label', 'Pages');
+    const turn = (to) => { pages[key] = to; paint(); if (box.getBoundingClientRect().top < 0) box.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    const prev = $('button', 'more', '‹ Previous'); prev.disabled = page === 0; prev.onclick = () => turn(page - 1);
+    const next = $('button', 'more', 'Next ›'); next.disabled = page === last; next.onclick = () => turn(page + 1);
+    const text = $('span', 'pager-text', (from + 1) + '–' + Math.min(from + PAGE_SIZE, items.length) + ' of ' + items.length + ' · page ' + (page + 1) + ' of ' + (last + 1));
+    nav.append(prev, text, next); box.append(nav);
+  };
+  paint(); return box;
+}
+const pagedRows = (key, items, row, cls = 'rows') => paged(key, items, (slice) => { const d = $('div', cls); slice.forEach((it) => d.append(row(it))); return d; });
+const pagedCards = (key, items, row) => paged(key, items, (slice) => { const d = $('div', 'cards'); slice.forEach((it) => d.append(row(it))); return d; });
+
 /* ---------- tabs ---------- */
 // Tabs in the order of a working day, grouped for the side menu on wide screens.
 const TABS = [
@@ -659,13 +686,15 @@ function viewOverview(root) {
   if (!queue.length) qs.append(emptyCard('Nothing needs you right now.'));
   else {
     const list = $('div', 'card queue');
-    (queueAll ? queue : queue.slice(0, 8)).forEach((it) => {
+    const qRow = (it) => {
       const row = $('div', 'q-row ' + it.sev);
       const body = $('div', 'q-body'); const t = $('div', 'q-title'); t.append($('span', 'q-kind', it.kind), document.createTextNode(it.title));
       body.append(t); if (it.why) body.append($('div', 'q-why', it.why));
       const btn = $('button', 'mini go', it.label); btn.onclick = it.fn;
-      row.append($('span', 'q-dot'), body, btn); list.append(row);
-    });
+      row.append($('span', 'q-dot'), body, btn); return row;
+    };
+    if (queueAll) list.append(pagedRows('overview:queue', queue, qRow, 'q-rows'));
+    else queue.slice(0, 8).forEach((it) => list.append(qRow(it)));
     if (queue.length > 8) { const m = $('button', 'more', queueAll ? 'Show fewer' : 'Show all ' + queue.length); m.onclick = () => { queueAll = !queueAll; draw(); }; list.append(m); }
     qs.append(list);
   }
@@ -841,25 +870,23 @@ function followUpCard(f) {
 
 function viewApprovals(root) {
   const fu = data.followUps || [];
-  root.append(section('Plans', ...(data.approvals.length ? data.approvals.map(planCard) : [emptyCard('No plans are waiting for you.')])));
-  if (data.crmRequests?.length) root.append(section('CRM changes', ...data.crmRequests.map(crmRequestCard)));
-  root.append(section('Follow-ups to send', ...(fu.length ? fu.map(followUpCard)
-    : [emptyCard('No drafts. The retention agent writes one when a client is due for contact.')])));
+  root.append(section('Plans', data.approvals.length ? pagedCards('approvals:plans', data.approvals, planCard) : emptyCard('No plans are waiting for you.')));
+  if (data.crmRequests?.length) root.append(section('CRM changes', pagedCards('approvals:crm', data.crmRequests, crmRequestCard)));
+  root.append(section('Follow-ups to send', fu.length ? pagedCards('approvals:follow-ups', fu, followUpCard)
+    : emptyCard('No drafts. The retention agent writes one when a client is due for contact.')));
 }
 
 const picks = {};   // remembers each list's filter across refreshes
 function filtered(root, title, items, chips, match, row, start = 'all') {
   let pick = picks[title] ?? start;
   const wrap = rise($('section')); wrap.append($('h2', null, title));
-  const bar = $('div', 'filters'); const list = $('div', 'rows');
+  const bar = $('div', 'filters'); const list = $('div');
   const paint = () => {
-    list.replaceChildren();
     const shown = items.filter((it) => pick === 'all' || match(it, pick));
-    if (!shown.length) list.append(emptyCard('Nothing here.'));
-    shown.forEach((it) => list.append(row(it)));
+    list.replaceChildren(shown.length ? pagedRows(title + ':' + pick, shown, row) : emptyCard('Nothing here.'));
     [...bar.children].forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === pick)));
   };
-  chips.forEach(([k, label]) => { const b = $('button', 'chip', label); b.dataset.k = k; b.onclick = () => { pick = picks[title] = k; paint(); }; bar.append(b); });
+  chips.forEach(([k, label]) => { const b = $('button', 'chip', label); b.dataset.k = k; b.onclick = () => { pick = picks[title] = k; pages[title + ':' + k] = 0; paint(); }; bar.append(b); });
   wrap.append(bar, list); root.append(wrap); paint();
 }
 
@@ -1345,11 +1372,13 @@ async function loadCrm() {
   finally { crmLoading = false; }
   if (current === 'crm' || current === 'overview') draw();
 }
-function crmTable(cols, rows) {
-  const wrap = $('div', 'tbl-wrap'); const t = $('table', 'grid');
-  const head = $('tr'); cols.forEach(([, label]) => head.append($('th', null, label))); t.append(head);
-  rows.forEach((r) => { const tr = $('tr'); cols.forEach(([k, , fmt]) => tr.append($('td', null, fmt ? fmt(r[k], r) : (r[k] ?? '')))); t.append(tr); });
-  wrap.append(t); return wrap;
+function crmTable(key, cols, rows) {
+  return paged(key, rows, (slice) => {
+    const wrap = $('div', 'tbl-wrap'); const t = $('table', 'grid');
+    const head = $('tr'); cols.forEach(([, label]) => head.append($('th', null, label))); t.append(head);
+    slice.forEach((r) => { const tr = $('tr'); cols.forEach(([k, , fmt]) => tr.append($('td', null, fmt ? fmt(r[k], r) : (r[k] ?? '')))); t.append(tr); });
+    wrap.append(t); return wrap;
+  });
 }
 function viewCrm(root) {
   if (crmData === null) { root.append($('div', 'skeleton'), $('div', 'skeleton')); loadCrm(); return; }
@@ -1413,15 +1442,15 @@ function viewCrm(root) {
     root.append(section('Alerts', card(ul)));
   }
   const renew = section('Renewals coming up', d.expiring_subscriptions.length
-    ? crmTable([['client_name', 'Client'], ['service_name', 'Service'], ['end_date', 'Ends', (v) => v ? day(v) : ''], ['monthly_cost', 'Monthly', (v) => money(v)], ['auto_renew', 'Auto-renew', (v) => v ? 'yes' : 'no']], d.expiring_subscriptions)
+    ? crmTable('crm:renewals', [['client_name', 'Client'], ['service_name', 'Service'], ['end_date', 'Ends', (v) => v ? day(v) : ''], ['monthly_cost', 'Monthly', (v) => money(v)], ['auto_renew', 'Auto-renew', (v) => v ? 'yes' : 'no']], d.expiring_subscriptions)
     : emptyCard('Nothing renews in the next 45 days.'));
   renew.id = 'crm-renewals'; root.append(renew);
   const overdue = section('Overdue invoices', d.overdue_invoices.length
-    ? crmTable([['client_name', 'Client'], ['invoice_number', 'Invoice'], ['due_date', 'Due', (v) => v ? day(v) : ''], ['total', 'Total', (v, r) => money(v, r.currency)], ['amount_paid', 'Paid', (v, r) => money(v, r.currency)]], d.overdue_invoices)
+    ? crmTable('crm:overdue', [['client_name', 'Client'], ['invoice_number', 'Invoice'], ['due_date', 'Due', (v) => v ? day(v) : ''], ['total', 'Total', (v, r) => money(v, r.currency)], ['amount_paid', 'Paid', (v, r) => money(v, r.currency)]], d.overdue_invoices)
     : emptyCard('No overdue invoices.'));
   overdue.id = 'crm-overdue'; root.append(overdue);
   const pipe = section('Pipeline', d.open_opportunities.length
-    ? crmTable([['name', 'Opportunity'], ['stage', 'Stage', (v, r) => [r.pipeline, v].filter(Boolean).join(' · ')], ['value', 'Value', (v) => money(v)], ['updated_at', 'Last change', (v) => v ? ago(v) : '']], d.open_opportunities)
+    ? crmTable('crm:pipeline', [['name', 'Opportunity'], ['stage', 'Stage', (v, r) => [r.pipeline, v].filter(Boolean).join(' · ')], ['value', 'Value', (v) => money(v)], ['updated_at', 'Last change', (v) => v ? ago(v) : '']], d.open_opportunities)
     : emptyCard('No open opportunities.'));
   pipe.id = 'crm-pipeline'; root.append(pipe);
   const STATUS_NEXT = { prospect: [['active', 'Won']], active: [['inactive', 'Pause'], ['churned', 'Churned']], inactive: [['active', 'Reactivate']], churned: [['active', 'Reactivate']] };
@@ -1429,11 +1458,9 @@ function viewCrm(root) {
   const sec = rise($('section')); sec.id = 'crm-clients';
   sec.append($('h2', null, 'Clients' + (d.clients_total != null ? ' (' + d.clients_total + ')' : '')));
   const search = $('input', 'search'); search.placeholder = 'Filter by name, contact or email'; search.value = crmSearch;
-  search.oninput = () => { crmSearch = search.value; const pos = search.selectionStart; draw(); const n = document.querySelector('input.search'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  search.oninput = () => { crmSearch = search.value; pages['crm:clients'] = 0; const pos = search.selectionStart; draw(); const n = document.querySelector('input.search'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
   sec.append(search);
-  const rows = $('div', 'rows');
-  if (!list.length) rows.append(emptyCard('No clients match.'));
-  list.forEach((c) => {
+  const crmClientRow = (c) => {
     const el = $('div', 'card row'); const t = $('div', 'item-title', c.company_name || c.contact_name);
     t.append($('span', 'tag' + (c.status === 'active' ? ' ok' : c.status === 'churned' ? ' bad' : ''), c.status || 'unknown'));
     if (Number(c.outstanding_invoices) > 0) t.append($('span', 'tag warn', c.outstanding_invoices + ' unpaid'));
@@ -1447,9 +1474,10 @@ function viewCrm(root) {
       acts.append(b);
     });
     const a = $('button', 'mini go', 'Ask Auti'); a.onclick = () => openChat('assistant', 'About ' + (c.company_name || c.contact_name) + ' in the CRM: ');
-    acts.append(a); el.append(acts); rows.append(el);
-  });
-  sec.append(rows); root.append(sec);
+    acts.append(a); el.append(acts); return el;
+  };
+  sec.append(list.length ? pagedRows('crm:clients', list, crmClientRow) : emptyCard('No clients match.'));
+  root.append(sec);
   root.append($('p', 'empty small', 'Read from the CRM ' + ago(d.fetched_at) + '.'));
 }
 

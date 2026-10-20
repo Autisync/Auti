@@ -620,6 +620,34 @@ await check('leaked tool-call markup in the weakest link is cleaned, in new runs
   assert.equal((await web.getDashboard(db)).latest.brief.weakest_link.headline, 'Zero clients tracked.');
 });
 
+await check('lists over 12 items are paged 12 at a time; 12 or fewer show no pager', async () => {
+  const { PAGE } = await import('../src/page.js');
+  const script = PAGE.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const grab = (start, end) => { const i = script.indexOf(start); return script.slice(i, script.indexOf(end, i)); };
+  // A tiny stand-in for the DOM, just enough for the pager.
+  class El {
+    constructor(tag) { this.tag = tag; this.children = []; this.attrs = {}; this.textContent = ''; }
+    append(...c) { this.children.push(...c); } replaceChildren(...c) { this.children = c; }
+    setAttribute(k, v) { this.attrs[k] = v; } getBoundingClientRect() { return { top: 0 }; } scrollIntoView() {}
+  }
+  const document = { createElement: (t) => new El(t) };
+  const code = grab('const $ = ', '\n') + grab('const PAGE_SIZE', '\nconst pagedCards') + '\nreturn pagedRows;';
+  const pagedRows = new Function('document', code)(document);
+  const items = Array.from({ length: 30 }, (_, i) => i + 1);
+  const box = pagedRows('t', items, (n) => { const e = new El('div'); e.textContent = String(n); return e; });
+  const shown = () => box.children[0].children.map((e) => e.textContent);
+  const nav = () => box.children[1];
+  assert.deepEqual(shown(), items.slice(0, 12).map(String));
+  assert.equal(nav().children[1].textContent, '1–12 of 30 · page 1 of 3');
+  assert.equal(nav().children[0].disabled, true);
+  nav().children[2].onclick(); nav().children[2].onclick();
+  assert.deepEqual(shown(), ['25', '26', '27', '28', '29', '30']);
+  assert.equal(nav().children[2].disabled, true);
+  const again = pagedRows('t', items.slice(0, 14), (n) => new El('div'));   // the list shrank: the page is pulled back
+  assert.equal(again.children[1].children[1].textContent, '13–14 of 14 · page 2 of 2');
+  assert.equal(pagedRows('u', items.slice(0, 12), () => new El('div')).children.length, 1);   // no pager at 12
+});
+
 await check('voice failures are explained instead of failing silently', async () => {
   const { PAGE } = await import('../src/page.js');
   assert.match(PAGE, /service-not-allowed/);                        // iPhone refusing recognition
