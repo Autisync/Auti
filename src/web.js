@@ -62,7 +62,10 @@ export async function getDashboard(db) {
            EXISTS (SELECT 1 FROM v_projects_going_cold c WHERE c.id = p.id) AS going_cold
       FROM projects p WHERE p.phase <> 'closed' ORDER BY p.name`)).rows;
   const clients = (await db.query(`
-    SELECT c.id, c.name, c.market, c.sector, c.status, c.last_contact_at, c.next_contact_due, c.lost_reason, c.notes,
+    SELECT c.id, c.name, c.market, c.sector, c.status, c.last_contact_at,
+           -- A lead that is in the CRM is a prospect (Clients tab); one only Auti knows about is a lead (Leads tab).
+           -- crm_id is read through to_jsonb so the page still loads before migration 011 has run.
+           CASE WHEN c.status = 'lead' THEN CASE WHEN to_jsonb(c)->>'crm_id' IS NULL THEN 'lead' ELSE 'prospect' END ELSE c.status::text END AS kind, c.next_contact_due, c.lost_reason, c.notes,
            extract(day FROM c.contact_interval)::int AS contact_every_days, pe.name AS owner,
            CASE WHEN c.status NOT IN ('lead', 'active') THEN NULL
                 WHEN c.next_contact_due IS NULL THEN 'no_next_contact'
