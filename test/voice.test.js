@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
 import { migrate } from '../src/migrate.js';
-import { synthesize, voiceList, voiceProvider, monthlyCap, usedThisMonth, billingMonth, PROVIDERS, MAX_CHARS } from '../src/voice.js';
+import { synthesize, voiceList, voiceProvider, monthlyCap, usedThisMonth, billingMonth, voiceUsage, PROVIDERS, MAX_CHARS } from '../src/voice.js';
 
 let passed = 0;
 const check = async (name, fn) => { await fn(); passed++; console.log(`ok - ${name}`); };
@@ -121,6 +121,17 @@ await check('a retry is counted too, a refused request is given back, and a lost
   assert.equal(await usedThisMonth(db, oct), 2);                  // the refused first try was given back, the retry counted
   await synthesize({ text: 'Hi' }, { env, db, now: oct, fetch: async () => { throw new Error('socket hang up'); } }).catch(() => {});
   assert.equal(await usedThisMonth(db, oct), 4);
+  await db.close();
+});
+
+await check('the page gets the month\'s counter: used, cap and the reset date', async () => {
+  const db = await freshDb();
+  assert.equal(await voiceUsage(db, {}), null);
+  assert.deepEqual(await voiceUsage(db, GOOGLE, oct), { provider: 'Google', used: 0, cap: 950_000, month: '2026-10', resets: '2026-11-01' });
+  const out = await synthesize({ text: 'Hello Rex' }, { env: GOOGLE, db, now: oct, fetch: fakeFetch([], googleOk) });
+  assert.deepEqual([out.used, out.cap], [9, 950_000]);
+  assert.equal((await voiceUsage(db, GOOGLE, oct)).used, 9);
+  assert.equal((await voiceUsage(db, GOOGLE, new Date('2026-12-15T12:00:00Z'))).resets, '2027-01-01');
   await db.close();
 });
 
