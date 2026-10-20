@@ -554,7 +554,7 @@ if (!TABS.some(([id]) => id === current)) current = 'overview';
 function drawTabs() {
   const el = document.getElementById('tabs'); el.replaceChildren();
   const side = document.getElementById('side'); side.replaceChildren();
-  const counts = data ? { approvals: data.approvals.length + (data.followUps?.length || 0) + (data.crmRequests?.length || 0), tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.length, leads: (data.leads || []).filter((l) => l.status === 'new').length } : {};
+  const counts = data ? { approvals: data.approvals.length + (data.followUps?.length || 0) + (data.crmRequests?.length || 0), tasks: data.tasks.filter((t) => !['done', 'cancelled'].includes(t.state)).length, projects: data.projects.length, clients: data.clients.filter((c) => c.status === 'active').length, leads: (data.leads || []).filter((l) => l.status === 'new').length } : {};
   let group = null;
   TABS.forEach(([id, label, g]) => {
     const make = (cls) => {
@@ -605,7 +605,7 @@ function decisionQueue() {
     crm.expiring_subscriptions.filter((s) => !s.end_date || (new Date(s.end_date) - Date.now()) < 14 * 864e5).slice(0, 3)
       .forEach((s) => add('soon', 'Renewal', (s.client_name || 'A client') + ' · ' + (s.service_name || 'service'), 'Ends ' + (s.end_date ? day(s.end_date) : 'soon') + (s.auto_renew ? ', renews automatically' : ', no auto-renew'), 'Open', () => { go('crm'); setTimeout(() => document.getElementById('crm-renewals')?.scrollIntoView({ behavior: 'smooth' }), 80); }));
   }
-  const overdueClients = data.clients.filter((c) => c.flag === 'overdue');
+  const overdueClients = data.clients.filter((c) => c.status === 'active' && c.flag === 'overdue');
   if (overdueClients.length) add('soon', 'Clients', overdueClients.length + ' client' + (overdueClients.length > 1 ? 's' : '') + ' overdue for contact',
     overdueClients.slice(0, 3).map((c) => c.name).join(', '), 'Open', () => go('clients'));
   (b?.questions_for_owner || []).forEach((q) => add('soon', 'Question', q, 'The coordinator needs your answer', 'Answer', () => openChat('assistant', 'About your question: "' + q + '"\\n\\n')));
@@ -637,7 +637,7 @@ function viewOverview(root) {
   const waiting = data.approvals.length + (data.followUps?.length || 0) + (data.crmRequests?.length || 0);
   const overdueInv = crm ? crm.overdue_invoices.length : 0;
   const newLeads = (data.leads || []).filter((l) => l.status === 'new');
-  const toContact = data.clients.filter((c) => c.flag && c.flag !== 'ok').length;
+  const toContact = data.clients.filter((c) => c.status === 'active' && c.flag && c.flag !== 'ok').length;
   const lateTasks = data.tasks.filter((t) => t.overdue).length;
   const cold = data.projects.filter((p) => p.going_cold).length;
   pulse.append(
@@ -1481,18 +1481,19 @@ function viewLeads(root) {
     stat(count((l) => l.status === 'tracking' || l.status === 'in_crm'), 'Taken on (30 days)', false, 'leads'),
   );
   root.append(stats);
-  // Prospects from the CRM and leads Auti is following up (tracked from here or added by hand). Making one active moves it to Clients.
-  const following = (data.clients || []).filter((c) => c.status === 'lead');
-  if (following.length) root.append(section('Prospects and leads you are following', ...following.map(clientCard)));
-  if (!leads.length) {
+  // Every client record that is not active (prospects, leads, paused, lost) sits under "In CRM" with the leads already added there.
+  // Making one active moves it to the Clients tab.
+  const others = (data.clients || []).filter((c) => c.status !== 'active').map((c) => ({ ...c, client: true }));
+  if (!leads.length && !others.length) {
     root.append(section('Leads', emptyCard(data.leadsOn == null
       ? 'The leads agent starts after the next overnight run. It searches one market a day, so all three are covered within a week.'
       : 'No leads yet. The agent searches once a day, after the overnight run.')));
     return;
   }
-  filtered(root, 'Leads', leads,
-    [['new', 'New'], ['angola', 'Angola'], ['portugal', 'Portugal'], ['uk', 'UK'], ['tracking', 'Tracking'], ['in_crm', 'In CRM'], ['dismissed', 'Dismissed'], ['all', 'All']],
-    (l, k) => MARKET_NAME[k] ? l.status === 'new' && l.market === k : l.status === k, leadCard, 'new');
+  filtered(root, 'Leads', [...leads, ...others],
+    [['new', 'New'], ['angola', 'Angola'], ['portugal', 'Portugal'], ['uk', 'UK'], ['tracking', 'Tracking'], ['in_crm', 'In CRM (' + (others.length + count((l) => l.status === 'in_crm')) + ')'], ['dismissed', 'Dismissed'], ['all', 'All']],
+    (l, k) => l.client ? k === 'in_crm' : MARKET_NAME[k] ? l.status === 'new' && l.market === k : l.status === k,
+    (l) => l.client ? clientCard(l) : leadCard(l), 'new');
 }
 function leadCard(l) {
   const el = $('div', 'card row lead');
