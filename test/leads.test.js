@@ -180,7 +180,7 @@ await check('Today ranks what needs the owner, money and CRM changes first', asy
   const data = {
     latest: { brief: { questions_for_owner: ['Is Gamma lost?'] } },
     crmRequests: [{ summary: 'Add Delta to the CRM' }], approvals: [{ title: 'Retention plan' }], followUps: [],
-    clients: [{ name: 'Acme', flag: 'overdue' }, { name: 'Beta', flag: 'ok' }],
+    clients: [{ name: 'Acme', status: 'active', flag: 'overdue' }, { name: 'Beta', status: 'active', flag: 'ok' }, { name: 'Gamma', status: 'lead', flag: 'overdue' }],
     leads: [{ company: 'Strong Co', status: 'new', fit: 5 }, { company: 'Weak Co', status: 'new', fit: 2 }],
     tasks: [{ title: 'Late one', overdue: true }],
   };
@@ -190,6 +190,7 @@ await check('Today ranks what needs the owner, money and CRM changes first', asy
   const items = queue(data, crm, (n) => String(n), () => 'd', () => {}, () => {});
   assert.deepEqual(items.map((i) => i.kind), ['CRM change', 'Overdue invoice', 'Plan', 'Renewal', 'Clients', 'Question', 'Leads', 'Tasks']);
   assert.match(items.find((i) => i.kind === 'Leads').title, /^1 strong lead/);      // weak leads stay off the list
+  assert.match(items.find((i) => i.kind === 'Clients').title, /^1 client overdue/);  // only active clients count; leads live on the Leads tab
   assert.ok(!items.some((i) => /Far/.test(i.title)));                               // renewals beyond 14 days wait
   assert.equal(queue(data, null, String, String, () => {}, () => {}).filter((i) => i.kind === 'Overdue invoice').length, 0);   // no CRM, no money rows
   assert.match(PAGE, /id="side"/);
