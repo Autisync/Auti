@@ -533,6 +533,8 @@ await check('Synaut chat can look at GitHub repos through read-only tools', asyn
   const shown = (await web.getDashboard(db)).tools;
   assert.deepEqual(shown.map((t) => t.id), ['github', 'crm', 'tasks']);
   assert.equal(web.connectedTools({ GITHUB_TOKEN: 'x' })[0].connected, true);
+  assert.equal(web.connectedTools({ SYNAUT_GITHUB_TOKEN: 'x' })[0].connected, true);   // either name works in Vercel
+  assert.equal(gh.githubToken({ SYNAUT_GITHUB_TOKEN: 'a', GITHUB_TOKEN: 'b' }), 'a');
   assert.equal(web.connectedTools({})[0].connected, false);
   assert.doesNotMatch(JSON.stringify(web.connectedTools({ GITHUB_TOKEN: 'secret-value' })), /secret-value/);
 });
