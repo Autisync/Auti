@@ -96,7 +96,7 @@ await check('the owner can pin a model by switching learning off', async () => {
 
 await check('leads and retention outcomes count per model', async () => {
   const researcher = { research: async () => ({ output: { leads: [{ company: 'Shop A', market: 'uk', services: ['crm'], fit: 4, signals: 'Sells by phone only.', sources: ['https://a.example'] }] }, model: 'claude-haiku-5-5', usage: {} }) };
-  await runLeads({ db, researcher, focus: { market: 'uk', angle: 'CRM' } });
+  await runLeads({ db, researcher, focus: { market: 'uk', angle: 'CRM' }, checker: async (ls) => ls.map(() => null) });
   await db.query(`UPDATE lead SET status = 'dismissed', dismiss_reason = 'too big', decided_at = now() WHERE company = 'Shop A'`);
   assert.deepEqual((await models.modelScores(db, 'leads')).haiku, { decided: 1, accepted: 0, rate: 0 });
   assert.equal(models.family('claude-sonnet-5'), models.family('claude-sonnet-5-5'));

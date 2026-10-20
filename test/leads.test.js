@@ -13,6 +13,7 @@ await migrate(db, () => {});
 await db.query(`INSERT INTO clients (name, market, status) VALUES ('Known Clinic', 'portugal', 'active')`);
 
 const FOCUS = { market: 'portugal', angle: 'domains, business email and hosting' };
+const noCheck = async (ls) => ls.map(() => null);          // the site checks have their own tests below; no network here
 const good = (over = {}) => ({
   company: 'Padaria Exemplo', market: 'portugal', city: 'Braga', sector: 'bakery', website: 'https://padaria.example',
   services: ['email', 'domain'], fit: 4, signals: 'Contact address on the site is a gmail.com account.',
@@ -34,7 +35,7 @@ await check('a run saves checked leads and drops anything without evidence, off-
     good({ company: 'Too Sure', fit: 9 }),
     good({ company: 'padaria exemplo' }),                      // the same business twice
   ] });
-  const out = await leads.runLeads({ db, researcher: r, focus: FOCUS });
+  const out = await leads.runLeads({ db, researcher: r, focus: FOCUS, checker: noCheck });
   assert.deepEqual(out, { found: 7, saved: 1, searches: 6 });
   const saved = await leads.listLeads(db);
   assert.equal(saved.length, 1);
@@ -53,19 +54,19 @@ await check('the next run in that market hears the last note and the owner\'s re
   const [l] = await leads.listLeads(db);
   assert.deepEqual(await leads.decideLead(db, { id: l.id, action: 'dismiss', reason: 'Too small for email hosting' }), { id: l.id, status: 'dismissed' });
   const r = fakeResearcher({ leads: [] });
-  await leads.runLeads({ db, researcher: r, focus: FOCUS });
+  await leads.runLeads({ db, researcher: r, focus: FOCUS, checker: noCheck });
   assert.match(r.seen[0].user, /Too small for email hosting/);
   assert.match(r.seen[0].user, /Braga directories were useful/);
   assert.match(r.seen[0].user, /Padaria Exemplo/);           // a dismissed lead is not found again
   assert.deepEqual(await leads.decideLead(db, { id: l.id, action: 'reopen' }), { id: l.id, status: 'new' });
 });
 
-await check('tracking a lead adds it to Auti\'s clients with a first contact in two days, once', async () => {
+await check('tracking a lead adds it to Auti\'s clients once and starts the outreach sequence today', async () => {
   const [l] = await leads.listLeads(db);
   const out = await leads.decideLead(db, { id: l.id, action: 'track' });
   assert.equal(out.status, 'tracking');
-  const c = (await db.query(`SELECT name, market, status, next_contact_due - current_date AS in_days, notes FROM clients WHERE id = $1`, [out.client_id])).rows[0];
-  assert.deepEqual({ ...c, notes: undefined }, { name: 'Padaria Exemplo', market: 'portugal', status: 'lead', in_days: 2, notes: undefined });
+  const c = (await db.query(`SELECT name, market, status, next_contact_due - current_date AS in_days, notes, outreach_step, outreach_lead_id FROM clients WHERE id = $1`, [out.client_id])).rows[0];
+  assert.deepEqual({ ...c, notes: undefined }, { name: 'Padaria Exemplo', market: 'portugal', status: 'lead', in_days: 0, notes: undefined, outreach_step: 1, outreach_lead_id: l.id });
   assert.match(c.notes, /gmail\.com/);
   const again = await leads.decideLead(db, { id: l.id, action: 'crm', crm_id: 'abc' });
   assert.equal(again.client_id, out.client_id);                // no second client
@@ -79,11 +80,11 @@ await check('the agent can be switched off, and stops when too many leads wait',
   assert.equal(await leads.leadsAgentOn(db), true);
   await leads.setLeadsAgent(db, false);
   const r = fakeResearcher({ leads: [good({ company: 'Never Saved' })] });
-  assert.equal((await leads.runLeads({ db, researcher: r, focus: FOCUS })).skipped, 'switched off');
+  assert.equal((await leads.runLeads({ db, researcher: r, focus: FOCUS, checker: noCheck })).skipped, 'switched off');
   assert.equal(r.seen.length, 0);                              // no call, no cost
   await leads.setLeadsAgent(db, true);
   for (let i = 0; i < 30; i++) await db.query(`INSERT INTO lead (company, market, fit, signals, services) VALUES ($1, 'uk', 3, 's', '{crm}')`, ['Waiting ' + i]);
-  assert.match((await leads.runLeads({ db, researcher: r, focus: FOCUS })).skipped, /30 leads already wait/);
+  assert.match((await leads.runLeads({ db, researcher: r, focus: FOCUS, checker: noCheck })).skipped, /30 leads already wait/);
   assert.equal(r.seen.length, 0);
   await db.query(`DELETE FROM lead WHERE company LIKE 'Waiting %'`);
 });
@@ -163,7 +164,7 @@ await check('the coordinator, the dashboard and the page see the leads', async (
 await check('the dashboard works before migration 008 has run', async () => {
   const fresh = new PGlite();
   await migrate(fresh, () => {});
-  await fresh.exec(`DROP TABLE lead_run, lead; DELETE FROM coordinator_config WHERE key = 'leads_focus'`);
+  await fresh.exec(`DROP TABLE lead_run, lead CASCADE; DELETE FROM coordinator_config WHERE key = 'leads_focus'`);
   const web = await import('../src/web.js');
   const d = await web.getDashboard(fresh);
   assert.deepEqual(d.leads, []);
@@ -194,6 +195,57 @@ await check('Today ranks what needs the owner, money and CRM changes first', asy
   assert.ok(!items.some((i) => /Far/.test(i.title)));                               // renewals beyond 14 days wait
   assert.equal(queue(data, null, String, String, () => {}, () => {}).filter((i) => i.kind === 'Overdue invoice').length, 0);   // no CRM, no money rows
   assert.match(PAGE, /id="side"/);
+});
+
+await check('angles come from the database, by weight, and Namibia is a market', async () => {
+  const angles = await leads.leadAngles(db);
+  assert.ok(angles.some((a) => a.market === 'namibia'));
+  assert.ok(angles.some((a) => /missed calls/.test(a.angle) && a.weight === 2));
+  const total = angles.reduce((n, a) => n + a.weight, 0);
+  const seen = new Map();
+  for (let d = 0; d < total; d++) { const f = leads.focusFor(new Date(Date.UTC(2026, 9, 4 + d)), angles); const k = f.market + ':' + f.angle; seen.set(k, (seen.get(k) || 0) + 1); }
+  const twice = angles.find((a) => a.weight === 2);
+  assert.equal(seen.get(twice.market + ':' + twice.angle), 2);                   // twice per rotation
+  assert.equal(seen.size, angles.length);
+  const r = fakeResearcher({ leads: [] });
+  await leads.runLeads({ db, researcher: r, now: new Date(Date.UTC(2026, 9, 4)), checker: noCheck });
+  assert.ok(angles.some((a) => r.seen[0].user.includes(a.angle)));              // the run took its angle from the table
+  assert.ok(leads.cleanLead({ ...good(), market: 'namibia', services: ['website', 'missed_calls'] }, 'namibia'));
+});
+
+await check('the evidence is checked in code: confirmed needs raise a lead, contradicted ones lower or drop it', async () => {
+  const { checkLead, adjustedFit } = await import('../src/verify.js');
+  const site = (html, { https = true } = {}) => async (url) => {
+    if (url.startsWith('https:') && !https) throw new Error('cert');
+    return new Response(html, { status: 200 });
+  };
+  const old = await checkLead({ website: 'https://www.oldshop.example/about', services: ['website', 'email'] },
+    { fetch: site('<html><body>Contact: oldshop@gmail.com · © 2015 Old Shop</body></html>', { https: false }), resolveMx: async () => [], now: new Date('2026-10-20') });
+  assert.equal(old.domain, 'oldshop.example');
+  assert.deepEqual(old.confirmed, ['website has no working HTTPS', 'website is not built for phones', 'website last dated 2015', 'shows oldshop@gmail.com as its address', 'oldshop.example receives no email']);
+  assert.equal(adjustedFit(3, old), 4);
+  const fine = await checkLead({ website: 'https://modern.example', services: ['email'] },
+    { fetch: site('<meta name="viewport" content="width=device-width"><p>hello@modern.example</p>'), resolveMx: async () => [{ priority: 1, exchange: 'modern-example.mail.protection.outlook.com' }] });
+  assert.deepEqual(fine.contradicted, ['already has business email (Microsoft 365)']);
+  assert.equal(adjustedFit(3, fine), 2);
+  const none = await checkLead({ website: null, services: ['website'] }, { fetch: async () => { throw new Error('no'); } });
+  assert.deepEqual(none.confirmed, ['no website of its own']);
+  const down = await checkLead({ website: 'https://gone.example', services: ['hosting'] }, { fetch: async () => { throw new Error('ECONNREFUSED'); }, resolveMx: async () => { const e = new Error('x'); e.code = 'ENOTFOUND'; throw e; } });
+  assert.match(down.confirmed[0], /website does not load/);
+
+  // In a run: the contradicted one is dropped, the confirmed one is saved higher, with its checks and domain.
+  const r = fakeResearcher({ leads: [good({ company: 'Old Shop', website: 'https://oldshop.example', services: ['website', 'email'], fit: 3 }),
+    good({ company: 'Modern Lda', website: 'https://modern.example', services: ['email'], fit: 3 })] });
+  const checker = async (ls) => ls.map((l) => (l.company === 'Old Shop' ? old : fine));
+  const out = await leads.runLeads({ db, researcher: r, focus: FOCUS, checker });
+  assert.deepEqual(out, { found: 2, saved: 1, searches: 6, dropped: 1 });
+  const row = (await db.query(`SELECT fit, domain, checks->'confirmed' AS confirmed FROM lead WHERE company = 'Old Shop'`)).rows[0];
+  assert.equal(row.fit, 4); assert.equal(row.domain, 'oldshop.example'); assert.equal(row.confirmed.length, 5);
+  assert.ok((await leads.listLeads(db)).find((l) => l.company === 'Old Shop').checks);
+  // The same website under another name is not saved twice, and the next run is told which sites are known.
+  const again = fakeResearcher({ leads: [good({ company: 'Old Shop Trading', website: 'http://www.oldshop.example/', services: ['website'] })] });
+  assert.equal((await leads.runLeads({ db, researcher: again, focus: FOCUS, checker: noCheck })).saved, 0);
+  assert.match(again.seen[0].user, /oldshop\.example/);
 });
 
 console.log(`\n${passed} passed`);

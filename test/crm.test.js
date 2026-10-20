@@ -29,7 +29,13 @@ function fakeCrm({ token = 'tok-1', deny = [] } = {}) {
     if (path === '/dashboard/summary') return json(200, { summary: { activeClients: 7, monthlyRecurringRevenue: 1250, revenueThisMonth: 900, outstandingInvoices: { count: 2, total: 300 }, expiringSubscriptions: 1 }, recentActivity: [] });
     if (path === '/dashboard/alerts') return json(200, { alerts: [{ type: 'expiring_subscription', severity: 'high', title: 'Hosting renews soon', message: 'Acme', password_hash: 'x' }] });
     if (path.startsWith('/subscriptions/expiring/list')) return json(200, { subscriptions: [{ id: ID(1), client_name: 'Acme', service_name: 'Email hosting', end_date: '2026-10-20', monthly_cost: '40.00', internal: 'hidden' }] });
-    if (path === '/invoices/overdue/list') return json(200, { invoices: [{ id: ID(2), client_name: 'Beta', invoice_number: 'INV-9', total: '150.00', currency: 'EUR', due_date: '2026-09-01' }] });
+    if (path.startsWith('/billing/invoices')) {
+      const all = [{ id: ID(2), customer_name: 'Beta', crm_client_id: ID(3), invoice_number: 'INV-9', status: 'overdue', total: '150.00', currency: 'EUR', due_date: '2026-09-01', pdf_secret: 'x' },
+        { id: ID(8), customer_name: 'Gamma', crm_client_id: ID(9), invoice_number: 'INV-10', status: 'paid', total: '80.00', currency: 'EUR' }];
+      const status = new URL('http://x' + path).searchParams.get('status');
+      return json(200, { invoices: all.filter((i) => !status || i.status === status), pagination: { total: 2 } });
+    }
+    if (path.startsWith('/invoices')) return json(404, { error: 'removed' });     // the old routes are gone in the CRM
     if (path.startsWith('/clients?')) return json(200, { clients: [{ id: ID(3), company_name: 'Acme', contact_name: 'Ana', email: 'ana@acme.test', status: 'active', active_subscriptions: '2', internal_notes: 'secret' }], pagination: { total: 1 } });
     if (path.startsWith('/opportunities')) return json(200, { opportunities: [{ id: ID(4), name: 'Domains for Beta', value: '500', stage_id: ID(6), pipeline_id: ID(5) }], pipelines: [{ id: ID(5), name: 'Sales', stages: [{ id: ID(6), name: 'Proposal', win_probability: 50 }] }] });
     if (init.method === 'POST' && path === '/clients') return json(201, { client: { id: ID(7), ...body } });
@@ -75,6 +81,7 @@ await check('the snapshot gathers money, renewals, overdue invoices and the pipe
   assert.equal(s.clients[0].internal_notes, undefined);
   assert.equal(s.alerts[0].password_hash, undefined);
   assert.equal(s.overdue_invoices[0].invoice_number, 'INV-9');
+  assert.equal(s.overdue_invoices[0].client_name, 'Beta');                        // customer_name in the billing module
   assert.equal(s.open_opportunities[0].stage, 'Proposal');
   assert.equal(s.pipeline_value, 500);
   assert.deepEqual(s.unavailable, []);
@@ -83,7 +90,7 @@ await check('the snapshot gathers money, renewals, overdue invoices and the pipe
 
 await check('a permission the Auti user lacks hides one section, not the whole CRM', async () => {
   crm.forgetCrmToken();
-  const s = await crm.crmSnapshot(crm.crmClient(opts(fakeCrm({ deny: ['/invoices'] }))));
+  const s = await crm.crmSnapshot(crm.crmClient(opts(fakeCrm({ deny: ['/billing/invoices'] }))));
   assert.deepEqual(s.overdue_invoices, []);
   assert.match(s.unavailable[0], /^overdue: .*not allowed/);
   assert.equal(s.summary.activeClients, 7);
@@ -127,6 +134,9 @@ await check('a change Auti proposes waits for the owner, then runs only on appro
   assert.match(p.summary, /Acme's CRM status to churned/);
   assert.equal(f.calls.filter((x) => x.method === 'PATCH').length, 0);              // nothing happened in the CRM yet
   assert.match((await tools.call('crm_propose_change', { kind: 'create_client', payload: { companyName: 'X' }, reason: 'r' })).error, /required/);
+  const inv = await tools.call('crm_invoices', { clientId: ID(3) });
+  assert.deepEqual(inv.invoices.map((i) => [i.invoice_number, i.client_name, i.client_id]), [['INV-9', 'Beta', ID(3)]]);   // billing module, mapped names
+  assert.equal(inv.invoices[0].pdf_secret, undefined);
 
   const web = await import('../src/web.js');
   const waiting = (await web.getDashboard(db)).crmRequests;

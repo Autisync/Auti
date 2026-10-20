@@ -21,6 +21,7 @@ npm run brief            # print the latest brief
 
 - `db/`: numbered migrations, applied in order and tracked in `schema_migrations`. Add a new file for any change; never edit an applied one.
 - `src/coordinator.js`: one run, which writes initiatives and journal lines in one transaction.
+- `src/projects.js`: the project companion (intake, brief, milestones, check-ins, health). `src/verify.js`: the free checks on a lead's site, email and DNS. `src/accounts.js`: collections and renewals drafts. `src/reports.js`: weekly and monthly reports.
 - `src/prompt.js`: the tool schema and the prompts. Standing instructions live in the `coordinator_config` table, not in code.
 - `.github/workflows/`: `ci.yml` (tests + privacy gate) and `coordinator.yml` (scheduled runs).
 
@@ -29,5 +30,5 @@ npm run brief            # print the latest brief
 - The repo is public. Company data lives only in `seed/private.sql` and the database. Never commit it, and never print brief content in CI logs (`JARVIS_QUIET`).
 - Never read out, log or commit secrets: `.env`, API keys, connection strings.
 - Initiatives created by the coordinator stay `awaiting_approval`. Don't remove the `CHECK` constraint or let the coordinator approve anything.
-- Automatic steps live in `src/autonomy.js`: each kind is validated in code, logged in `coordinator_action` and undoable. Only add a kind that is internal and reversible; anything that contacts a client, sends a document or spends money stays a proposal.
+- Automatic steps live in `src/autonomy.js`: each kind is validated in code, logged in `coordinator_action` and undoable. Only add a kind that is internal and reversible; anything that contacts a client, sends a document or spends money stays a proposal. Messages are drafts: "Send from the CRM" only runs on the owner's tap.
 - Keep the tests green, and add a test with every behaviour change.

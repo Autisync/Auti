@@ -1,13 +1,12 @@
 // POST /api/leads {id, action: track|dismiss|reopen, reason?} : the owner's decision on a lead.
-// POST /api/leads {id, action: 'crm', contactName, email, phone} : add the lead to the CRM as a client, then track it.
+// POST /api/leads {id, action: 'crm', email, contactName?, phone?} : add the lead to the CRM as a client, then track it.
 // POST /api/leads {enabled}                                      : switch the leads agent on or off.
 import { guard, getDb } from './_shared.js';
-import { decideLead, setLeadsAgent, leadNotes } from '../src/leads.js';
-import { applyCrmChange, crmClient, crmConfigured } from '../src/crm.js';
+import { decideLead, setLeadsAgent, leadNotes, COUNTRY } from '../src/leads.js';
+import { applyCrmChange, crmClient, crmConfigured, proposeCrmChange } from '../src/crm.js';
 
 export const config = { maxDuration: 30 };
 
-const COUNTRY = { angola: 'Angola', uk: 'United Kingdom', portugal: 'Portugal' };
 
 export default async function handler(req, res) {
   if (!guard(req, res)) return;
@@ -25,12 +24,13 @@ export default async function handler(req, res) {
       if (!l) return res.status(404).json({ error: 'No such lead.' });
       if (l.status === 'in_crm') return res.status(409).json({ error: 'Already in the CRM.' });
       const out = await applyCrmChange(crmClient(), 'create_client', {
-        companyName: l.company, contactName: body.contactName, email: body.email, phone: body.phone,
+        companyName: l.company, contactName: body.contactName || undefined, email: body.email, phone: body.phone || undefined,
         country: COUNTRY[l.market], city: l.city || undefined, website: l.website || undefined, notes: leadNotes(l),
       });
       crmId = out?.client?.id || out?.id || null;
     }
-    const out = await decideLead(db, { id: body.id, action: body.action, reason: body.reason, crm_id: crmId });
+    const out = await decideLead(db, { id: body.id, action: body.action, reason: body.reason, crm_id: crmId,
+      proposeCrm: crmConfigured() ? (tx, change) => proposeCrmChange(tx, change) : null });
     if (!out) return res.status(404).json({ error: 'No such lead.' });
     res.status(200).json(out);
   } catch (err) {

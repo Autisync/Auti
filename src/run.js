@@ -1,4 +1,4 @@
-// Entry point for the scheduler:  node src/run.js nightly|standup|retention|leads
+// Entry point for the scheduler:  node src/run.js nightly|standup|retention|accounts|leads|report
 // In CI (GitHub Actions) logs can be public, so the brief's content is never
 // printed there; only counts. Read the brief with `npm run brief` instead.
 import { connect } from './db.js';
@@ -9,6 +9,10 @@ import { runRetention } from './retention.js';
 import { runLeads } from './leads.js';
 import { crmClient, crmConfigured, crmSnapshot, syncCrmClients } from './crm.js';
 import { chooseModel, agentModels } from './models.js';
+import { askCheckins } from './projects.js';
+import { runAccounts } from './accounts.js';
+import { runReport, reportsDue } from './reports.js';
+import { CHEAP } from './models.js';
 
 const mode = process.argv[2] || 'nightly';
 const quiet = process.env.CI === 'true' || process.env.JARVIS_QUIET === '1';
@@ -37,6 +41,13 @@ async function coordinator() {
   } catch (err) {
     console.error(`github sync skipped: ${err.message}`);
   }
+  // Projects that went quiet for their check-in period get a question for the owner. Counts only in the log.
+  try {
+    const c = await askCheckins(db);
+    if (c.asked) console.log(`projects: asked ${c.asked} check-in(s)`);
+  } catch (err) {
+    console.error(`project check-ins skipped: ${err.message}`);
+  }
   // The CRM is read before thinking. A failure never blocks the run; only whether it worked is printed, never data.
   let crm = null;
   if (crmConfigured()) {
@@ -49,7 +60,7 @@ async function coordinator() {
     // Then copy the CRM's clients into Auti's own list, so the Clients tab and the retention agent see them.
     try {
       const sync = await syncCrmClients(db, crmClient());
-      console.log(`crm clients: seen=${sync.seen} added=${sync.added} updated=${sync.updated} linked=${sync.linked}`);
+      console.log(`crm clients: seen=${sync.seen} added=${sync.added} updated=${sync.updated} linked=${sync.linked}${sync.inbound ? ` new_enquiries=${sync.inbound}` : ''}`);
     } catch (err) {
       console.error(`crm client sync skipped: ${err.message}`);
     }
@@ -83,14 +94,43 @@ async function retention() {
   console.log(`[${new Date().toISOString()}] retention done. clients_due=${out.considered} drafts=${out.drafted}`);
 }
 
+// Collections and renewals from the CRM. Drafts only. Needs the CRM; counts only in the log.
+async function accounts() {
+  if (!crmConfigured()) return console.log('accounts: skipped, the CRM is not connected');
+  const crm = await crmSnapshot(crmClient());
+  const out = await runAccounts({ db, brain: claudeBrain({ model: process.env.AUTI_ACCOUNTS_MODEL || CHEAP }), crm });
+  console.log(`[${new Date().toISOString()}] accounts done. items=${out.considered} drafts=${out.drafted}`);
+}
+
+// Mondays the weekly report, the 1st the monthly one (REPORT=week|month forces one). Saved in the database only.
+async function report() {
+  const kinds = process.env.REPORT ? [process.env.REPORT] : reportsDue();
+  if (!kinds.length) return console.log('report: none due today');
+  let crm = null, ads = null;
+  if (crmConfigured()) {
+    try { crm = await crmSnapshot(crmClient()); } catch (err) { console.error(`report: crm skipped: ${err.message}`); }
+    for (const k of kinds) {
+      try { ads = await crmClient().get(`/ads?days=${k === 'month' ? 30 : 7}`); } catch (err) { console.error(`report: ads skipped: ${err.message}`); }
+      const out = await runReport({ db, brain: claudeBrain({ model: process.env.AUTI_REPORT_MODEL || CHEAP }), kind: k, crm, ads });
+      console.log(`[${new Date().toISOString()}] ${k} report ${out.skipped ? 'skipped: ' + out.skipped : 'written'}`);
+    }
+    return;
+  }
+  for (const k of kinds) {
+    const out = await runReport({ db, brain: claudeBrain({ model: process.env.AUTI_REPORT_MODEL || CHEAP }), kind: k });
+    console.log(`[${new Date().toISOString()}] ${k} report ${out.skipped ? 'skipped: ' + out.skipped : 'written'}`);
+  }
+}
+
 async function leads() {
   // Research only; nothing is ever sent. Counts only, never company names.
   const out = await withModel('leads', (model) => claudeResearcher({ model }), (researcher) => runLeads({ db, researcher }));
-  console.log(`[${new Date().toISOString()}] leads done. ` + (out.skipped ? `skipped: ${out.skipped}` : `found=${out.found} saved=${out.saved} searches=${out.searches}`));
+  console.log(`[${new Date().toISOString()}] leads done. ` + (out.skipped ? `skipped: ${out.skipped}` : `found=${out.found} saved=${out.saved} searches=${out.searches}${out.dropped ? ` dropped_by_checks=${out.dropped}` : ''}`));
 }
 
 try {
-  await (mode === 'retention' ? retention() : mode === 'leads' ? leads() : coordinator());
+  const MODES = { retention, leads, accounts, report };
+  await (MODES[mode] ? MODES[mode]() : coordinator());
 } catch (err) {
   console.error(`[${new Date().toISOString()}] ${mode} run failed: ${err.message}`);
   process.exitCode = 1;
