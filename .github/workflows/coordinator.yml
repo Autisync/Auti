@@ -18,6 +18,11 @@ on:
         type: choice
         options: [nightly, standup]
         default: nightly
+      focus:
+        description: What the leads agent looks for (nightly runs only)
+        type: choice
+        options: [rotation, uk-trades, uk, portugal, angola, namibia]
+        default: rotation
 
 # Never two runs at once; a late run waits instead of overlapping.
 concurrency:
@@ -93,6 +98,8 @@ jobs:
         if: steps.mode.outputs.mode == 'nightly'
         continue-on-error: true
         timeout-minutes: 15          # web research is slow (about 12 minutes for 8 searches); a slow run is cut here, never the whole job
+        env:
+          LEADS_FOCUS: ${{ inputs.focus || 'rotation' }}   # uk-trades: UK trades losing calls, for CallCatch
         run: node src/run.js leads
       # Mondays the weekly report, the 1st the monthly one. Saved in the database (Documents tab); nothing is printed.
       - name: Reports

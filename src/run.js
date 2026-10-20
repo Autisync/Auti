@@ -6,7 +6,7 @@ import { claudeBrain, claudeResearcher } from './llm.js';
 import { runCoordinator } from './coordinator.js';
 import { syncGithub } from './github.js';
 import { runRetention } from './retention.js';
-import { runLeads } from './leads.js';
+import { focusByChoice, leadAngles, runLeads } from './leads.js';
 import { crmClient, crmConfigured, crmSnapshot, syncCrmClients } from './crm.js';
 import { chooseModel, agentModels } from './models.js';
 import { askCheckins } from './projects.js';
@@ -124,7 +124,10 @@ async function report() {
 
 async function leads() {
   // Research only; nothing is ever sent. Counts only, never company names.
-  const out = await withModel('leads', (model) => claudeResearcher({ model }), (researcher) => runLeads({ db, researcher }));
+  // LEADS_FOCUS (the workflow's "focus" input) can point one run at an angle, e.g. UK trades for CallCatch.
+  const focus = focusByChoice(process.env.LEADS_FOCUS, new Date(), await leadAngles(db));
+  if (focus) console.log(`[${new Date().toISOString()}] leads focus: ${focus.market} (chosen)`);
+  const out = await withModel('leads', (model) => claudeResearcher({ model }), (researcher) => runLeads({ db, researcher, focus }));
   console.log(`[${new Date().toISOString()}] leads done. ` + (out.skipped ? `skipped: ${out.skipped}` : `found=${out.found} saved=${out.saved} searches=${out.searches}${out.dropped ? ` dropped_by_checks=${out.dropped}` : ''}`));
 }
 
