@@ -1005,50 +1005,54 @@ function viewClients(root) {
       ['notes', 'Notes', 'textarea'],
     ], 'Add client', async (v) => { await post('/api/client', v); addingClient = false; await load(); }, () => { addingClient = false; draw(); })));
   }
-  filtered(root, 'Clients', data.clients,
-    [['all', 'All'], ['attention', 'Needs contact'], ['active', 'Active & leads'], ['lost', 'Lost']],
-    (c, k) => k === 'attention' ? c.flag && c.flag !== 'ok' : k === 'active' ? ['active', 'lead'].includes(c.status) : c.status === k,
-    (c) => {
-      const el = $('div', 'card row');
-      const t = $('div', 'item-title', c.name);
-      t.append($('span', 'tag' + (c.status === 'lost' ? ' bad' : c.status === 'active' ? ' ok' : ''), c.status));
-      if (c.flag === 'overdue') t.append($('span', 'tag bad', 'overdue'));
-      if (c.flag === 'no_next_contact') t.append($('span', 'tag warn', 'no next contact'));
-      const meta = $('div', 'meta', 'last contact ' + ago(c.last_contact_at));
-      if (c.next_contact_due) meta.append($('div', null, 'next ' + day(c.next_contact_due)));
-      if (c.contact_every_days) meta.append($('div', null, 'every ' + c.contact_every_days + ' d'));
-      el.append(t, meta, $('div', 'desc', [human(c.market), c.sector, c.owner, c.lost_reason ? 'lost: ' + c.lost_reason : null].filter(Boolean).join(' · ')));
-      if (c.contacts?.length) {
-        const ul = $('ul', 'contacts');
-        c.contacts.forEach((x) => { const li = $('li'); li.append($('span', 'when', day(x.happened_at) + (x.channel ? ' · ' + x.channel : '')), document.createTextNode(x.summary)); ul.append(li); });
-        el.append(ul);
-      }
-      const acts = $('div', 'acts');
-      const open = (mode) => { clientForm = clientForm?.id === c.id && clientForm.mode === mode ? null : { id: c.id, mode }; draw(); };
-      if (c.status !== 'lost') { const b = $('button', 'mini go', 'Log contact'); b.onclick = () => open('contact'); acts.append(b); }
-      (CLIENT_MOVES[c.status] || []).forEach(([status, label]) => {
-        const b = $('button', 'mini', label);
-        b.onclick = async () => { b.disabled = true; try { await post('/api/client', { id: c.id, status }); await load(); } catch (e) { b.disabled = false; acts.append($('span', 'error', e.message)); } };
-        acts.append(b);
-      });
-      if (c.status !== 'lost') { const b = $('button', 'mini', 'Lost…'); b.onclick = () => open('lost'); acts.append(b); }
-      el.append(acts);
-      const done = async () => { clientForm = null; await load(); };
-      const cancel = () => { clientForm = null; draw(); };
-      if (clientForm?.id === c.id && clientForm.mode === 'contact') {
-        el.append(formCard([
-          ['summary', 'What happened', 'textarea', null, { required: true }],
-          ['channel', 'How', 'select', CHANNELS],
-          ['next_contact_due', 'Next contact', 'date', null, { value: inDays(c.contact_every_days || 14) }],
-        ], 'Save contact', async (v) => { await post('/api/client', { client_id: c.id, ...v }); await done(); }, cancel));
-      }
-      if (clientForm?.id === c.id && clientForm.mode === 'lost') {
-        el.append(formCard([['lost_reason', 'Why was it lost?', 'textarea', null, { required: true }]],
-          'Mark lost', async (v) => { await post('/api/client', { id: c.id, status: 'lost', ...v }); await done(); }, cancel));
-      }
-      return el;
-    });
-  if (!data.clients.length) root.append(emptyCard('No clients recorded yet. Add them so Auti can watch retention.'));
+  // Only active clients and prospects live here; leads not yet in the CRM are on the Leads tab, and paused or lost clients are kept but not shown.
+  const shown = data.clients.filter((c) => ['active', 'prospect'].includes(c.kind));
+  filtered(root, 'Clients', shown,
+    [['all', 'All'], ['attention', 'Needs contact'], ['active', 'Active'], ['prospect', 'Prospects']],
+    (c, k) => k === 'attention' ? c.flag && c.flag !== 'ok' : c.kind === k,
+    clientCard);
+  if (!shown.length) root.append(emptyCard('No active clients or prospects yet. They come in from the CRM on each run, or add one here.'));
+}
+
+function clientCard(c) {
+  const el = $('div', 'card row');
+  const t = $('div', 'item-title', c.name);
+  t.append($('span', 'tag' + (c.status === 'lost' ? ' bad' : c.status === 'active' ? ' ok' : ''), c.kind || c.status));
+  if (c.flag === 'overdue') t.append($('span', 'tag bad', 'overdue'));
+  if (c.flag === 'no_next_contact') t.append($('span', 'tag warn', 'no next contact'));
+  const meta = $('div', 'meta', 'last contact ' + ago(c.last_contact_at));
+  if (c.next_contact_due) meta.append($('div', null, 'next ' + day(c.next_contact_due)));
+  if (c.contact_every_days) meta.append($('div', null, 'every ' + c.contact_every_days + ' d'));
+  el.append(t, meta, $('div', 'desc', [human(c.market), c.sector, c.owner, c.lost_reason ? 'lost: ' + c.lost_reason : null].filter(Boolean).join(' · ')));
+  if (c.contacts?.length) {
+    const ul = $('ul', 'contacts');
+    c.contacts.forEach((x) => { const li = $('li'); li.append($('span', 'when', day(x.happened_at) + (x.channel ? ' · ' + x.channel : '')), document.createTextNode(x.summary)); ul.append(li); });
+    el.append(ul);
+  }
+  const acts = $('div', 'acts');
+  const open = (mode) => { clientForm = clientForm?.id === c.id && clientForm.mode === mode ? null : { id: c.id, mode }; draw(); };
+  if (c.status !== 'lost') { const b = $('button', 'mini go', 'Log contact'); b.onclick = () => open('contact'); acts.append(b); }
+  (CLIENT_MOVES[c.status] || []).forEach(([status, label]) => {
+    const b = $('button', 'mini', label);
+    b.onclick = async () => { b.disabled = true; try { await post('/api/client', { id: c.id, status }); await load(); } catch (e) { b.disabled = false; acts.append($('span', 'error', e.message)); } };
+    acts.append(b);
+  });
+  if (c.status !== 'lost') { const b = $('button', 'mini', 'Lost…'); b.onclick = () => open('lost'); acts.append(b); }
+  el.append(acts);
+  const done = async () => { clientForm = null; await load(); };
+  const cancel = () => { clientForm = null; draw(); };
+  if (clientForm?.id === c.id && clientForm.mode === 'contact') {
+    el.append(formCard([
+      ['summary', 'What happened', 'textarea', null, { required: true }],
+      ['channel', 'How', 'select', CHANNELS],
+      ['next_contact_due', 'Next contact', 'date', null, { value: inDays(c.contact_every_days || 14) }],
+    ], 'Save contact', async (v) => { await post('/api/client', { client_id: c.id, ...v }); await done(); }, cancel));
+  }
+  if (clientForm?.id === c.id && clientForm.mode === 'lost') {
+    el.append(formCard([['lost_reason', 'Why was it lost?', 'textarea', null, { required: true }]],
+      'Mark lost', async (v) => { await post('/api/client', { id: c.id, status: 'lost', ...v }); await done(); }, cancel));
+  }
+  return el;
 }
 
 function viewAgents(root) {
@@ -1477,6 +1481,9 @@ function viewLeads(root) {
     stat(count((l) => l.status === 'tracking' || l.status === 'in_crm'), 'Taken on (30 days)', false, 'leads'),
   );
   root.append(stats);
+  // Leads Auti is following up that are not in the CRM yet (tracked from here or added by hand). Adding one to the CRM makes it a prospect on Clients.
+  const following = (data.clients || []).filter((c) => c.kind === 'lead');
+  if (following.length) root.append(section('Leads you are following', ...following.map(clientCard)));
   if (!leads.length) {
     root.append(section('Leads', emptyCard(data.leadsOn == null
       ? 'The leads agent starts after the next overnight run. It searches one market a day, so all three are covered within a week.'

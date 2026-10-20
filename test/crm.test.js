@@ -203,6 +203,12 @@ await check('CRM clients are copied into Auti: added, linked by name, updated, a
   assert.match(acme.lost_reason, /CRM/);
   assert.equal((await sdb.query(`SELECT status FROM clients WHERE crm_id = '13'`)).rows[0].status, 'lead');
   assert.equal((await sdb.query('SELECT count(*)::int AS n FROM clients')).rows[0].n, 3);
+
+  // The dashboard tells prospects (in the CRM) from leads only Auti knows, so Clients shows active and prospects and Leads the rest.
+  await sdb.query(`INSERT INTO clients (name, market, status) VALUES ('Delta', 'uk', 'lead')`);
+  const web = await import('../src/web.js');
+  const kinds = Object.fromEntries((await web.getDashboard(sdb)).clients.map((c) => [c.name, c.kind]));
+  assert.deepEqual(kinds, { Acme: 'lost', 'beta lda': 'active', Gamma: 'prospect', Delta: 'lead' });
 });
 
 await check('Vercel deploys at most 12 functions, and every folded endpoint is routed', async () => {
