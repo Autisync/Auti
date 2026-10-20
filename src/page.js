@@ -1005,13 +1005,13 @@ function viewClients(root) {
       ['notes', 'Notes', 'textarea'],
     ], 'Add client', async (v) => { await post('/api/client', v); addingClient = false; await load(); }, () => { addingClient = false; draw(); })));
   }
-  // Only active clients and prospects live here; leads not yet in the CRM are on the Leads tab, and paused or lost clients are kept but not shown.
-  const shown = data.clients.filter((c) => ['active', 'prospect'].includes(c.kind));
+  // Only active clients live here; prospects and leads are on the Leads tab, and paused or lost clients are kept but not shown.
+  const shown = data.clients.filter((c) => c.status === 'active');
   filtered(root, 'Clients', shown,
-    [['all', 'All'], ['attention', 'Needs contact'], ['active', 'Active'], ['prospect', 'Prospects']],
-    (c, k) => k === 'attention' ? c.flag && c.flag !== 'ok' : c.kind === k,
+    [['all', 'All'], ['attention', 'Needs contact']],
+    (c, k) => c.flag && c.flag !== 'ok',
     clientCard);
-  if (!shown.length) root.append(emptyCard('No active clients or prospects yet. They come in from the CRM on each run, or add one here.'));
+  if (!shown.length) root.append(emptyCard('No active clients yet. They come in from the CRM on each run, or add one here.'));
 }
 
 function clientCard(c) {
@@ -1481,9 +1481,9 @@ function viewLeads(root) {
     stat(count((l) => l.status === 'tracking' || l.status === 'in_crm'), 'Taken on (30 days)', false, 'leads'),
   );
   root.append(stats);
-  // Leads Auti is following up that are not in the CRM yet (tracked from here or added by hand). Adding one to the CRM makes it a prospect on Clients.
-  const following = (data.clients || []).filter((c) => c.kind === 'lead');
-  if (following.length) root.append(section('Leads you are following', ...following.map(clientCard)));
+  // Prospects from the CRM and leads Auti is following up (tracked from here or added by hand). Making one active moves it to Clients.
+  const following = (data.clients || []).filter((c) => c.status === 'lead');
+  if (following.length) root.append(section('Prospects and leads you are following', ...following.map(clientCard)));
   if (!leads.length) {
     root.append(section('Leads', emptyCard(data.leadsOn == null
       ? 'The leads agent starts after the next overnight run. It searches one market a day, so all three are covered within a week.'
