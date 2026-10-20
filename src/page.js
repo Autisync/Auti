@@ -683,6 +683,12 @@ function decisionQueue() {
   if (crm) {
     crm.overdue_invoices.slice(0, 3).forEach((i) => add('now', 'Overdue invoice', (i.client_name || 'A client') + ' · ' + money(i.total, i.currency),
       'Invoice ' + (i.invoice_number || '') + (i.due_date ? ' was due ' + day(i.due_date) : ''), 'Chase', () => openChat('assistant', 'Help me chase the overdue invoice ' + (i.invoice_number || '') + ' from ' + (i.client_name || 'this client') + ': ')));
+    // New clients waiting on us: an onboarding step past its date (from the steps set up on their CRM card).
+    (crm.onboarding || []).filter((o) => o.overdue.length).slice(0, 3).forEach((o) => add('now', 'Onboarding', o.client + ': ' + o.overdue[0].step,
+      o.overdue[0].days + ' day' + (o.overdue[0].days === 1 ? '' : 's') + ' late' + (o.overdue.length > 1 ? ', ' + (o.overdue.length - 1) + ' more step' + (o.overdue.length > 2 ? 's' : '') + ' late' : ''),
+      'Open', () => { go('crm'); setTimeout(() => document.getElementById('crm-onboarding')?.scrollIntoView({ behavior: 'smooth' }), 80); }));
+    if (crm.draft_invoices?.count) add('now', 'Invoices to send', crm.draft_invoices.count + ' draft invoice' + (crm.draft_invoices.count > 1 ? 's' : '') + ' not issued yet',
+      'Raised from subscriptions or a set-up' + (crm.draft_invoices.oldest_days ? ', oldest ' + crm.draft_invoices.oldest_days + ' days' : '') + ': issue and send them from Billing in the CRM', 'Open', () => go('crm'));
     crm.expiring_subscriptions.filter((s) => !s.end_date || (new Date(s.end_date) - Date.now()) < 14 * 864e5).slice(0, 3)
       .forEach((s) => add('soon', 'Renewal', (s.client_name || 'A client') + ' · ' + (s.service_name || 'service'), 'Ends ' + (s.end_date ? day(s.end_date) : 'soon') + (s.auto_renew ? ', renews automatically' : ', no auto-renew'), 'Open', () => { go('crm'); setTimeout(() => document.getElementById('crm-renewals')?.scrollIntoView({ behavior: 'smooth' }), 80); }));
   }
@@ -790,6 +796,7 @@ function viewOverview(root) {
   // The money and sales detail behind the numbers, for the decisions above.
   if (crm) {
     const mini = (rows, cells) => { const ul = $('ul', 'mini-list'); rows.forEach((r) => { const li = $('li'); cells(r).forEach((c, i) => li.append($('span', i ? 'r' : null, c))); ul.append(li); }); return ul; };
+    if ((crm.onboarding || []).length) right.append(section('Onboarding', card(mini(crm.onboarding.slice(0, 5), (x) => [x.client + ' · ' + (x.next_step || ''), x.overdue.length ? x.overdue[0].days + 'd late' : (x.next_due ? day(x.next_due) : '')]))));
     if (crm.expiring_subscriptions.length) right.append(section('Renewals next', card(mini(crm.expiring_subscriptions.slice(0, 5), (x) => [(x.client_name || '') + ' · ' + (x.service_name || ''), x.end_date ? day(x.end_date) : '']))));
     if (crm.overdue_invoices.length) right.append(section('Money owed', card(mini(crm.overdue_invoices.slice(0, 5), (x) => [x.client_name || x.invoice_number || '', money(x.total, x.currency)]))));
     if (crm.open_opportunities.length) right.append(section('Pipeline', card(mini([...crm.open_opportunities].sort((x, y) => Number(y.value || 0) - Number(x.value || 0)).slice(0, 5), (x) => [x.name + (x.stage ? ' · ' + x.stage : ''), money(x.value)]))));
@@ -1780,6 +1787,15 @@ function viewCrm(root) {
     ? crmTable('crm:renewals', [['client_name', 'Client'], ['service_name', 'Service'], ['end_date', 'Ends', (v) => v ? day(v) : ''], ['monthly_cost', 'Monthly', (v) => money(v)], ['auto_renew', 'Auto-renew', (v) => v ? 'yes' : 'no']], d.expiring_subscriptions)
     : emptyCard('Nothing renews in the next 45 days.'));
   renew.id = 'crm-renewals'; root.append(renew);
+  // New clients being set up: the onboarding steps on their CRM cards, the next one and any running late.
+  const onb = section('Onboarding', (d.onboarding || []).length
+    ? crmTable('crm:onboarding', [['client', 'Client'], ['next_step', 'Next step'], ['next_due', 'Due', (v) => v ? day(v) : ''], ['overdue', 'Late', (v) => v.length ? v.length + ' step' + (v.length > 1 ? 's' : '') + ', ' + v[0].days + 'd' : '']], d.onboarding)
+    : emptyCard('Nobody is being set up. Accept a proposal in the CRM and press Set it all up to start their onboarding steps.'));
+  onb.id = 'crm-onboarding'; root.append(onb);
+  if (d.draft_invoices?.count) {
+    const dr = section('Draft invoices to send', crmTable('crm:drafts', [['client_name', 'Client'], ['invoice_number', 'Invoice'], ['issue_date', 'Raised', (v) => v ? day(v) : ''], ['total', 'Total', (v, r) => money(v, r.currency)]], d.draft_invoices.invoices));
+    dr.id = 'crm-drafts'; root.append(dr);
+  }
   const overdue = section('Overdue invoices', d.overdue_invoices.length
     ? crmTable('crm:overdue', [['client_name', 'Client'], ['invoice_number', 'Invoice'], ['due_date', 'Due', (v) => v ? day(v) : ''], ['total', 'Total', (v, r) => money(v, r.currency)], ['amount_paid', 'Paid', (v, r) => money(v, r.currency)]], d.overdue_invoices)
     : emptyCard('No overdue invoices.'));
