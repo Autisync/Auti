@@ -13,6 +13,8 @@ export function worldFingerprint(c) {
     projects: c.projects, goingCold: c.goingCold, overdue: c.overdue, openTasksByProject: c.openTasksByProject,
     clientWatch: c.clientWatch, clients: c.clients, recentContacts: c.recentContacts, documents: c.documents,
     leads: c.leads, crm: c.crm ?? null, config: c.config,
+    // Projects by what changed for them, not by percentages that tick on with the clock.
+    projectFollow: (c.projectFollow || []).map((p) => ({ name: p.name, status: p.status, note: p.status_note, flags: p.health?.flags, waiting: p.checkin_waiting })),
     initiatives: (c.initiatives || []).filter((i) => !mine(i)),
     journal: (c.journal || []).filter((j) => j.author !== 'coordinator'),
   };

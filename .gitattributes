@@ -1,0 +1,5 @@
+# Line endings: LF in the repository and the working tree on every machine, so a Windows checkout
+# never shows whole files as changed.
+* text=auto eol=lf
+*.png binary
+*.ico binary

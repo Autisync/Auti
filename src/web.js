@@ -6,6 +6,8 @@ import { voiceUsage } from './voice.js';
 import { normaliseRepo } from './github.js';
 import { repairWeakestLink } from './coordinator.js';
 import { crmConfigured } from './crm.js';
+import { GAP } from './retention.js';
+import { milestonesByProject, openCheckins, projectHealth, ymd } from './projects.js';
 import { listLeads, leadsAgentOn } from './leads.js';
 
 // Two ways in, both checked against DASHBOARD_PASSWORD:
@@ -56,11 +58,21 @@ export async function getDashboard(db) {
   const lastRun = (await db.query(`
     SELECT mode, started_at, finished_at, error IS NOT NULL AS failed
       FROM coordinator_run ORDER BY started_at DESC LIMIT 1`)).rows[0] || null;
-  const projects = (await db.query(`
-    SELECT p.id, p.name, p.description, p.phase, p.github_repo, p.markets::text[] AS markets, p.last_activity_at, p.target_date,
+  const projectSql = (extra) => `
+    SELECT p.id, p.name, p.description, p.phase, p.github_repo, p.markets::text[] AS markets, p.last_activity_at, p.target_date${extra},
            (SELECT count(*)::int FROM tasks t WHERE t.project_id = p.id AND t.state NOT IN ('done', 'cancelled')) AS open_tasks,
            EXISTS (SELECT 1 FROM v_projects_going_cold c WHERE c.id = p.id) AS going_cold
-      FROM projects p WHERE p.phase <> 'closed' ORDER BY p.name`)).rows;
+      FROM projects p WHERE p.phase <> 'closed' ORDER BY p.name`;
+  // The companion's columns arrive with migration 012; until the next run applies it, the page loads without them.
+  const projects = (await db.query(projectSql(`, p.goals IS NOT NULL AS has_intake, p.work_status, p.status_note, p.start_date,
+           p.budget, p.budget_currency, p.budget_spent, p.checkin_after_days, p.status_at, p.brief_at IS NOT NULL AS has_brief`))
+    .catch((err) => { if (err.code === '42703') return db.query(projectSql('')); throw err; })).rows;
+  const ms = await milestonesByProject(db);
+  for (const p of projects) {
+    p.health = p.work_status ? projectHealth({ ...p, goals: p.has_intake ? 'yes' : null }, ms.get(p.id) || []) : null;
+    p.target_date = ymd(p.target_date); p.start_date = ymd(p.start_date);
+  }
+  const checkins = await openCheckins(db);
   const clients = (await db.query(`
     SELECT c.id, c.name, c.market, c.sector, c.status, c.last_contact_at,
            -- A lead that is in the CRM is a prospect (Clients tab); one only Auti knows about is a lead (Leads tab).
@@ -87,7 +99,8 @@ export async function getDashboard(db) {
   // Tolerates the follow_up table not existing yet: Vercel can deploy before the next run applies migration 004.
   const followUps = (await db.query(`
     SELECT f.id, f.channel, f.subject, f.body, f.rationale, f.created_at, c.id AS client_id, c.name AS client, c.market,
-           extract(day FROM c.contact_interval)::int AS contact_every_days
+           extract(day FROM c.contact_interval)::int AS contact_every_days, f.created_by_agent AS agent,
+           to_jsonb(f)->'step' AS step, to_jsonb(f)->>'ref' AS ref, to_jsonb(c)->>'crm_id' AS crm_id
       FROM follow_up f JOIN clients c ON c.id = f.client_id
      WHERE f.status = 'awaiting_approval' ORDER BY f.created_at`).catch((err) => {
       if (err.code === '42P01') return { rows: [] };
@@ -116,7 +129,7 @@ export async function getDashboard(db) {
   return {
     latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools(),
     actions, autonomy: autonomy ? autonomy.enabled : null,   // null: not set up yet
-    crmRequests, crmOn: crmConfigured(), leads, leadsOn, voice,
+    crmRequests, crmOn: crmConfigured(), leads, leadsOn, voice, checkins,
   };
 }
 
@@ -279,25 +292,42 @@ export async function setProjectRepo(db, { id, github_repo } = {}) {
 
 // The owner's call on a drafted follow-up. "sent" means the owner sent it (Auti never does):
 // it saves the final text and logs a touchpoint, which moves the client's next contact date.
-export async function decideFollowUp(db, { id, decision, body, next_contact_due } = {}) {
-  if (!['sent', 'drop'].includes(decision)) throw new Error('decision must be sent or drop');
+// The owner's call on a draft. 'sent' logs the contact (sent_via 'crm' when the CRM sent it); for an outreach touch it
+// also schedules the next touch, or ends the sequence after the fourth. 'replied' means the business answered before
+// this draft went out: the sequence stops, the reply is logged, and the draft is dropped.
+export async function decideFollowUp(db, { id, decision, body, next_contact_due, sent_via = 'owner', subject } = {}) {
+  if (!['sent', 'drop', 'replied'].includes(decision)) throw new Error('decision must be sent, drop or replied');
+  if (!['owner', 'crm'].includes(sent_via)) throw new Error('sent_via must be owner or crm');
   if (!UUID.test(String(id))) throw new Error('bad follow-up id');
   if (next_contact_due && !DAY.test(String(next_contact_due))) throw new Error('next contact must be YYYY-MM-DD');
   const text = String(body ?? '').trim();
   if (text.length > 8000) throw new Error('message is too long');
   return db.transaction(async (tx) => {
     const f = (await tx.query(
-      `UPDATE follow_up SET status = $2::follow_up_status, decided_at = now(), body = COALESCE(NULLIF($3, ''), body)
-        WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, client_id, channel, subject, body`,
-      [id, decision === 'sent' ? 'sent' : 'dropped', decision === 'sent' ? text : ''])).rows[0];
+      `UPDATE follow_up SET status = $2::follow_up_status, decided_at = now(), body = COALESCE(NULLIF($3, ''), body),
+              subject = COALESCE(NULLIF($5, ''), subject),
+              sent_via = CASE WHEN $2 = 'sent' THEN $4 ELSE sent_via END
+        WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, client_id, channel, subject, body, step`,
+      [id, decision === 'sent' ? 'sent' : 'dropped', decision === 'sent' ? text : '', sent_via, String(subject ?? '').trim().slice(0, 300)])).rows[0];
     if (!f) return null;
+    if (decision === 'replied') {
+      await tx.query(`INSERT INTO client_touchpoint (client_id, channel, summary) VALUES ($1, $2, 'They replied.')`, [f.client_id, f.channel]);
+      await tx.query(`UPDATE clients SET outreach_step = NULL, outreach_ended = 'replied', next_contact_due = COALESCE($2::date, current_date + 2) WHERE id = $1`,
+        [f.client_id, next_contact_due || null]);
+      return { id: f.id, status: 'dropped', replied: true };
+    }
     if (decision === 'sent') {
       const summary = `Sent follow-up${f.subject ? ` "${f.subject}"` : ''}: ${f.body.length > 300 ? f.body.slice(0, 297) + '...' : f.body}`;
       const tp = (await tx.query(
         `INSERT INTO client_touchpoint (client_id, channel, summary) VALUES ($1, $2, $3) RETURNING id`,
         [f.client_id, f.channel, summary])).rows[0];
       await tx.query(`UPDATE follow_up SET touchpoint_id = $2 WHERE id = $1`, [f.id, tp.id]);
-      if (next_contact_due) await tx.query(`UPDATE clients SET next_contact_due = $2::date WHERE id = $1`, [f.client_id, next_contact_due]);
+      if (f.step) {
+        // The next touch after its gap (the owner's date wins), or the end of the sequence after the fourth.
+        if (f.step >= 4) await tx.query(`UPDATE clients SET outreach_step = NULL, outreach_ended = 'finished', next_contact_due = COALESCE($2::date, current_date + 30) WHERE id = $1`, [f.client_id, next_contact_due || null]);
+        else await tx.query(`UPDATE clients SET outreach_step = $3, next_contact_due = COALESCE($2::date, current_date + $4::int) WHERE id = $1`,
+          [f.client_id, next_contact_due || null, f.step + 1, GAP[f.step]]);
+      } else if (next_contact_due) await tx.query(`UPDATE clients SET next_contact_due = $2::date WHERE id = $1`, [f.client_id, next_contact_due]);
     }
     return { id: f.id, status: decision === 'sent' ? 'sent' : 'dropped' };
   });

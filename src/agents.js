@@ -12,13 +12,31 @@ export const AGENTS = [
   {
     id: 'retention',
     name: 'Retention',
-    role: 'Watches clients due or overdue for contact and drafts a follow-up for each. It never sends anything: every draft waits for you on the Approvals tab.',
+    role: 'Watches clients due or overdue for contact and drafts a follow-up for each. For leads you track it writes a four-touch outreach sequence (opener, value, observation, last note), one touch at a time; a reply stops it. New enquiries in the CRM are due the same day. It never sends anything on its own: every draft waits for you on the Approvals tab.',
     schedule: 'After every coordinator run',
+  },
+  {
+    id: 'accounts',
+    name: 'Accounts',
+    role: 'Drafts reminders for overdue CRM invoices (friendly, then firm, then final) and notes for services ending in 45 days without auto-renew. Drafts only; you send them, or tap Send from the CRM.',
+    schedule: 'After every coordinator run, when the CRM is connected',
+  },
+  {
+    id: 'projects',
+    name: 'Projects',
+    role: 'Follows the GitHub repos you pick: takes your goals, specification, budget and timeline, writes the brief and milestones, asks how it is going when a repo goes quiet, and flags projects drifting from their goals, time or budget.',
+    schedule: 'Check-ins before every coordinator run; briefs when you ask',
+  },
+  {
+    id: 'reports',
+    name: 'Reports',
+    role: 'Writes the weekly report on Mondays and the monthly one on the 1st: leads, messages and replies, delivery, money, ads and AI spend, with what needs you and the next three things. Saved on the Documents tab.',
+    schedule: 'Mondays and the 1st, after the overnight run',
   },
   {
     id: 'leads',
     name: 'Leads',
-    role: 'Searches the web for businesses in Angola, the UK and Portugal that need CRM, domains, business email or hosting, and records the evidence it saw. It never contacts anyone: you track, add to the CRM or dismiss each lead on the Leads tab.',
+    role: 'Searches the web for businesses in Angola, the UK, Portugal and Namibia that need a website, CRM, domains, business email, hosting or an answer to missed calls, records the evidence it saw, then checks it on their own site, email and DNS. It never contacts anyone: you track, add to the CRM or dismiss each lead on the Leads tab.',
     schedule: 'Daily, after the overnight run',
   },
   {

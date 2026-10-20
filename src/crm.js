@@ -75,6 +75,9 @@ const CLIENT_KEYS = ['id', 'company_name', 'contact_name', 'email', 'phone', 'co
 const SUB_KEYS = ['id', 'client_id', 'client_name', 'service_name', 'service_type', 'tier', 'status', 'start_date', 'end_date', 'monthly_cost', 'billing_cycle', 'auto_renew'];
 const INV_KEYS = ['id', 'invoice_number', 'client_id', 'client_name', 'status', 'issue_date', 'due_date', 'total', 'amount_paid', 'currency'];
 const OPP_KEYS = ['id', 'name', 'value', 'status', 'stage_id', 'pipeline_id', 'contact_id', 'source', 'created_at', 'updated_at'];
+// Invoices live in the CRM's billing module (/billing/invoices); the old /invoices routes were removed there.
+// Its rows name the customer customer_name and link the CRM client as crm_client_id: mapped to the names Auti uses.
+const invoiceView = (i) => pick({ ...i, client_name: i.client_name ?? i.customer_name, client_id: i.client_id ?? i.crm_client_id }, INV_KEYS);
 
 // One picture of the business for the coordinator, the chat and the CRM tab. Each part fails on its own,
 // so a permission the Auti user lacks hides one section instead of the whole CRM.
@@ -84,7 +87,7 @@ export async function crmSnapshot(crm, { clients = 50 } = {}) {
     part(() => crm.get('/dashboard/summary')),
     part(() => crm.get('/dashboard/alerts')),
     part(() => crm.get('/subscriptions/expiring/list?days=45')),
-    part(() => crm.get('/invoices/overdue/list')),
+    part(() => crm.get('/billing/invoices' + qs({ status: 'overdue', limit: 100 }))),
     part(() => crm.get('/clients' + qs({ limit: Math.min(clients, 100) }))),
     part(() => crm.get('/opportunities?status=open')),
   ]);
@@ -99,7 +102,7 @@ export async function crmSnapshot(crm, { clients = 50 } = {}) {
     recent_activity: (summary.data?.recentActivity || []).slice(0, 10).map((a) => pick(a, ['action', 'entity_type', 'created_at', 'first_name', 'changes_summary'])),
     alerts: (alerts.data?.alerts || []).slice(0, 20).map((a) => pick(a, ['type', 'severity', 'title', 'message', 'entityType', 'entityId'])),
     expiring_subscriptions: (expiring.data?.subscriptions || []).map((s) => pick(s, SUB_KEYS)),
-    overdue_invoices: (overdue.data?.invoices || []).map((i) => pick(i, INV_KEYS)),
+    overdue_invoices: (overdue.data?.invoices || []).map(invoiceView),
     clients: (list.data?.clients || []).map((c) => pick(c, CLIENT_KEYS)),
     clients_total: list.data?.pagination?.total ?? null,
     open_opportunities: open,
@@ -160,11 +163,16 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
       if (cur) out.linked++;
     }
     if (!cur) {
+      // A prospect that arrived in the CRM in the last three days is someone waiting for an answer (a website form,
+      // the quiz, a missed call): due today, so the next run drafts the reply. Everyone else is spread over weeks.
+      const fresh = (status ?? 'active') === 'lead' && c.created_at && Date.now() - new Date(c.created_at).getTime() < 3 * 864e5;
       await db.query(
-        `INSERT INTO clients (name, market, status, crm_id, crm_synced_at, next_contact_due)
-         VALUES ($1, $2::market, $3::client_status, $4, now(), current_date + $5::int)`,
-        [name, market, status ?? 'active', crmId, 7 + (out.added % 28)]);
+        `INSERT INTO clients (name, market, status, crm_id, crm_synced_at, next_contact_due, notes)
+         VALUES ($1, $2::market, $3::client_status, $4, now(), current_date + $5::int, $6)`,
+        [name, market, status ?? 'active', crmId, fresh ? 0 : 7 + (out.added % 28),
+          fresh ? `New enquiry in the CRM on ${String(c.created_at).slice(0, 10)}${c.email ? ` (${c.email})` : ''}: reply today; people buy from whoever answers first.` : null]);
       out.added++;
+      if (fresh) out.inbound = (out.inbound || 0) + 1;
       continue;
     }
     const res = await db.query(
@@ -186,12 +194,20 @@ export const CRM_CHANGES = {
   create_client: {
     label: 'Add a client',
     check(p) {
-      for (const k of ['companyName', 'contactName', 'email', 'phone']) if (!String(p?.[k] ?? '').trim()) throw new Error(`${k} is required`);
+      // The CRM itself asks for the company and an email address only.
+      for (const k of ['companyName', 'email']) if (!String(p?.[k] ?? '').trim()) throw new Error(`${k} is required`);
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.email)) throw new Error('email is not valid');
-      return pick(p, ['companyName', 'contactName', 'email', 'phone', 'country', 'city', 'website', 'notes']);
+      if (p.status != null && !['prospect', 'active'].includes(p.status)) throw new Error('status must be prospect or active');
+      return pick(p, ['companyName', 'contactName', 'email', 'phone', 'country', 'city', 'website', 'notes', 'status']);
     },
-    run: (crm, p) => crm.post('/clients', p),
-    describe: (p) => `Add ${p.companyName} (${p.contactName}, ${p.email}) as a client in the CRM.`,
+    // The CRM creates clients as active; a prospect is set straight after.
+    async run(crm, { status, ...p }) {
+      const out = await crm.post('/clients', p);
+      const id = out?.client?.id || out?.id;
+      if (status === 'prospect' && id) await crm.patch(`/clients/${id}`, { status: 'prospect' });
+      return out;
+    },
+    describe: (p) => `Add ${p.companyName} (${[p.contactName, p.email].filter(Boolean).join(', ')}) to the CRM as ${p.status === 'prospect' ? 'a prospect' : 'a client'}.`,
   },
   create_opportunity: {
     label: 'Add an opportunity',
@@ -274,7 +290,7 @@ export const CRM_TOOL_DEFS = [
   { name: 'crm_invoices', description: 'CRM invoices, optionally by status or client.',
     input_schema: { type: 'object', additionalProperties: false, properties: {
       status: { type: 'string', enum: ['draft', 'sent', 'paid', 'overdue', 'partial', 'cancelled'] }, clientId: { type: 'string' }, page: { type: 'integer', minimum: 1 } } } },
-  { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName, contactName, email, phone (required), country, city, website, notes. create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status.`,
+  { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName and email (required), contactName, phone, country, city, website, notes. create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status.`,
     input_schema: { type: 'object', additionalProperties: false, required: ['kind', 'payload', 'reason'], properties: {
       kind: { type: 'string', enum: Object.keys(CRM_CHANGES) }, payload: { type: 'object' }, reason: { type: 'string' } } } },
 ];
@@ -297,8 +313,10 @@ export function crmTools(db, { client = () => crmClient() } = {}) {
       return { subscriptions: (out.subscriptions || []).map((s) => pick(s, SUB_KEYS)), pagination: out.pagination };
     },
     crm_invoices: async ({ status, clientId, page }) => {
-      const out = await client().get('/invoices' + qs({ status, clientId, page, limit: 50 }));
-      return { invoices: (out.invoices || []).map((i) => pick(i, INV_KEYS)), pagination: out.pagination };
+      if (clientId && !/^[0-9a-f-]{36}$/i.test(String(clientId))) throw new Error('clientId must be a CRM client id');
+      const out = await client().get('/billing/invoices' + qs({ status, page, limit: 100 }));
+      const invoices = (out.invoices || []).map(invoiceView).filter((i) => !clientId || i.client_id === clientId);
+      return { invoices, pagination: out.pagination };
     },
     crm_propose_change: async ({ kind, payload, reason }) => proposeCrmChange(db, { kind, payload, reason }),
   };

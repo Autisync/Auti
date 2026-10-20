@@ -1,8 +1,11 @@
-// The leads agent: searches the web for businesses in Angola, the UK and Portugal that need what the company sells,
-// and records each one with the evidence it saw. Research only: it never contacts anyone, and every lead waits for
-// the owner, who tracks it as a lead, adds it to the CRM, or dismisses it (the reason teaches the next run).
-export const LEAD_MARKETS = ['angola', 'uk', 'portugal'];
-export const LEAD_SERVICES = ['crm', 'domain', 'email', 'hosting', 'software'];
+// The leads agent: searches the web for businesses in Angola, the UK, Portugal and Namibia that need what the company
+// sells, and records each one with the evidence it saw. The evidence is then checked in code (src/verify.js) before
+// the owner sees it. Research only: it never contacts anyone, and every lead waits for the owner, who tracks it as a
+// lead, adds it to the CRM, or dismisses it (the reason teaches the next run).
+import { adjustedFit, checkAll, domainOf } from './verify.js';
+
+export const LEAD_MARKETS = ['angola', 'uk', 'portugal', 'namibia'];
+export const LEAD_SERVICES = ['crm', 'domain', 'email', 'hosting', 'software', 'website', 'missed_calls'];
 export const LEAD_STATUSES = ['new', 'tracking', 'in_crm', 'dismissed'];
 
 const MAX_WAITING = 30;          // no research while this many new leads wait for the owner
@@ -17,8 +20,15 @@ const FOCUS = [
   { market: 'portugal', angle: 'CRM: growing businesses still selling from spreadsheets, WhatsApp or paper' },
   { market: 'uk', angle: 'domains, business email and hosting: businesses on free email addresses, without their own domain, or with a broken or insecure website' },
 ];
-export function focusFor(now = new Date()) {
-  return FOCUS[Math.floor(now.getTime() / 864e5) % FOCUS.length];
+// Which market and angle a day looks at. With angles from the lead_angle table, each one comes up as often as its
+// weight says (weight 2 = twice per rotation); without them, the built-in six take turns.
+export function focusFor(now = new Date(), angles = null) {
+  const list = angles?.length ? angles.flatMap((a) => Array(Math.max(1, Math.min(5, a.weight || 1))).fill({ market: a.market, angle: a.angle })) : FOCUS;
+  return list[Math.floor(now.getTime() / 864e5) % list.length];
+}
+export async function leadAngles(db) {
+  return (await db.query(`SELECT market, angle, weight FROM lead_angle WHERE enabled ORDER BY market, created_at, angle`)
+    .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;
 }
 
 export const LEADS_TOOL = {
@@ -38,7 +48,7 @@ export const LEADS_TOOL = {
             city: { type: 'string' },
             sector: { type: 'string', description: 'e.g. clinic, logistics, law firm, hotel.' },
             website: { type: 'string', description: 'Their website, if they have one.' },
-            services: { type: 'array', items: { type: 'string', enum: LEAD_SERVICES }, minItems: 1, description: 'What they appear to need, most important first.' },
+            services: { type: 'array', items: { type: 'string', enum: LEAD_SERVICES }, minItems: 1, description: 'What they appear to need, most important first. website: none, broken, insecure or dated. missed_calls: answers by mobile only, no online booking or out-of-hours answer, so callers who reach voicemail ring a competitor.' },
             fit: { type: 'integer', minimum: 1, maximum: 5, description: '5 = clear need, the right size, and reachable. 1 = weak.' },
             signals: { type: 'string', description: 'What you actually observed that shows the need, e.g. "contact address is a gmail.com account", "site has no HTTPS", "books by phone only". Facts only.' },
             pitch: { type: 'string', description: 'One or two sentences: the opening the owner could use.' },
@@ -54,11 +64,12 @@ export const LEADS_TOOL = {
 
 function systemPrompt(config) {
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n') || '- (none)';
-  return `You are Auti's leads agent for a small technology company that sells CRM, domains, business email, web hosting, and software development.
+  return `You are Auti's leads agent for a small technology company that sells websites, CRM, domains, business email, web hosting, a missed-call text-back and AI receptionist for trades, and software development.
 Your job: find real businesses that clearly need those services, and record the evidence so the owner can decide in seconds.
 
 How to work:
-- Use web search to find candidates (business directories, local news, chambers of commerce, job adverts, the businesses' own sites), then check the signs of need on the business's own pages where you can.
+- Use web search to find candidates (business directories, Google Business listings, local news, chambers of commerce, job adverts, the businesses' own sites), then check the signs of need on the business's own pages where you can.
+- Always give the business's own website when it has one: its site, email and DNS are checked automatically afterwards, and a claim the check contradicts lowers the lead.
 - Only real, currently operating businesses. Never invent a company, a website, a fact or a source. If you are not sure, leave it out.
 - Small and medium businesses, not multinationals, banks, government bodies or businesses that sell these services themselves.
 - Skip any business in the "already known" list.
@@ -75,11 +86,14 @@ export async function waitingLeads(db) {
 }
 
 // What the researcher is asked, read from the database without changing anything (npm run compare uses it too).
-export async function leadsRequest(db, { now = new Date(), focus = focusFor(now) } = {}) {
+export async function leadsRequest(db, { now = new Date(), focus = null } = {}) {
+  focus ??= focusFor(now, await leadAngles(db));
   const config = (await db.query(`SELECT key, value FROM coordinator_config WHERE enabled ORDER BY key`)).rows;
   const known = (await db.query(`
     SELECT company AS name FROM lead WHERE market = $1
     UNION SELECT name FROM clients WHERE market = $1::market`, [focus.market])).rows.map((r) => r.name);
+  const knownSites = (await db.query(`SELECT domain FROM lead WHERE domain IS NOT NULL ORDER BY found_at DESC LIMIT 300`)
+    .catch(() => ({ rows: [] }))).rows.map((r) => r.domain);
   const dismissed = (await db.query(`
     SELECT company, dismiss_reason FROM lead WHERE status = 'dismissed' AND dismiss_reason IS NOT NULL
      ORDER BY decided_at DESC LIMIT 15`)).rows;
@@ -90,6 +104,7 @@ This run: ${focus.market === 'uk' ? 'the United Kingdom' : focus.market[0].toUpp
 Find up to ${PER_RUN} businesses.
 
 Already known (skip these): ${JSON.stringify(known)}
+Websites already known (skip these too, under any name): ${JSON.stringify(knownSites)}
 Leads the owner turned down, and why (learn from these): ${JSON.stringify(dismissed)}
 ${lastNote ? `Your note from last time: ${lastNote}\n` : ''}
 Research, then call ${LEADS_TOOL.name} once.`;
@@ -97,8 +112,9 @@ Research, then call ${LEADS_TOOL.name} once.`;
 }
 
 // The researcher is a brain with web search (claudeResearcher in llm.js); tests pass a fake.
-export async function runLeads({ db, researcher, now = new Date(), focus = focusFor(now) }) {
+export async function runLeads({ db, researcher, now = new Date(), focus = null, checker = checkAll }) {
   if (!(await leadsAgentOn(db))) return { skipped: 'switched off', found: 0, saved: 0 };
+  focus ??= focusFor(now, await leadAngles(db));
   const waiting = await waitingLeads(db);
   if (waiting >= MAX_WAITING) return { skipped: `${waiting} leads already wait for review`, found: 0, saved: 0 };
 
@@ -109,21 +125,28 @@ export async function runLeads({ db, researcher, now = new Date(), focus = focus
     [model ?? null, usage?.input ?? 0, usage?.output ?? 0, usage?.searches ?? 0]);
 
   const found = output?.leads || [];
-  let saved = 0;
-  for (const raw of found) {
-    const l = cleanLead(raw, focus.market);
-    if (!l) continue;
+  const clean = found.map((raw) => cleanLead(raw, focus.market)).filter(Boolean);
+  // Every lead's evidence is checked in code before it is saved; a check that fails outright just leaves it unchecked.
+  const checks = clean.length ? await checker(clean) : [];
+  let saved = 0, dropped = 0;
+  for (const [i, l] of clean.entries()) {
+    const c = checks[i] || null;
+    const fit = c ? adjustedFit(l.fit, c) : l.fit;
+    // A lead the checks flatly contradict, with nothing confirmed, is not worth the owner's time.
+    if (c && c.contradicted.length && !c.confirmed.length && fit <= 2) { dropped++; continue; }
+    const domain = c?.domain ?? domainOf(l.website);
     const res = await db.query(`
-      INSERT INTO lead (company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources, model)
-      SELECT $1, $2::market, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+      INSERT INTO lead (company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources, model, domain, checks, checked_at)
+      SELECT $1, $2::market, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, CASE WHEN $14::jsonb IS NULL THEN NULL ELSE now() END
        WHERE NOT EXISTS (SELECT 1 FROM clients WHERE lower(name) = lower($1) AND market = $2::market)
       ON CONFLICT DO NOTHING RETURNING id`,
-      [l.company, l.market, l.city, l.sector, l.website, l.services, l.fit, l.signals, l.pitch, l.contact_route, l.sources, model ?? null]);
+      [l.company, l.market, l.city, l.sector, l.website, l.services, fit, l.signals, l.pitch, l.contact_route, l.sources, model ?? null,
+        domain, c ? JSON.stringify(c) : null]);
     saved += res.rows.length;
   }
   await db.query(`INSERT INTO lead_run (market, angle, found, saved, searches, notes) VALUES ($1, $2, $3, $4, $5, $6)`,
     [focus.market, focus.angle, found.length, saved, usage?.searches ?? 0, text(output?.notes, 500)]);
-  return { found: found.length, saved, searches: usage?.searches ?? 0 };
+  return { found: found.length, saved, searches: usage?.searches ?? 0, ...(dropped ? { dropped } : {}) };
 }
 
 const url = (u) => { try { const x = new URL(String(u).trim()); return /^https?:$/.test(x.protocol) ? x.href : null; } catch { return null; } };
@@ -148,7 +171,7 @@ export function cleanLead(l, market) {
 export async function listLeads(db) {
   return (await db.query(`
     SELECT id, company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources,
-           status, dismiss_reason, client_id, found_at, decided_at
+           status, dismiss_reason, client_id, found_at, decided_at, to_jsonb(lead)->'checks' AS checks
       FROM lead
      WHERE status = 'new' OR decided_at > now() - interval '30 days'
      ORDER BY (status = 'new') DESC, fit DESC, found_at DESC
@@ -156,9 +179,11 @@ export async function listLeads(db) {
     .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;
 }
 
-// The owner's decision on a lead. 'track' adds it to Auti's clients as a lead with a first contact date in two days,
-// so the retention agent drafts an introduction for the owner to send. 'crm' is recorded after the CRM accepted it.
-export async function decideLead(db, { id, action, reason, crm_id } = {}) {
+// The owner's decision on a lead. 'track' adds it to Auti's clients as a lead and starts the outreach sequence
+// (four touches, the first due today, so the next scheduled run drafts it). 'crm' is recorded after the CRM accepted it.
+// With proposeCrm (the CRM connected) and a business email in the lead's public contact, tracking also proposes adding
+// it to the CRM as a prospect; that waits on the Approvals tab like every CRM change.
+export async function decideLead(db, { id, action, reason, crm_id, proposeCrm = null } = {}) {
   if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw new Error('bad lead id');
   if (!['track', 'crm', 'dismiss', 'reopen'].includes(action)) throw new Error('action must be track, crm, dismiss or reopen');
   return db.transaction(async (tx) => {
@@ -178,16 +203,29 @@ export async function decideLead(db, { id, action, reason, crm_id } = {}) {
       const existing = (await tx.query(`SELECT id FROM clients WHERE lower(name) = lower($1) AND market = $2`, [l.company, l.market])).rows[0];
       clientId = existing?.id || (await tx.query(`
         INSERT INTO clients (name, market, status, sector, contact_interval, next_contact_due, notes)
-        VALUES ($1, $2, 'lead', $3, interval '14 days', current_date + 2, $4) RETURNING id`,
+        VALUES ($1, $2, 'lead', $3, interval '14 days', current_date, $4) RETURNING id`,
         [l.company, l.market, l.sector, leadNotes(l)])).rows[0].id;
     }
+    // The sequence starts (or restarts) at the first touch, due today, unless one is already running.
+    await tx.query(`UPDATE clients SET outreach_step = COALESCE(outreach_step, 1), outreach_lead_id = $2, outreach_ended = NULL,
+                           next_contact_due = CASE WHEN outreach_step IS NULL THEN current_date ELSE next_contact_due END
+                     WHERE id = $1 AND status = 'lead'`, [clientId, id]);
     const status = action === 'crm' ? 'in_crm' : 'tracking';
     await tx.query(`UPDATE lead SET status = $2, client_id = $3, decided_at = now() WHERE id = $1`, [id, status, clientId]);
     await tx.query(`INSERT INTO journal (kind, author, body) VALUES ('decision', 'owner', $1)`,
       [`${status === 'in_crm' ? 'Added to the CRM' : 'Now tracking'} lead ${l.company} (${l.market}) for ${l.services.join(', ')}.${crm_id ? ` CRM id ${crm_id}.` : ''}`]);
-    return { id, status, client_id: clientId };
+    let crmRequest = null;
+    const email = String(l.contact_route || '').match(/[\w.+-]+@[\w-]+(\.[\w-]+)+/)?.[0];
+    if (action === 'track' && proposeCrm && email) {
+      crmRequest = await proposeCrm(tx, { kind: 'create_client', proposed_by: 'leads',
+        reason: `You started tracking ${l.company}; this puts it in the CRM pipeline as a prospect.`,
+        payload: { companyName: l.company, email, website: l.website || undefined, city: l.city || undefined,
+          country: COUNTRY[l.market], notes: leadNotes(l), status: 'prospect' } }).catch(() => null);
+    }
+    return { id, status, client_id: clientId, ...(crmRequest ? { crm_request: crmRequest.id } : {}) };
   });
 }
+export const COUNTRY = { angola: 'Angola', uk: 'United Kingdom', portugal: 'Portugal', namibia: 'Namibia' };
 
 export function leadNotes(l) {
   return [`Found by the leads agent. Needs: ${l.services.join(', ')}.`, `Seen: ${l.signals}`,

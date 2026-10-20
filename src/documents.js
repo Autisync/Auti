@@ -25,6 +25,7 @@ export const slugify = (s) => String(s ?? '').toLowerCase().normalize('NFD').rep
 
 export function categoryOf(title) {
   const t = String(title).toLowerCase();
+  if (/^(weekly|monthly) report/.test(t)) return 'report';
   if (/checklist/.test(t)) return 'checklist';
   if (/proposal|quote|form/.test(t)) return 'form';
   if (/agreement|schedule|policy|terms|contract/.test(t)) return 'contract';

@@ -220,6 +220,54 @@ ${FONTS}
   .contacts .when { font: 11px/1.6 var(--display); color: var(--dim); margin-right: 8px; }
   .row.finished .item-title { text-decoration: line-through; text-decoration-color: var(--dim); }
 
+  /* projects: progress, the repo picker and the project popup */
+  .pbars { display: grid; gap: 6px; margin-top: 10px; }
+  .pbar { display: grid; grid-template-columns: 120px 1fr 44px; gap: 10px; align-items: center; font: 12px/1.4 var(--display); color: var(--muted); }
+  .pbar .meter { margin-top: 0; }
+  .pbar .pv { text-align: right; color: var(--ink); }
+  .meter.time i { background: linear-gradient(90deg, rgba(230,230,230,0.35), var(--silver)); }
+  .meter.money i { background: linear-gradient(90deg, rgba(127,179,138,0.5), var(--green)); }
+  .meter.over i { background: var(--red); }
+  .linkish { background: none; border: 0; padding: 0; color: var(--ink); cursor: pointer; text-align: left; font: inherit; font-weight: 600; }
+  .linkish:hover { color: var(--gold); }
+  .repo-list { display: grid; gap: 8px; margin-top: 12px; max-height: 420px; overflow-y: auto; }
+  .repo-item { display: grid; gap: 2px; text-align: left; background: rgba(20,20,20,0.5); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; color: var(--ink); cursor: pointer; font: inherit; }
+  .repo-item:hover { border-color: var(--gold-glow); }
+  .repo-item .tag { margin-left: 0; justify-self: start; }
+  .checkin { border-color: var(--gold-glow); }
+  .checkin .kicker { color: var(--gold); }
+  .checkin .form { margin-top: 10px; }
+  .form label[hidden] { display: none; }
+  .checks { display: flex; flex-wrap: wrap; gap: 6px; } .checks .tag { margin-left: 0; }
+  body.locked { overflow: hidden; }
+  .sheet { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.62); display: grid; place-items: center; padding: 24px; }
+  .sheet[hidden] { display: none; }
+  .sheet-in { width: min(860px, 100%); max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); display: flex; flex-direction: column;
+              background: #1F1F1F; border: 1px solid var(--line-strong); border-top: 2px solid var(--gold); border-radius: 20px; overflow: hidden;
+              box-shadow: 0 0 60px -20px var(--gold-glow), 0 20px 60px rgba(0,0,0,0.6); }
+  .sheet-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px 14px 22px; border-bottom: 1px solid var(--line); }
+  .sheet-head h3 { margin: 0; font: 600 19px/1.3 var(--display); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sheet-body { overflow-y: auto; padding: 16px 22px 28px; }
+  .ps { margin-top: 26px; }
+  .ps-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .ps-top .tag { margin-left: 0; }
+  .ps-top a.mini { text-decoration: none; margin-left: auto; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; }
+  a.gh { color: var(--muted); text-decoration: none; } a.gh:hover { color: var(--gold); }
+  .facts .w { display: block; font: 600 10px/1.4 var(--display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .facts b { font: 500 15px/1.4 var(--display); }
+  .kicker.sp { margin-top: 16px; }
+  .list.ms li { grid-template-columns: 34px 1fr; align-items: start; }
+  .tick { width: 24px; height: 24px; border-radius: 7px; border: 1px solid var(--line-strong); background: none; color: #1C1C1C; cursor: pointer; font: 700 14px/1 var(--display); margin-top: 2px; }
+  .tick.on { background: var(--gold); border-color: var(--gold); }
+  .struck { text-decoration: line-through; text-decoration-color: var(--dim); color: var(--muted); }
+  .detail.late { color: var(--amber); }
+  @media (max-width: 640px) {
+    .sheet { padding: 0; }
+    .sheet-in { max-height: none; height: 100%; border-radius: 0; border: 0; padding-top: env(safe-area-inset-top); }
+    .pbar { grid-template-columns: 96px 1fr 40px; }
+  }
+
   footer { margin-top: 48px; text-align: center; font: 11px/1.6 var(--display); color: var(--dim); letter-spacing: 0.1em; }
 
   /* floating dock: the Auti button opens chat, the small mic jumps straight into hands-free companion */
@@ -511,6 +559,12 @@ ${MARK_SYMBOL}
   </div>
 </div>
 
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+  <div class="sheet-in">
+    <div class="sheet-head"><h3 id="sheet-title">Project</h3><button class="icon-btn" id="sheet-close" title="Close" aria-label="Close">✕</button></div>
+    <div class="sheet-body" id="sheet-body"></div>
+  </div>
+</div>
 <script>
 const $ = (tag, cls, text) => { const el = document.createElement(tag); if (cls) el.className = cls; if (text != null) el.textContent = text; return el; };
 const when = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -639,6 +693,11 @@ function decisionQueue() {
   const strong = (data.leads || []).filter((l) => l.status === 'new' && l.fit >= 4);
   if (strong.length) add('info', 'Leads', strong.length + ' strong lead' + (strong.length > 1 ? 's' : '') + ' to look at',
     strong.slice(0, 3).map((l) => l.company).join(', '), 'Open', () => go('leads'));
+  (data.checkins || []).forEach((c) => add('now', 'Project check-in', c.project + ': no activity for ' + c.quiet_days + ' days', 'How is it going? Ongoing, obstacle, waiting, paused or done', 'Answer', () => openProject(c.project_id)));
+  (data.projects || []).filter((p) => p.has_intake === false && p.github_repo).slice(0, 3)
+    .forEach((p) => add('soon', 'Project', 'Tell Auti about ' + p.name, 'Goals, specification, budget and timeline, so it can keep the project on course', 'Set goals', () => openProject(p.id, 'intake')));
+  (data.projects || []).filter((p) => (p.health?.flags || []).some((f) => ['behind', 'past_target', 'over_budget', 'obstacle'].includes(f))).slice(0, 3)
+    .forEach((p) => add('soon', 'Project', p.name + ' is drifting', p.health.flags.filter((f) => f !== 'quiet').map((f) => FLAG_WORDS[f] || human(f)).join(', '), 'Open', () => openProject(p.id)));
   const late = data.tasks.filter((t) => t.overdue);
   if (late.length) add('info', 'Tasks', late.length + ' overdue task' + (late.length > 1 ? 's' : ''), late.slice(0, 2).map((t) => t.title).join(' · '), 'Open', () => go('tasks'));
   return items.sort((x, y) => SEV[x.sev] - SEV[y.sev]);
@@ -835,12 +894,17 @@ function planCard(p) {
 function followUpCard(f) {
   const c = $('div', 'card plan follow');
   c.append($('span', 'pending', 'DRAFT'));
-  const h = $('h3', null, f.client); h.append($('span', 'tag', f.channel), $('span', 'tag', human(f.market))); c.append(h);
+  const h = $('h3', null, f.client); h.append($('span', 'tag', f.channel), $('span', 'tag', human(f.market)));
+  const AGENT_TAG = { outreach: 'Outreach · touch ' + f.step + ' of 4', collections: 'Overdue invoice', renewals: 'Renewal' };
+  if (AGENT_TAG[f.agent]) h.append($('span', 'tag ' + (f.agent === 'collections' ? 'warn' : 'ok'), AGENT_TAG[f.agent]));
+  c.append(h);
   if (f.rationale) c.append($('div', 'detail', f.rationale));
   const form = $('div', 'form');
   const subj = $('label', 'wide', f.channel === 'email' ? 'Subject' : 'Purpose'); const si = $('input'); si.value = f.subject || ''; si.readOnly = f.channel !== 'email'; subj.append(si);
   const msg = $('label', 'wide', f.channel === 'call' ? 'Talking points' : 'Message (edit before sending)'); const ta = $('textarea'); ta.value = f.body; ta.rows = Math.min(12, f.body.split('\\n').length + 2); msg.append(ta);
-  const nx = $('label', null, 'Next contact'); const ni = $('input'); ni.type = 'date'; ni.value = inDays(f.contact_every_days || 14); nx.append(ni);
+  const OUTREACH_GAP = { 1: 3, 2: 4, 3: 7, 4: 30 };
+  const nx = $('label', null, f.step ? (f.step < 4 ? 'Next touch' : 'Then check in') : 'Next contact'); const ni = $('input'); ni.type = 'date';
+  ni.value = inDays(f.step ? OUTREACH_GAP[f.step] : f.agent === 'collections' ? 7 : (f.contact_every_days || 14)); nx.append(ni);
   form.append(subj, msg, nx); c.append(form);
   const actions = $('div', 'actions'); const hint = $('span', 'hint');
   const copy = $('button', 'act', 'Copy');
@@ -851,18 +915,25 @@ function followUpCard(f) {
   const sent = $('button', 'act approve', f.channel === 'call' ? 'Mark called' : 'Mark sent');
   const drop = $('button', 'act', 'Drop');
   const finish = async (decision) => {
-    sent.disabled = drop.disabled = true; hint.className = 'hint'; hint.textContent = 'Saving…';
+    [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = true; }); hint.className = 'hint'; hint.textContent = decision === 'send_crm' ? 'Sending from the CRM…' : 'Saving…';
     try {
-      await post('/api/follow-up', { id: f.id, decision, body: ta.value, next_contact_due: ni.value });
+      await post('/api/follow-up', { id: f.id, decision, body: ta.value, subject: si.value, next_contact_due: decision === 'replied' ? null : ni.value });
       c.querySelector('.pending').remove();
-      actions.replaceWith($('div', 'done ' + (decision === 'sent' ? 'ok' : 'drop'), decision === 'sent' ? '✓ LOGGED AS SENT' : 'DROPPED'));
+      const DONE = { sent: '✓ LOGGED AS SENT', send_crm: '✓ SENT FROM THE CRM', replied: '✓ REPLY LOGGED · SEQUENCE STOPPED', drop: 'DROPPED' };
+      actions.replaceWith($('div', 'done ' + (decision === 'drop' ? 'drop' : 'ok'), DONE[decision]));
       data.followUps = data.followUps.filter((x) => x.id !== f.id); drawTabs();
-    } catch (e) { sent.disabled = drop.disabled = false; hint.className = 'error'; hint.textContent = e.message; }
+    } catch (e) { [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = false; }); hint.className = 'error'; hint.textContent = e.message; }
   };
   sent.onclick = () => finish('sent');
   let armed = false;
   drop.onclick = () => { if (armed) return finish('drop'); armed = true; drop.textContent = 'Confirm drop'; drop.className = 'act confirm'; };
+  if (f.channel === 'email' && f.crm_id && data.crmOn) {
+    // One tap: emailed from the CRM to the client's address there, and logged here.
+    const viaCrm = $('button', 'act approve', 'Send from the CRM'); viaCrm.onclick = () => finish('send_crm'); actions.append(viaCrm);
+    sent.className = 'act'; sent.textContent = 'I sent it myself';
+  }
   actions.append(sent, copy);
+  if (f.step) { const rep = $('button', 'act', 'They replied'); rep.title = 'Stops the sequence and logs the reply'; rep.onclick = () => finish('replied'); actions.append(rep); }
   if (f.channel === 'whatsapp') { const wa = $('a', 'act', 'Open WhatsApp'); wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); wa.target = '_blank'; wa.rel = 'noopener'; wa.onclick = () => { wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); }; actions.append(wa); }
   actions.append(drop, hint); c.append(actions);
   return c;
@@ -980,31 +1051,295 @@ function viewTasks(root) {
 }
 
 let repoForm = null;
+let pickingRepo = false, repoList = null, repoErr = null, repoQuery = '';
+const STATUS_WORDS = { ongoing: 'On track', obstacle: 'Obstacle', waiting: 'Waiting on someone', paused: 'Paused', done: 'Done' };
+const FLAG_WORDS = { behind: 'behind plan', milestone_overdue: 'milestone overdue', past_target: 'past target date', over_budget: 'over budget',
+  budget_tight: 'budget tight', quiet: 'quiet', obstacle: 'obstacle', no_intake: 'needs goals' };
+const FLAG_TONE = { behind: 'bad', milestone_overdue: 'warn', past_target: 'bad', over_budget: 'bad', budget_tight: 'warn', quiet: 'warn', obstacle: 'bad', no_intake: 'warn' };
+
+// Two bars that tell the story at a glance: time used against milestones done.
+function progressBars(h) {
+  const box = $('div', 'pbars');
+  const bar = (label, pct, cls) => {
+    const row = $('div', 'pbar'); row.append($('span', 'pl', label));
+    const m = $('div', 'meter ' + (cls || '')); const i = $('i'); i.style.width = Math.min(100, Math.max(0, pct)) + '%'; m.append(i);
+    row.append(m, $('span', 'pv', pct + '%')); return row;
+  };
+  if (h.elapsed_pct != null) box.append(bar('Time used', h.elapsed_pct, 'time'));
+  if (h.done_pct != null) box.append(bar('Milestones done', h.done_pct, ''));
+  if (h.spent_pct != null) box.append(bar('Budget spent', h.spent_pct, h.spent_pct > 100 ? 'over' : 'money'));
+  return box.children.length ? box : null;
+}
+const flagTags = (h, el) => (h?.flags || []).filter((f) => f !== 'obstacle' && (f !== 'quiet' || (h.quiet_days ?? 0) > 0))
+  .forEach((f) => el.append($('span', 'tag ' + (FLAG_TONE[f] || ''), f === 'quiet' ? 'quiet ' + h.quiet_days + 'd' : FLAG_WORDS[f] || human(f))));
+
 function viewProjects(root) {
+  const bar = rise($('div', 'toolbar'));
+  const add = $('button', 'more', pickingRepo ? 'Close' : '+ Follow a GitHub repo');
+  add.onclick = () => { pickingRepo = !pickingRepo; if (pickingRepo && !repoList) loadRepos(); draw(); };
+  bar.append(add); root.append(bar);
+  if (pickingRepo) root.append(rise(repoPicker()));
+  const waiting = data.checkins || [];
+  if (waiting.length) {
+    const s = section('How is it going?');
+    waiting.forEach((c) => s.append(checkinCard(c)));
+    root.append(s);
+  }
   filtered(root, 'Projects', data.projects,
-    [['all', 'All'], ['cold', 'Going cold'], ['not_briefed', 'Not briefed'], ['active', 'Moving']],
-    (p, k) => k === 'cold' ? p.going_cold : k === 'not_briefed' ? p.phase === 'not_briefed' : !p.going_cold,
+    [['all', 'All'], ['attention', 'Needs attention'], ['cold', 'Going cold'], ['not_briefed', 'Needs goals'], ['active', 'Moving']],
+    (p, k) => k === 'cold' ? p.going_cold : k === 'not_briefed' ? (p.phase === 'not_briefed' || p.has_intake === false)
+      : k === 'attention' ? (p.health?.flags || []).some((f) => f !== 'quiet') || p.work_status === 'obstacle' : !p.going_cold,
     (p) => {
-      const c = $('div', 'card row');
-      const t = $('div', 'item-title', p.name);
-      t.append($('span', 'tag', human(p.phase)));
-      if (p.going_cold) t.append($('span', 'tag warn', 'going cold'));
+      const c = $('div', 'card row project');
+      const t = $('button', 'item-title linkish', p.name); t.title = 'Open the project'; t.onclick = () => openProject(p.id);
+      const head = $('div'); head.append(t);
+      head.append($('span', 'tag', p.work_status && p.work_status !== 'ongoing' ? STATUS_WORDS[p.work_status] : human(p.phase)));
+      if (p.going_cold) head.append($('span', 'tag warn', 'going cold'));
+      flagTags(p.health, head);
       const meta = $('div', 'meta', 'active ' + ago(p.last_activity_at));
       if (p.open_tasks) meta.append($('div', null, p.open_tasks + ' open tasks'));
       if (p.target_date) meta.append($('div', null, 'due ' + day(p.target_date)));
-      c.append(t, meta);
-      c.append($('div', 'desc', [p.description || 'No brief yet.', p.markets?.length ? p.markets.join(', ') : null].filter(Boolean).join(' · ')));
+      c.append(head, meta);
+      c.append($('div', 'desc', [p.description || (p.has_intake === false ? 'Tell Auti the goals, budget and timeline.' : 'No brief yet.'),
+        p.health?.next_milestone ? 'Next: ' + p.health.next_milestone.title + (p.health.next_milestone.due ? ' (' + day(p.health.next_milestone.due) + ')' : '') : null]
+        .filter(Boolean).join(' · ')));
+      if (p.health) { const pb = progressBars(p.health); if (pb) { pb.classList.add('desc'); c.append(pb); } }
       const acts = $('div', 'acts');
+      const open = $('button', 'mini go', p.has_intake === false ? 'Set goals' : 'Open'); open.onclick = () => openProject(p.id, p.has_intake === false ? 'intake' : null);
       const link = $('button', 'mini' + (p.github_repo ? ' repo' : ''), p.github_repo ? '⎇ ' + p.github_repo : 'Link GitHub repo');
       link.title = p.github_repo ? 'Change the linked repository' : 'Auti reads its latest push to tell if the project is moving';
       link.onclick = () => { repoForm = repoForm === p.id ? null : p.id; draw(); };
-      acts.append(link); c.append(acts);
+      acts.append(open, link); c.append(acts);
       if (repoForm === p.id) {
         c.append(formCard([['github_repo', 'Repository', 'text', null, { value: p.github_repo || '', placeholder: 'owner/repo or a github.com link', wide: true }]],
           'Save', async (v) => { await post('/api/project', { id: p.id, ...v }); repoForm = null; await load(); }, () => { repoForm = null; draw(); }));
       }
       return c;
     });
+}
+
+async function loadRepos() {
+  repoErr = null;
+  try {
+    const r = await fetch('/api/projects?repos=1', { cache: 'no-store' });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || 'Could not load (' + r.status + ')');
+    repoList = out;
+  } catch (e) { repoErr = e.message; }
+  if (current === 'projects') draw();
+}
+
+function repoPicker() {
+  const c = card();
+  c.append($('p', 'detail', 'Pick a repository you are working on. Auti will ask for its goals, specification, budget and timeline, write the brief, and check in when it goes quiet.'));
+  if (repoErr) { c.append($('p', 'error', repoErr)); return c; }
+  if (!repoList) { c.append($('p', 'empty', 'Loading your repositories…')); return c; }
+  if (!repoList.connected) c.append($('p', 'hint', 'No GITHUB_TOKEN is set in Vercel, so only public repositories can be listed.'));
+  const f = $('div', 'form'); const l = $('label', 'wide', 'Search'); const q = $('input'); q.placeholder = 'Name of the repository'; q.value = repoQuery; l.append(q); f.append(l); c.append(f);
+  const list = $('div', 'repo-list'); c.append(list);
+  const paint = () => {
+    const shown = (repoList.repos || []).filter((r) => !repoQuery || r.repo.toLowerCase().includes(repoQuery.toLowerCase())).slice(0, 30);
+    list.replaceChildren(...(shown.length ? shown.map((r) => {
+      const b = $('button', 'repo-item');
+      const n = $('b', null, r.repo); b.append(n);
+      if (r.private) b.append($('span', 'tag', 'private'));
+      b.append($('span', 'hint', (r.description ? r.description + ' · ' : '') + 'pushed ' + ago(r.pushed_at)));
+      b.onclick = async () => {
+        b.disabled = true;
+        try {
+          const p = await post('/api/projects', { action: 'create', repo: r.repo, pushed_at: r.pushed_at });
+          pickingRepo = false; repoList = null; await load(); openProject(p.id, 'intake');
+        } catch (e) { b.disabled = false; b.append($('span', 'error', ' ' + e.message)); }
+      };
+      return b;
+    }) : [$('p', 'empty', repoList.note || 'No other repositories to follow.')]));
+  };
+  q.oninput = () => { repoQuery = q.value; paint(); };
+  paint();
+  return c;
+}
+
+// The answer to "how is it going?". Also used inside the project popup.
+function checkinCard(c, after) {
+  const box = card(); box.classList.add('checkin');
+  box.append($('span', 'kicker', c.project ? c.project : 'Status'));
+  box.append($('p', 'q', c.quiet_days != null ? 'No activity for ' + c.quiet_days + ' day' + (c.quiet_days === 1 ? '' : 's') + '. How is it going?' : 'How is it going?'));
+  const f = $('div', 'form'); const nl = $('label', 'wide', 'Note (what is happening, what is in the way)'); const note = $('textarea'); nl.append(note);
+  const pl = $('label', null, 'Paused until'); const until = $('input'); until.type = 'date'; pl.append(until); pl.hidden = true;
+  f.append(nl, pl); box.append(f);
+  const acts = $('div', 'actions'); const hint = $('span', 'hint');
+  const send = async (status) => {
+    if (status === 'paused' && pl.hidden) { pl.hidden = false; until.focus(); hint.textContent = 'Pick the date, then Paused again.'; return; }
+    [...acts.querySelectorAll('button')].forEach((b) => { b.disabled = true; });
+    hint.className = 'hint'; hint.textContent = 'Saving…';
+    try {
+      const out = await post('/api/projects', { action: 'status', id: c.project_id, status, note: note.value.trim(), paused_until: until.value || null });
+      hint.textContent = status === 'obstacle' && out.task_id ? 'Saved. A task to clear it is on the Tasks tab.' : 'Saved.';
+      if (after) await after(); else await load();
+    } catch (e) { hint.className = 'error'; hint.textContent = e.message; [...acts.querySelectorAll('button')].forEach((b) => { b.disabled = false; }); }
+  };
+  [['ongoing', 'On track', 'approve'], ['obstacle', 'Obstacle'], ['waiting', 'Waiting on someone'], ['paused', 'Paused'], ['done', 'Done']].forEach(([k, label, cls]) => {
+    const b = $('button', 'act' + (cls ? ' ' + cls : ''), label); b.type = 'button'; b.onclick = () => send(k); acts.append(b);
+  });
+  acts.append(hint); box.append(acts);
+  return box;
+}
+
+/* ---------- the project popup ---------- */
+let sheetId = null, sheetData = null, sheetMode = null;
+const sheet = document.getElementById('sheet'), sheetBody = document.getElementById('sheet-body');
+async function openProject(id, mode) {
+  sheetId = id; sheetMode = mode || null; sheetData = null;
+  sheet.hidden = false; document.body.classList.add('locked');
+  sheetBody.replaceChildren($('p', 'empty', 'Opening…'));
+  document.getElementById('sheet-title').textContent = (data.projects.find((p) => p.id === id) || {}).name || 'Project';
+  await refreshSheet();
+}
+async function refreshSheet() {
+  try {
+    const r = await fetch('/api/projects?id=' + encodeURIComponent(sheetId), { cache: 'no-store' });
+    const out = await r.json().catch(() => ({}));
+    if (r.status === 401) return location.reload();
+    if (!r.ok) throw new Error(out.error || 'Could not open (' + r.status + ')');
+    sheetData = out;
+    if (!out.project.goals && !sheetMode) sheetMode = 'intake';
+    paintSheet();
+  } catch (e) { sheetBody.replaceChildren($('p', 'error', e.message)); }
+}
+function closeSheet() { sheet.hidden = true; document.body.classList.remove('locked'); sheetId = null; sheetData = null; load(); }
+document.getElementById('sheet-close').onclick = closeSheet;
+sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
+
+function sheetSection(title, ...children) { const s = $('section', 'ps'); s.append($('h2', null, title), ...children.filter(Boolean)); return s; }
+
+function paintSheet() {
+  const { project: p, health: h, milestones, checkin, tasks, repo, history } = sheetData;
+  document.getElementById('sheet-title').textContent = p.name;
+  const out = [];
+  const top = $('div', 'ps-top');
+  top.append($('span', 'tag', STATUS_WORDS[p.work_status] || human(p.phase)));
+  flagTags(h, top);
+  if (p.github_repo) { const a = $('a', 'mini repo', '⎇ ' + p.github_repo); a.href = 'https://github.com/' + p.github_repo; a.target = '_blank'; a.rel = 'noopener'; top.append(a); }
+  out.push(top);
+
+  if (sheetMode === 'intake') { out.push(intakeForm(p)); sheetBody.replaceChildren(...out); return; }
+  if (checkin) out.push(checkinCard({ project_id: p.id, quiet_days: checkin.quiet_days }, refreshSheet));
+
+  // At a glance
+  const glance = card();
+  const facts = $('div', 'facts');
+  const fact = (k, v) => { if (v == null || v === '') return; const d = $('div'); d.append($('span', 'w', k), $('b', null, v)); facts.append(d); };
+  fact('Target', p.target_date ? day(p.target_date) : 'not set');
+  fact('Budget', p.budget != null ? money(p.budget, p.budget_currency) : 'not set');
+  if (p.budget_spent != null) fact('Spent', money(p.budget_spent, p.budget_currency));
+  fact('Last activity', ago(p.last_activity_at));
+  if (h.next_milestone) fact('Next milestone', h.next_milestone.title + (h.next_milestone.due ? ' · ' + day(h.next_milestone.due) : ''));
+  glance.append(facts);
+  const pb = progressBars(h); if (pb) glance.append(pb);
+  if (p.status_note) glance.append($('p', 'detail', STATUS_WORDS[p.work_status] + ': ' + p.status_note));
+  const gacts = $('div', 'actions');
+  const edit = $('button', 'act', 'Edit goals, budget, timeline'); edit.onclick = () => { sheetMode = 'intake'; paintSheet(); };
+  const rewrite = $('button', 'act', p.brief_md ? 'Rewrite the brief' : 'Write the brief'); rewrite.onclick = () => writeBrief(rewrite);
+  const status = $('button', 'act', 'Update status'); status.onclick = () => { glance.after(checkinCard({ project_id: p.id }, refreshSheet)); status.disabled = true; };
+  gacts.append(edit, rewrite, status); glance.append(gacts);
+  out.push(sheetSection('At a glance', glance));
+
+  out.push(sheetSection('Brief', p.brief_md ? card(mdRender(p.brief_md)) : emptyCard(p.goals ? 'No brief yet: tap Write the brief.' : 'Give Auti the goals first.')));
+  if (p.goals || p.spec) {
+    const g = card();
+    if (p.goals) { g.append($('span', 'kicker', 'Goals')); g.append(mdRender(p.goals)); }
+    if (p.spec) { const d = $('details', 'memory'); d.append($('summary', null, 'Specification')); d.append(mdRender(p.spec)); g.append(d); }
+    out.push(sheetSection('In your words', g));
+  }
+  out.push(sheetSection('Milestones', milestoneList(p, milestones)));
+
+  if (repo) {
+    const rc = card();
+    if (repo.error) rc.append($('p', 'error', 'GitHub: ' + repo.error));
+    else {
+      const ul = $('ul', 'contacts');
+      (repo.recent_commits || []).slice(0, 8).forEach((x) => { const li = $('li'); li.append($('span', 'when', ago(x.when)), document.createTextNode(x.message + (x.author ? ' · ' + x.author : ''))); ul.append(li); });
+      if (ul.children.length) { rc.append($('span', 'kicker', 'Latest commits'), ul); }
+      const prs = repo.open_pull_requests || [], iss = repo.open_issues || [];
+      const gl = (kind, x) => { const li = $('li'); const a = $('a', 'gh', '#' + x.number + ' ' + x.title + (x.draft ? ' (draft)' : '')); a.href = 'https://github.com/' + p.github_repo + '/' + kind + '/' + x.number; a.target = '_blank'; a.rel = 'noopener'; li.append(a); return li; };
+      if (prs.length) { rc.append($('span', 'kicker sp', 'Open pull requests')); const u = $('ul', 'contacts'); prs.forEach((x) => u.append(gl('pull', x))); rc.append(u); }
+      if (iss.length) { rc.append($('span', 'kicker sp', 'Open issues')); const u = $('ul', 'contacts'); iss.slice(0, 10).forEach((x) => u.append(gl('issues', x))); rc.append(u); }
+      if (repo.readme) { const d = $('details', 'memory'); d.append($('summary', null, 'README preview')); d.append(mdRender(repo.readme)); rc.append(d); }
+      if (!rc.children.length) rc.append($('p', 'empty', 'Nothing on GitHub yet.'));
+    }
+    out.push(sheetSection('Repository', rc));
+  }
+  const open = (tasks || []).filter((t) => !['done', 'cancelled'].includes(t.state));
+  if (open.length) {
+    const tc = card(); const ul = $('ul', 'contacts');
+    open.forEach((t) => ul.append($('li', null, t.title + ' · ' + STATE_LABEL[t.state] + (t.due_date ? ' · due ' + day(t.due_date) : ''))));
+    tc.append(ul); out.push(sheetSection('Open tasks', tc));
+  }
+  const hc = card();
+  (history || []).forEach((x) => {
+    const e = $('div', 'entry');
+    const left = $('div'); left.append($('div', 'when', when(x.at)), $('div', 'who', x.who === 'coordinator' ? 'Auti' : x.who));
+    e.append(left, $('div', 'body', x.text)); hc.append(e);
+  });
+  if (!hc.children.length) hc.append($('p', 'empty', 'Nothing yet.'));
+  out.push(sheetSection('History', hc));
+  sheetBody.replaceChildren(...out);
+}
+
+async function writeBrief(btn) {
+  const was = btn.textContent; btn.disabled = true; btn.textContent = 'Auti is writing…';
+  try { await post('/api/projects', { action: 'brief', id: sheetId }); sheetMode = null; await refreshSheet(); }
+  catch (e) { btn.disabled = false; btn.textContent = was; btn.after($('span', 'error', ' ' + e.message)); }
+}
+
+function intakeForm(p) {
+  const wrap = $('div');
+  wrap.append(card($('p', 'q', 'Tell Auti about ' + p.name + '.'), $('p', 'detail', 'With this, Auti writes the brief and the milestones, checks in when the repository goes quiet, and tells you when the project drifts from its goals, time or budget.')));
+  const CUR = [['GBP', 'GBP £'], ['EUR', 'EUR €'], ['USD', 'USD $'], ['AOA', 'AOA Kz'], ['NAD', 'NAD N$']];
+  const f = formCard([
+    ['goals', 'Goals: what does done look like?', 'textarea', null, { required: true, value: p.goals || '', placeholder: 'e.g. Clinic can book online and take deposits; 30 bookings a week by March.' }],
+    ['spec', 'Specification: scope, features, must-haves', 'textarea', null, { value: p.spec || '', placeholder: 'Pages, features, integrations, who it is for, what is out of scope.' }],
+    ['budget', 'Budget', 'number', null, { value: p.budget ?? '' }],
+    ['budget_currency', 'Currency', 'select', CUR],
+    ['budget_spent', 'Spent so far', 'number', null, { value: p.budget_spent ?? '' }],
+    ['start_date', 'Start', 'date', null, { value: p.start_date || isoDay(Date.now()) }],
+    ['target_date', 'Target date', 'date', null, { value: p.target_date || '' }],
+    ['checkin_after_days', 'Check in after', 'select', [['2', '2 quiet days'], ['3', '3 quiet days'], ['4', '4 quiet days'], ['5', '5 quiet days'], ['7', '7 quiet days']]],
+  ], p.brief_md ? 'Save and rewrite the brief' : 'Save and write the brief', async (v) => {
+    await post('/api/projects', { action: 'intake', id: p.id, ...v });
+    const hint = f.querySelector('.hint'); if (hint) hint.textContent = 'Saved. Auti is writing the brief…';
+    try { await post('/api/projects', { action: 'brief', id: p.id }); } catch (e) { sheetMode = null; await refreshSheet(); throw e; }
+    sheetMode = null; await refreshSheet();
+  }, p.goals ? () => { sheetMode = null; paintSheet(); } : null);
+  f.querySelector('select[name=budget_currency]').value = p.budget_currency || 'GBP';
+  f.querySelector('select[name=checkin_after_days]').value = String(p.checkin_after_days || 3);
+  wrap.append(f);
+  return wrap;
+}
+
+function milestoneList(p, milestones) {
+  const c = card(); const today = isoDay(Date.now());
+  const ul = $('ul', 'list ms');
+  milestones.forEach((m) => {
+    const li = $('li');
+    const box = $('button', 'tick' + (m.done_at ? ' on' : ''), m.done_at ? '✓' : ''); box.title = m.done_at ? 'Mark not done' : 'Mark done';
+    box.onclick = async () => { box.disabled = true; try { await post('/api/projects', { action: 'milestone', id: m.id, done: !m.done_at }); await refreshSheet(); } catch (e) { box.disabled = false; } };
+    const t = $('div'); t.append($('div', 'item-title' + (m.done_at ? ' struck' : ''), m.title));
+    const late = !m.done_at && m.due && m.due < today;
+    t.append($('div', 'detail' + (late ? ' late' : ''), m.done_at ? 'Done ' + day(m.done_at) : m.due ? (late ? 'Was due ' : 'Due ') + day(m.due) : 'No date'));
+    li.append(box, t); ul.append(li);
+  });
+  if (milestones.length) c.append(ul); else c.append($('p', 'empty', 'No milestones yet. Write the brief, or add one.'));
+  let adding = false;
+  const add = $('button', 'more', '+ Add a milestone');
+  add.onclick = () => {
+    if (adding) return; adding = true;
+    add.replaceWith(formCard([['title', 'Milestone', 'text', null, { required: true, placeholder: 'A result you can check', wide: true }], ['due', 'Due', 'date']],
+      'Add', async (v) => { await post('/api/projects', { action: 'milestone', project_id: p.id, ...v }); await refreshSheet(); }, () => paintSheet()));
+  };
+  c.append(add);
+  return c;
 }
 
 const MARKETS = [['uk', 'UK'], ['portugal', 'Portugal'], ['angola', 'Angola'], ['namibia', 'Namibia'], ['other', 'Other']];
@@ -1263,7 +1598,7 @@ async function loadDocs() {
   } catch (e) { docs = docs || []; docsError = e.message; }
   if (current === 'documents') draw();
 }
-const DOC_KINDS = [['all', 'All'], ['contract', 'Contracts'], ['form', 'Forms'], ['checklist', 'Checklists'], ['guide', 'Guides']];
+const DOC_KINDS = [['all', 'All'], ['contract', 'Contracts'], ['form', 'Forms'], ['checklist', 'Checklists'], ['guide', 'Guides'], ['report', 'Reports']];
 
 function viewDocuments(root) {
   if (docs === null) { root.append($('div', 'skeleton'), $('div', 'skeleton')); loadDocs(); return; }
@@ -1483,8 +1818,8 @@ function viewCrm(root) {
 
 // Businesses the leads agent found. Nothing here contacts anyone: tracking adds a lead to Auti's clients
 // (so the retention agent drafts an introduction for the owner to send), and Add to CRM creates the client there.
-const MARKET_NAME = { angola: 'Angola', uk: 'UK', portugal: 'Portugal' };
-const SERVICE_NAME = { crm: 'CRM', domain: 'Domain', email: 'Business email', hosting: 'Hosting', software: 'Software' };
+const MARKET_NAME = { angola: 'Angola', uk: 'UK', portugal: 'Portugal', namibia: 'Namibia' };
+const SERVICE_NAME = { crm: 'CRM', domain: 'Domain', email: 'Business email', hosting: 'Hosting', software: 'Software', website: 'Website', missed_calls: 'Missed calls' };
 let leadForm = {};   // lead id -> 'crm' | 'dismiss'
 function viewLeads(root) {
   const leads = data.leads || [];
@@ -1506,6 +1841,8 @@ function viewLeads(root) {
     stat(count((l) => l.status === 'new' && l.market === 'angola'), 'Angola', false, 'leads'),
     stat(count((l) => l.status === 'new' && l.market === 'portugal'), 'Portugal', false, 'leads'),
     stat(count((l) => l.status === 'new' && l.market === 'uk'), 'UK', false, 'leads'),
+    stat(count((l) => l.status === 'new' && l.market === 'namibia'), 'Namibia', false, 'leads'),
+    stat(count((l) => l.status === 'new' && (l.checks?.confirmed || []).length > 0), 'Checked: need confirmed', false, 'leads'),
     stat(count((l) => l.status === 'tracking' || l.status === 'in_crm'), 'Taken on (30 days)', false, 'leads'),
   );
   root.append(stats);
@@ -1514,12 +1851,12 @@ function viewLeads(root) {
   const others = (data.clients || []).filter((c) => c.status !== 'active').map((c) => ({ ...c, client: true }));
   if (!leads.length && !others.length) {
     root.append(section('Leads', emptyCard(data.leadsOn == null
-      ? 'The leads agent starts after the next overnight run. It searches one market a day, so all three are covered within a week.'
+      ? 'The leads agent starts after the next overnight run. It searches one market and angle a day, so every market comes up within two weeks.'
       : 'No leads yet. The agent searches once a day, after the overnight run.')));
     return;
   }
   filtered(root, 'Leads', [...leads, ...others],
-    [['new', 'New'], ['angola', 'Angola'], ['portugal', 'Portugal'], ['uk', 'UK'], ['tracking', 'Tracking'], ['in_crm', 'In CRM (' + (others.length + count((l) => l.status === 'in_crm')) + ')'], ['dismissed', 'Dismissed'], ['all', 'All']],
+    [['new', 'New'], ['angola', 'Angola'], ['portugal', 'Portugal'], ['uk', 'UK'], ['namibia', 'Namibia'], ['tracking', 'Tracking'], ['in_crm', 'In CRM (' + (others.length + count((l) => l.status === 'in_crm')) + ')'], ['dismissed', 'Dismissed'], ['all', 'All']],
     (l, k) => l.client ? k === 'in_crm' : MARKET_NAME[k] ? l.status === 'new' && l.market === k : l.status === k,
     (l) => l.client ? clientCard(l) : leadCard(l), 'new');
 }
@@ -1534,6 +1871,13 @@ function leadCard(l) {
   el.append(meta);
   const chips = $('div', 'services'); (l.services || []).forEach((s) => chips.append($('span', 'tag svc', SERVICE_NAME[s] || s))); el.append(chips);
   el.append($('div', 'desc', l.signals));
+  if (l.checks) {
+    // What Auti checked on the business's own site, email and DNS before showing it.
+    const ck = $('div', 'detail checks');
+    (l.checks.confirmed || []).forEach((x) => ck.append($('span', 'tag ok', '✓ ' + x)));
+    (l.checks.contradicted || []).forEach((x) => ck.append($('span', 'tag bad', '✗ ' + x)));
+    if (ck.children.length) el.append(ck);
+  }
   if (l.pitch) { const p = $('div', 'detail'); p.append($('b', null, 'Opening: '), document.createTextNode(l.pitch)); el.append(p); }
   if (l.contact_route) el.append($('div', 'detail', 'Public contact: ' + l.contact_route));
   if (l.dismiss_reason) el.append($('div', 'detail', 'Dismissed: ' + l.dismiss_reason));
@@ -1554,8 +1898,9 @@ function leadCard(l) {
   act('Ask Auti', null, async () => openChat('assistant', 'About the lead ' + l.company + ' (' + (MARKET_NAME[l.market] || l.market) + ', needs ' + (l.services || []).join(', ') + '): '));
   el.append(acts);
   if (leadForm[l.id] === 'crm') {
-    el.append($('p', 'empty small', 'The CRM needs a contact. Use a business contact you found or were given; Auti never contacts them.'));
-    el.append(formCard([['contactName', 'Contact name', 'text', null, { required: true }], ['email', 'Email', 'text', null, { required: true }], ['phone', 'Phone', 'text', null, { required: true }]],
+    el.append($('p', 'empty small', 'The CRM needs a business email. Use a contact you found or were given; Auti never contacts them.'));
+    const found = String(l.contact_route || '').match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+    el.append(formCard([['email', 'Email', 'text', null, { required: true, value: found ? found[0] : '' }], ['contactName', 'Contact name', 'text'], ['phone', 'Phone', 'text']],
       'Add to CRM', (v) => decide({ action: 'crm', ...v }), () => { leadForm[l.id] = null; draw(); }));
   }
   if (leadForm[l.id] === 'dismiss') {

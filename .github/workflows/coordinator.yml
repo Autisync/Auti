@@ -26,11 +26,12 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write          # only to open (or comment on) one issue when a scheduled run fails, so the owner hears about it
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       CI: 'true'
       JARVIS_QUIET: '1'          # logs are public: never print the brief itself
@@ -42,6 +43,8 @@ jobs:
       AUTI_COORDINATOR_MODEL: ${{ vars.AUTI_COORDINATOR_MODEL }}
       SYNAUT_LEADS_MODEL: ${{ vars.SYNAUT_LEADS_MODEL }}
       SYNAUT_RETENTION_MODEL: ${{ vars.SYNAUT_RETENTION_MODEL }}
+      AUTI_ACCOUNTS_MODEL: ${{ vars.AUTI_ACCOUNTS_MODEL }}
+      AUTI_REPORT_MODEL: ${{ vars.AUTI_REPORT_MODEL }}
       JARVIS_TIMEZONE: Europe/Lisbon
       # Reads each project's latest push. The built-in token sees this repo and public ones;
       # add a SYNAUT_GITHUB_TOKEN secret (read-only, fine-grained) to include your other private repos.
@@ -79,6 +82,10 @@ jobs:
       # and at most one draft waits per client. Drafts wait on the owner; nothing is ever sent from here.
       - name: Retention agent
         run: node src/run.js retention
+      # Overdue invoices and renewals from the CRM become drafts on the Approvals tab. Skipped without the CRM.
+      - name: Accounts agent
+        continue-on-error: true
+        run: node src/run.js accounts
       # Once a day, after the overnight run: look for businesses that need what the company sells.
       # At most 8 web searches a run, which took about 12 minutes on the first run (SYNAUT_LEADS_SEARCHES). Research only; it never contacts anyone.
       # A failure here never fails the run. Switch it off from the Leads tab.
@@ -87,3 +94,24 @@ jobs:
         continue-on-error: true
         timeout-minutes: 15          # web research is slow (about 12 minutes for 8 searches); a slow run is cut here, never the whole job
         run: node src/run.js leads
+      # Mondays the weekly report, the 1st the monthly one. Saved in the database (Documents tab); nothing is printed.
+      - name: Reports
+        if: steps.mode.outputs.mode == 'nightly'
+        continue-on-error: true
+        run: node src/run.js report
+      # A failed run tells the owner: one open issue, commented on by later failures. GitHub notifies on new issues and
+      # comments. The text is generic (the repository is public): no names, no figures, only the link to the run.
+      - name: Tell the owner a run failed
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          OPEN=$(gh issue list --repo "${{ github.repository }}" --label auti-run-failed --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$OPEN" ]; then
+            gh issue comment "$OPEN" --repo "${{ github.repository }}" --body "Failed again: $RUN_URL"
+          else
+            gh label create auti-run-failed --repo "${{ github.repository }}" --color B98B2F --description "A scheduled Auti run failed" 2>/dev/null || true
+            gh issue create --repo "${{ github.repository }}" --label auti-run-failed --title "A scheduled Auti run failed" \
+              --body "The scheduled run did not finish: $RUN_URL. Open the run to see which step failed. Close this issue once it is fixed; the next failure opens a new one."
+          fi
