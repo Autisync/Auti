@@ -7,7 +7,7 @@ import { runCoordinator } from './coordinator.js';
 import { syncGithub } from './github.js';
 import { runRetention } from './retention.js';
 import { runLeads } from './leads.js';
-import { crmClient, crmConfigured, crmSnapshot } from './crm.js';
+import { crmClient, crmConfigured, crmSnapshot, syncCrmClients } from './crm.js';
 import { chooseModel, agentModels } from './models.js';
 
 const mode = process.argv[2] || 'nightly';
@@ -45,6 +45,13 @@ async function coordinator() {
       console.log(`crm: read, ${crm.unavailable.length} part(s) unavailable`);
     } catch (err) {
       console.error(`crm skipped: ${err.message}`);
+    }
+    // Then copy the CRM's clients into Auti's own list, so the Clients tab and the retention agent see them.
+    try {
+      const sync = await syncCrmClients(db, crmClient());
+      console.log(`crm clients: seen=${sync.seen} added=${sync.added} updated=${sync.updated} linked=${sync.linked}`);
+    } catch (err) {
+      console.error(`crm client sync skipped: ${err.message}`);
     }
   }
   const { runId, brief, skipped } = await withModel('coordinator', (model) => claudeBrain({ model }), (brain) => runCoordinator({

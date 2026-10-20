@@ -168,6 +168,43 @@ await check('the dashboard works before migration 007 has run', async () => {
   assert.deepEqual((await web.getDashboard(fresh)).crmRequests, []);
 });
 
+await check('CRM clients are copied into Auti: added, linked by name, updated, and Auti\'s own notes kept', async () => {
+  const sdb = new PGlite();
+  await migrate(sdb, () => {});
+  await sdb.query(`INSERT INTO clients (name, market, status, notes) VALUES ('Beta Lda', 'portugal', 'lead', 'met at the fair')`);
+  let list = [
+    { id: 11, company_name: 'Acme', country: 'Angola', status: 'active' },
+    { id: 12, company_name: 'beta lda ', country: 'Portugal', status: 'Active' },
+    { id: 13, company_name: 'Gamma', country: 'United Kingdom', status: 'prospect' },
+    { id: 14, company_name: '', status: 'active' },
+  ];
+  const pages = [];
+  const fake = { get: async (path) => {
+    const u = new URL('http://x' + path); const page = Number(u.searchParams.get('page')); const limit = Number(u.searchParams.get('limit'));
+    pages.push(page);
+    return { clients: list.slice((page - 1) * limit, page * limit), pagination: { total: list.length } };
+  } };
+  const first = await crm.syncCrmClients(sdb, fake, { pageSize: 2 });
+  assert.deepEqual(pages, [1, 2]);
+  assert.deepEqual({ ...first }, { seen: 3, added: 2, updated: 1, linked: 1 });
+  const rows = (await sdb.query('SELECT name, market, status, notes, crm_id FROM clients ORDER BY crm_id')).rows;
+  assert.deepEqual(rows.map((r) => [r.name, r.market, r.status, r.crm_id]),
+    [['Acme', 'angola', 'active', '11'], ['beta lda', 'portugal', 'active', '12'], ['Gamma', 'uk', 'lead', '13']]);
+  assert.equal(rows[1].notes, 'met at the fair');
+  const due = (await sdb.query(`SELECT crm_id, next_contact_due - current_date AS days FROM clients WHERE next_contact_due IS NOT NULL ORDER BY crm_id`)).rows;
+  assert.deepEqual(due.map((r) => [r.crm_id, r.days]), [['11', 7], ['13', 8]]);   // new ones are spread out; the linked one keeps its own
+
+  // A second run changes only what changed in the CRM, and never duplicates.
+  list = [{ id: 11, company_name: 'Acme', country: 'Angola', status: 'churned' }, { id: 13, company_name: 'Gamma', country: 'UK', status: 'something new' }];
+  const second = await crm.syncCrmClients(sdb, fake);
+  assert.deepEqual({ ...second }, { seen: 2, added: 0, updated: 1, linked: 0 });
+  const acme = (await sdb.query(`SELECT status, lost_reason FROM clients WHERE crm_id = '11'`)).rows[0];
+  assert.equal(acme.status, 'lost');
+  assert.match(acme.lost_reason, /CRM/);
+  assert.equal((await sdb.query(`SELECT status FROM clients WHERE crm_id = '13'`)).rows[0].status, 'lead');
+  assert.equal((await sdb.query('SELECT count(*)::int AS n FROM clients')).rows[0].n, 3);
+});
+
 await check('Vercel deploys at most 12 functions, and every folded endpoint is routed', async () => {
   const fs = await import('node:fs');
   const fns = fs.readdirSync(new URL('../api/', import.meta.url)).filter((f) => f.endsWith('.js') && !f.startsWith('_'));
