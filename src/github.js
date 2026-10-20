@@ -4,6 +4,9 @@
 
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 
+// The token can be set as SYNAUT_GITHUB_TOKEN (same name as the GitHub secret) or GITHUB_TOKEN.
+export const githubToken = (env = process.env) => env.SYNAUT_GITHUB_TOKEN || env.GITHUB_TOKEN || '';
+
 export const isRepo = (s) => REPO.test(String(s || ''));
 
 // Accepts "owner/repo" or a github.com URL; returns "owner/repo" or null.
@@ -14,7 +17,7 @@ export function normaliseRepo(input) {
   return isRepo(repo) ? repo : null;
 }
 
-export async function syncGithub(db, { token = process.env.GITHUB_TOKEN, fetch = globalThis.fetch } = {}) {
+export async function syncGithub(db, { token = githubToken(), fetch = globalThis.fetch } = {}) {
   const projects = (await db.query(
     `SELECT id, github_repo FROM projects WHERE github_repo IS NOT NULL AND phase <> 'closed'`)).rows;
   const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'synaut' };
@@ -70,7 +73,7 @@ export const GITHUB_TOOL_DEFS = [
   },
 ];
 
-export function githubTools({ token = process.env.GITHUB_TOKEN, owner = process.env.GITHUB_OWNER, fetch = globalThis.fetch } = {}) {
+export function githubTools({ token = githubToken(), owner = process.env.GITHUB_OWNER, fetch = globalThis.fetch } = {}) {
   const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'synaut' };
   if (token) headers.Authorization = `Bearer ${token}`;
   const get = async (path) => {

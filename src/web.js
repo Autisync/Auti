@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import { agentsSummary } from './agents.js';
 import { voiceUsage } from './voice.js';
-import { normaliseRepo } from './github.js';
+import { normaliseRepo, githubToken } from './github.js';
 import { repairWeakestLink } from './coordinator.js';
 import { crmConfigured } from './crm.js';
 import { listLeads, leadsAgentOn } from './leads.js';
@@ -306,8 +306,8 @@ export async function decideFollowUp(db, { id, decision, body, next_contact_due 
 // What Auti can reach beyond its own database. Only whether a key is set is shown, never the key.
 export function connectedTools(env = process.env) {
   return [
-    { id: 'github', name: 'GitHub', connected: Boolean(env.GITHUB_TOKEN), access: 'read-only',
-      detail: env.GITHUB_TOKEN ? 'Auti chat can list your repos, see commits, pull requests and issues, and read files.'
+    { id: 'github', name: 'GitHub', connected: Boolean(githubToken(env)), access: 'read-only',
+      detail: githubToken(env) ? 'Auti chat can list your repos, see commits, pull requests and issues, and read files.'
         : 'Public repos only. Add a read-only GITHUB_TOKEN in Vercel to let Auti chat see your private repos.' },
     { id: 'crm', name: 'CRM', connected: crmConfigured(env), access: crmConfigured(env) ? 'reads; changes on your approval' : 'not connected',
       detail: crmConfigured(env) ? 'Auti reads clients, subscriptions, invoices, the dashboard and the pipeline, and proposes changes for you to approve.'
