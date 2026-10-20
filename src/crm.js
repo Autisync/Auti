@@ -71,7 +71,7 @@ const qs = (o) => {
   return p.length ? '?' + p.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&') : '';
 };
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o?.[k] !== undefined).map((k) => [k, o[k]]));
-const CLIENT_KEYS = ['id', 'company_name', 'contact_name', 'email', 'phone', 'country', 'city', 'website', 'status', 'created_at', 'active_subscriptions', 'outstanding_invoices', 'assigned_first_name'];
+const CLIENT_KEYS = ['id', 'company_name', 'contact_name', 'email', 'phone', 'country', 'city', 'website', 'status', 'created_at', 'active_subscriptions', 'outstanding_invoices', 'assigned_first_name', 'tags'];
 const SUB_KEYS = ['id', 'client_id', 'client_name', 'service_name', 'service_type', 'tier', 'status', 'start_date', 'end_date', 'monthly_cost', 'billing_cycle', 'auto_renew'];
 const INV_KEYS = ['id', 'invoice_number', 'client_id', 'client_name', 'status', 'issue_date', 'due_date', 'total', 'amount_paid', 'currency'];
 const OPP_KEYS = ['id', 'name', 'value', 'status', 'stage_id', 'pipeline_id', 'contact_id', 'source', 'created_at', 'updated_at'];
@@ -81,15 +81,56 @@ const invoiceView = (i) => pick({ ...i, client_name: i.client_name ?? i.customer
 
 // One picture of the business for the coordinator, the chat and the CRM tab. Each part fails on its own,
 // so a permission the Auti user lacks hides one section instead of the whole CRM.
-export async function crmSnapshot(crm, { clients = 50 } = {}) {
+const DAY = 864e5;
+const dayOf = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : null);
+
+/**
+ * Each new client's onboarding, from its open steps in the CRM: the next step, and the steps past their date.
+ * A client whose steps are all done drops out. Sorted with the most overdue first.
+ */
+export function onboardingView(tasks, now = new Date()) {
+  const today = dayOf(now.toISOString());
+  const open = (tasks || []).filter((t) => !['completed', 'cancelled'].includes(String(t.status)));
+  const by = new Map();
+  for (const t of open) {
+    const key = String(t.client_id || t.client_name || 'none');
+    if (!by.has(key)) by.set(key, { client_id: t.client_id || null, client: t.client_name || 'No client', steps: [] });
+    by.get(key).steps.push({ title: t.title, due: dayOf(t.due_date), priority: t.priority });
+  }
+  return [...by.values()].map((c) => {
+    c.steps.sort((a, b) => String(a.due || '9999').localeCompare(String(b.due || '9999')));
+    const late = c.steps.filter((s) => s.due && s.due < today);
+    return {
+      client_id: c.client_id, client: c.client, open_steps: c.steps.length,
+      next_step: c.steps[0]?.title || null, next_due: c.steps[0]?.due || null,
+      overdue: late.map((s) => ({ step: s.title, days: Math.round((Date.parse(today) - Date.parse(s.due)) / DAY) })),
+    };
+  }).sort((a, b) => (b.overdue[0]?.days || -1) - (a.overdue[0]?.days || -1) || String(a.next_due).localeCompare(String(b.next_due)));
+}
+
+/** Draft invoices older than a day: raised by the system (subscriptions, set-ups) and still waiting for a person to issue them. */
+export function draftsView(invoices, now = new Date()) {
+  const rows = (invoices || []).filter((i) => i.status === 'draft' && (!i.created_at || now - new Date(i.created_at) > DAY));
+  return {
+    count: rows.length,
+    oldest_days: rows.length ? Math.max(...rows.map((i) => (i.created_at ? Math.floor((now - new Date(i.created_at)) / DAY) : 0))) : 0,
+    invoices: rows.slice(0, 10).map((i) => ({ ...invoiceView(i), automatic: /^subscriptions?:/.test(String(i.external_reference || '')) })),
+  };
+}
+
+export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) {
   const part = async (fn) => { try { return { ok: true, data: await fn() }; } catch (err) { return { ok: false, error: err.message }; } };
-  const [summary, alerts, expiring, overdue, list, opps] = await Promise.all([
+  const [summary, alerts, expiring, overdue, list, opps, steps, drafts] = await Promise.all([
     part(() => crm.get('/dashboard/summary')),
     part(() => crm.get('/dashboard/alerts')),
     part(() => crm.get('/subscriptions/expiring/list?days=45')),
     part(() => crm.get('/billing/invoices' + qs({ status: 'overdue', limit: 100 }))),
     part(() => crm.get('/clients' + qs({ limit: Math.min(clients, 100) }))),
     part(() => crm.get('/opportunities?status=open')),
+    // The onboarding steps set up from accepted proposals (tasks tagged onboarding on the client's card).
+    part(() => crm.get('/tasks' + qs({ tag: 'onboarding', limit: 100 }))),
+    // Invoices the system raised by itself (from subscriptions, or a set-up) wait as drafts until a person issues them.
+    part(() => crm.get('/billing/invoices' + qs({ status: 'draft', limit: 100 }))),
   ]);
   if (![summary, alerts, expiring, overdue, list, opps].some((p) => p.ok)) {
     throw new Error(summary.error || 'the CRM gave nothing back');
@@ -108,7 +149,9 @@ export async function crmSnapshot(crm, { clients = 50 } = {}) {
     open_opportunities: open,
     pipeline_value: open.reduce((s, o) => s + (Number(o.value) || 0), 0),
     pipelines: (opps.data?.pipelines || []).map((p) => ({ id: p.id, name: p.name, stages: (p.stages || []).map((s) => ({ id: s.id, name: s.name })) })),
-    unavailable: Object.entries({ summary, alerts, expiring, overdue, clients: list, opportunities: opps })
+    onboarding: onboardingView(steps.ok ? steps.data?.tasks : [], now),
+    draft_invoices: draftsView(drafts.ok ? drafts.data?.invoices : [], now),
+    unavailable: Object.entries({ summary, alerts, expiring, overdue, clients: list, opportunities: opps, onboarding: steps, draft_invoices: drafts })
       .filter(([, p]) => !p.ok).map(([k, p]) => `${k}: ${p.error}`),
   };
 }
@@ -119,6 +162,7 @@ export function crmForContext(s) {
   return {
     summary: s.summary, alerts: s.alerts, expiring_subscriptions: s.expiring_subscriptions, overdue_invoices: s.overdue_invoices,
     clients_total: s.clients_total, open_opportunities: s.open_opportunities.slice(0, 25), pipeline_value: s.pipeline_value,
+    onboarding: (s.onboarding || []).slice(0, 15), draft_invoices: s.draft_invoices || null,
     unavailable: s.unavailable,
   };
 }
@@ -166,11 +210,17 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
       // A prospect that arrived in the CRM in the last three days is someone waiting for an answer (a website form,
       // the quiz, a missed call): due today, so the next run drafts the reply. Everyone else is spread over weeks.
       const fresh = (status ?? 'active') === 'lead' && c.created_at && Date.now() - new Date(c.created_at).getTime() < 3 * 864e5;
+      // Someone who rang CallCatch's own demo line is a UK trade trying the product: a hot prospect for CallCatch.
+      const demo = (c.tags || []).includes('callcatch-demo');
+      const email = c.email && !/\.invalid$/i.test(c.email) ? c.email : null;
+      const note = demo
+        ? `Rang the CallCatch demo line on ${String(c.created_at || '').slice(0, 10)}${c.phone ? ` from ${c.phone}` : ''}: a UK trade trying CallCatch. Ring or text them today and offer to set up their own (first month free, then £35 a month).`
+        : fresh ? `New enquiry in the CRM on ${String(c.created_at).slice(0, 10)}${email ? ` (${email})` : ''}: reply today; people buy from whoever answers first.` : null;
       await db.query(
         `INSERT INTO clients (name, market, status, crm_id, crm_synced_at, next_contact_due, notes)
          VALUES ($1, $2::market, $3::client_status, $4, now(), current_date + $5::int, $6)`,
-        [name, market, status ?? 'active', crmId, fresh ? 0 : 7 + (out.added % 28),
-          fresh ? `New enquiry in the CRM on ${String(c.created_at).slice(0, 10)}${c.email ? ` (${c.email})` : ''}: reply today; people buy from whoever answers first.` : null]);
+        [name, demo && market === 'other' ? 'uk' : market, status ?? 'active', crmId, fresh || demo ? 0 : 7 + (out.added % 28), note]);
+      if (demo) out.demo = (out.demo || 0) + 1;
       out.added++;
       if (fresh) out.inbound = (out.inbound || 0) + 1;
       continue;

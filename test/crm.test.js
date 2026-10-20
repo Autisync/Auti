@@ -31,11 +31,16 @@ function fakeCrm({ token = 'tok-1', deny = [] } = {}) {
     if (path.startsWith('/subscriptions/expiring/list')) return json(200, { subscriptions: [{ id: ID(1), client_name: 'Acme', service_name: 'Email hosting', end_date: '2026-10-20', monthly_cost: '40.00', internal: 'hidden' }] });
     if (path.startsWith('/billing/invoices')) {
       const all = [{ id: ID(2), customer_name: 'Beta', crm_client_id: ID(3), invoice_number: 'INV-9', status: 'overdue', total: '150.00', currency: 'EUR', due_date: '2026-09-01', pdf_secret: 'x' },
-        { id: ID(8), customer_name: 'Gamma', crm_client_id: ID(9), invoice_number: 'INV-10', status: 'paid', total: '80.00', currency: 'EUR' }];
+        { id: ID(8), customer_name: 'Gamma', crm_client_id: ID(9), invoice_number: 'INV-10', status: 'paid', total: '80.00', currency: 'EUR' },
+        { id: ID(10), customer_name: 'Delta', crm_client_id: ID(12), invoice_number: 'FT 2026/14', status: 'draft', total: '59.00', currency: 'GBP', created_at: '2026-01-02T10:00:00Z', external_reference: 'subscription:abc:2026-01-02' }];
       const status = new URL('http://x' + path).searchParams.get('status');
       return json(200, { invoices: all.filter((i) => !status || i.status === status), pagination: { total: 2 } });
     }
-    if (path.startsWith('/invoices')) return json(404, { error: 'removed' });     // the old routes are gone in the CRM
+    if (path.startsWith('/invoices')) return json(404, { error: 'removed' });
+    if (path.startsWith('/tasks?') && new URL('http://x' + path).searchParams.get('tag') === 'onboarding') return json(200, { tasks: [
+      { client_id: ID(3), client_name: 'Acme', title: 'Kick-off call: collect everything on the checklist', status: 'pending', due_date: '2026-01-05T09:00:00', priority: 'high' },
+      { client_id: ID(3), client_name: 'Acme', title: 'Handover: show it live', status: 'pending', due_date: '2099-01-01T09:00:00' },
+      { client_id: ID(9), client_name: 'Gamma', title: 'First monthly check-in', status: 'completed', due_date: '2026-01-01T09:00:00' }] });     // the old routes are gone in the CRM
     if (path.startsWith('/clients?')) return json(200, { clients: [{ id: ID(3), company_name: 'Acme', contact_name: 'Ana', email: 'ana@acme.test', status: 'active', active_subscriptions: '2', internal_notes: 'secret' }], pagination: { total: 1 } });
     if (path.startsWith('/opportunities')) return json(200, { opportunities: [{ id: ID(4), name: 'Domains for Beta', value: '500', stage_id: ID(6), pipeline_id: ID(5) }], pipelines: [{ id: ID(5), name: 'Sales', stages: [{ id: ID(6), name: 'Proposal', win_probability: 50 }] }] });
     if (init.method === 'POST' && path === '/clients') return json(201, { client: { id: ID(7), ...body } });
@@ -84,6 +89,16 @@ await check('the snapshot gathers money, renewals, overdue invoices and the pipe
   assert.equal(s.overdue_invoices[0].client_name, 'Beta');                        // customer_name in the billing module
   assert.equal(s.open_opportunities[0].stage, 'Proposal');
   assert.equal(s.pipeline_value, 500);
+  // Onboarding from the steps on client cards: the next step, the late ones; a client with every step done drops out.
+  assert.equal(s.onboarding.length, 1);
+  assert.equal(s.onboarding[0].client, 'Acme');
+  assert.match(s.onboarding[0].next_step, /^Kick-off/);
+  assert.equal(s.onboarding[0].overdue.length, 1);
+  assert.ok(s.onboarding[0].overdue[0].days > 0);
+  // Drafts the CRM raised by itself, waiting for a person to issue them.
+  assert.equal(s.draft_invoices.count, 1);
+  assert.equal(s.draft_invoices.invoices[0].automatic, true);
+  assert.ok(crm.crmForContext(s).onboarding.length === 1 && crm.crmForContext(s).draft_invoices.count === 1);
   assert.deepEqual(s.unavailable, []);
   assert.ok(f.calls.every((c) => c.method === 'GET' || c.path === '/auth/login'));   // reading never writes
 });
@@ -213,6 +228,16 @@ await check('CRM clients are copied into Auti: added, linked by name, updated, a
   assert.match(acme.lost_reason, /CRM/);
   assert.equal((await sdb.query(`SELECT status FROM clients WHERE crm_id = '13'`)).rows[0].status, 'lead');
   assert.equal((await sdb.query('SELECT count(*)::int AS n FROM clients')).rows[0].n, 3);
+
+  // Someone who rang CallCatch's demo line: a UK prospect for CallCatch, due today, with a note saying so.
+  list = [{ id: 14, company_name: 'Demo caller 07700 900551', phone: '07700 900551', email: '447700900551@callcatch.invalid', status: 'prospect', tags: ['callcatch', 'callcatch-demo'], created_at: new Date().toISOString() }];
+  const third = await crm.syncCrmClients(sdb, fake);
+  assert.equal(third.demo, 1);
+  const demo = (await sdb.query(`SELECT market, status, notes, next_contact_due - current_date AS days FROM clients WHERE crm_id = '14'`)).rows[0];
+  assert.deepEqual([demo.market, demo.status, demo.days], ['uk', 'lead', 0]);
+  assert.match(demo.notes, /CallCatch demo line/);
+  assert.doesNotMatch(demo.notes, /invalid/);
+  await sdb.query(`DELETE FROM clients WHERE crm_id = '14'`);
 
   // The dashboard tells prospects (in the CRM) from leads only Auti knows, so Clients shows active and prospects and Leads the rest.
   await sdb.query(`INSERT INTO clients (name, market, status) VALUES ('Delta', 'uk', 'lead')`);
