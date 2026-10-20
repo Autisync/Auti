@@ -120,6 +120,66 @@ export function crmForContext(s) {
   };
 }
 
+// ---------- copying clients into Auti ----------
+
+const MARKETS = [[/portugal/i, 'portugal'], [/united kingdom|^uk$|^gb$|england|scotland|wales|britain/i, 'uk'], [/angola/i, 'angola'], [/namibia/i, 'namibia']];
+const marketOf = (country) => MARKETS.find(([re]) => re.test(String(country || '').trim()))?.[1] ?? 'other';
+// CRM status -> Auti status. Anything else leaves a linked client's status alone (a new one starts active).
+const STATUSES = { active: 'active', lead: 'lead', prospect: 'lead', inactive: 'paused', paused: 'paused', suspended: 'paused', on_hold: 'paused',
+  lost: 'lost', churned: 'lost', cancelled: 'lost', canceled: 'lost', closed: 'lost', former: 'lost' };
+const statusOf = (s) => STATUSES[String(s || '').trim().toLowerCase().replace(/[\s-]+/g, '_')] ?? null;
+
+// Copies every CRM client into Auti's clients table, so the Clients tab and the retention agent see them.
+// Read-only on the CRM side. A client is matched by its CRM id, or once by name for clients added by hand.
+// Only the name, market and status come from the CRM; notes, contact dates and owner stay Auti's own.
+// New clients get a first contact date spread over weeks 2 to 5, so the retention agent drafts for a few
+// at a time instead of all at once. Clients that disappear from the CRM are left as they are.
+export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } = {}) {
+  const out = { seen: 0, added: 0, updated: 0, linked: 0 };
+  const rows = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const res = await crm.get('/clients' + qs({ page, limit: pageSize }));
+    const batch = res?.clients || [];
+    rows.push(...batch);
+    const total = res?.pagination?.total;
+    if (batch.length < pageSize || (total != null && rows.length >= total)) break;
+  }
+  for (const c of rows) {
+    const crmId = c.id != null ? String(c.id) : '';
+    const name = String(c.company_name || c.contact_name || '').trim();
+    if (!crmId || !name) continue;
+    out.seen++;
+    const status = statusOf(c.status);
+    const market = marketOf(c.country);
+    let cur = (await db.query('SELECT id FROM clients WHERE crm_id = $1', [crmId])).rows[0];
+    if (!cur) {
+      cur = (await db.query(
+        `UPDATE clients SET crm_id = $1 WHERE id = (
+           SELECT id FROM clients WHERE crm_id IS NULL AND lower(trim(name)) = lower($2) ORDER BY created_at LIMIT 1)
+         RETURNING id`, [crmId, name])).rows[0];
+      if (cur) out.linked++;
+    }
+    if (!cur) {
+      await db.query(
+        `INSERT INTO clients (name, market, status, crm_id, crm_synced_at, next_contact_due)
+         VALUES ($1, $2::market, $3::client_status, $4, now(), current_date + $5::int)`,
+        [name, market, status ?? 'active', crmId, 7 + (out.added % 28)]);
+      out.added++;
+      continue;
+    }
+    const res = await db.query(
+      `UPDATE clients SET name = $2, market = $3::market,
+              status = COALESCE($4::client_status, status),
+              lost_reason = CASE WHEN $4::text = 'lost' THEN COALESCE(lost_reason, 'Marked as no longer a client in the CRM') ELSE lost_reason END,
+              crm_synced_at = now()
+        WHERE id = $1 AND (name <> $2 OR market <> $3::market OR ($4::client_status IS NOT NULL AND status <> $4::client_status))
+        RETURNING id`, [cur.id, name, market, status]);
+    if (res.rows.length) out.updated++;
+    else await db.query('UPDATE clients SET crm_synced_at = now() WHERE id = $1', [cur.id]);
+  }
+  return out;
+}
+
 // ---------- changing, only on the owner's tap ----------
 
 export const CRM_CHANGES = {
