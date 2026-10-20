@@ -1,4 +1,4 @@
-// Entry point for the scheduler:  node src/run.js nightly|standup|retention|accounts|leads|report
+// Entry point for the scheduler:  node src/run.js nightly|standup|retention|accounts|leads|report|daily
 // In CI (GitHub Actions) logs can be public, so the brief's content is never
 // printed there; only counts. Read the brief with `npm run brief` instead.
 import { connect } from './db.js';
@@ -13,6 +13,7 @@ import { askCheckins } from './projects.js';
 import { runAccounts } from './accounts.js';
 import { runReport, reportsDue } from './reports.js';
 import { CHEAP } from './models.js';
+import { postDailyReport } from './daily.js';
 
 const mode = process.argv[2] || 'nightly';
 const quiet = process.env.CI === 'true' || process.env.JARVIS_QUIET === '1';
@@ -131,8 +132,18 @@ async function leads() {
   console.log(`[${new Date().toISOString()}] leads done. ` + (out.skipped ? `skipped: ${out.skipped}` : `found=${out.found} saved=${out.saved} searches=${out.searches}${out.dropped ? ` dropped_by_checks=${out.dropped}` : ''}`));
 }
 
+// After the overnight run: the day's report to the team's WhatsApp group, through the CRM. Never prints the text.
+async function daily() {
+  if (!crmConfigured()) return console.log('daily report: skipped, the CRM is not connected');
+  const client = crmClient();
+  let crm = null;
+  try { crm = await crmSnapshot(client); } catch (err) { console.error(`daily report: crm read skipped: ${err.message}`); }
+  const out = await postDailyReport({ db, crm, client, timezone: process.env.JARVIS_TIMEZONE || 'Europe/Lisbon' });
+  console.log(`[${new Date().toISOString()}] daily report ${out.posted ? 'posted to the team group' : 'not posted: ' + out.reason}`);
+}
+
 try {
-  const MODES = { retention, leads, accounts, report };
+  const MODES = { retention, leads, accounts, report, daily };
   await (MODES[mode] ? MODES[mode]() : coordinator());
 } catch (err) {
   console.error(`[${new Date().toISOString()}] ${mode} run failed: ${err.message}`);

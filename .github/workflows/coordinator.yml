@@ -106,6 +106,12 @@ jobs:
         if: steps.mode.outputs.mode == 'nightly'
         continue-on-error: true
         run: node src/run.js report
+      # Last: the day's report (what waits on the team, leads, ads and AI spend) to the team's WhatsApp group,
+      # sent by the CRM from its connected number. Needs the group chosen in the CRM (Settings, Notifications).
+      - name: Daily report to the team
+        if: steps.mode.outputs.mode == 'nightly'
+        continue-on-error: true
+        run: node src/run.js daily
       # A failed run tells the owner: one open issue, commented on by later failures. GitHub notifies on new issues and
       # comments. The text is generic (the repository is public): no names, no figures, only the link to the run.
       - name: Tell the owner a run failed
