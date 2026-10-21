@@ -37,6 +37,17 @@ export function tone(daysLate) {
   return 'final: polite but clear that services may be paused if it stays unpaid; ask them to reply today';
 }
 
+/**
+ * What the reminder may say about the late payment fee. Only when the business has the fee on in the CRM
+ * and the invoice is past its grace days; with the amount when the CRM has already drafted it.
+ */
+export function lateFeeFor(crm, invoice, daysLate) {
+  const lf = crm?.late_fees;
+  if (!lf?.enabled || daysLate == null || daysLate < (lf.grace_days ?? 7)) return null;
+  const draft = (crm.draft_invoices?.late_fees?.invoices || []).find((f) => String(f.for_invoice) === String(invoice.id));
+  return draft ? `a late payment fee of ${money(draft.total, draft.currency)} applies, as the contract says` : 'a late payment fee applies, as the contract says';
+}
+
 const money = (n, cur) => `${Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur || ''}`.trim();
 
 // What needs a message, matched to Auti's clients by CRM id. crm is a crmSnapshot().
@@ -56,9 +67,10 @@ export async function accountItems(db, crm, now = new Date()) {
     const owed = Number(i.total || 0) - Number(i.amount_paid || 0);
     if (!(owed > 0)) continue;
     const daysLate = i.due_date ? Math.max(0, Math.floor((now - new Date(i.due_date)) / DAY)) : null;
+    const fee = lateFeeFor(crm, i, daysLate);
     items.push({ agent: 'collections', ref, client_id: c.id, client: c.name, market: c.market,
       invoice: i.invoice_number, amount_due: money(owed, i.currency), due_date: i.due_date ? String(i.due_date).slice(0, 10) : null,
-      days_late: daysLate, tone: tone(daysLate ?? 0) });
+      days_late: daysLate, tone: tone(daysLate ?? 0), ...(fee ? { late_fee: fee } : {}) });
     busy.add(c.id);
   }
   for (const s of crm.expiring_subscriptions || []) {
@@ -83,6 +95,7 @@ overdue invoices (collections) and services about to end (renewals).
 Rules:
 - Use only the numbers, dates and names listed. Never invent a discount, a deadline or a consequence that is not in the tone given.
 - Collections: follow the tone given for each invoice exactly. Always include the invoice number, the amount due and the due date. One clear ask.
+- When an item has late_fee, say it once, plainly and without threats, in the words given (with the amount only if it is given). Never mention a late fee for an item without late_fee.
 - Renewals: thank them, name the service and the end date, make renewing easy (reply to confirm). Suggest an upgrade only if the standing instructions name one that fits.
 - Short: under 110 words for email, under 50 for WhatsApp. Portuguese (Portugal for portugal, Angolan usage for angola) for clients in portugal or angola, English otherwise.
 - Nothing is sent by you; the owner reviews every draft.

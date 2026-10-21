@@ -51,6 +51,7 @@ export function dailyText(n, { crm = null, ads = null, now = new Date(), timezon
   if (n.waiting.plans) todo.push(`${plural(n.waiting.plans, 'plan')} to approve`);
   if (n.waiting.crm_changes) todo.push(`${plural(n.waiting.crm_changes, 'CRM change')} to approve`);
   if (crm?.draft_invoices?.count) todo.push(`${plural(crm.draft_invoices.count, 'draft invoice')} to issue`);
+  if (crm?.draft_invoices?.late_fees?.count) todo.push(`${plural(crm.draft_invoices.late_fees.count, 'late payment fee')} to check and issue`);
   if (crm?.overdue_invoices?.length) todo.push(`${plural(crm.overdue_invoices.length, 'overdue invoice')} to chase`);
   const late = (crm?.onboarding || []).filter((c) => c.overdue?.length).length;
   if (late) todo.push(`${plural(late, 'client')} with late onboarding steps`);

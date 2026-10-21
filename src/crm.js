@@ -108,19 +108,28 @@ export function onboardingView(tasks, now = new Date()) {
   }).sort((a, b) => (b.overdue[0]?.days || -1) - (a.overdue[0]?.days || -1) || String(a.next_due).localeCompare(String(b.next_due)));
 }
 
-/** Draft invoices older than a day: raised by the system (subscriptions, set-ups) and still waiting for a person to issue them. */
+/** Draft invoices older than a day: raised by the system (subscriptions, set-ups) and still waiting for a person to issue them.
+ *  Late payment fees (external_reference late_fee:<invoice id>) are counted apart from the day they are drafted:
+ *  each one needs a person to check it (a business client? a payment plan agreed?) before it is issued. */
 export function draftsView(invoices, now = new Date()) {
-  const rows = (invoices || []).filter((i) => i.status === 'draft' && (!i.created_at || now - new Date(i.created_at) > DAY));
+  const all = (invoices || []).filter((i) => i.status === 'draft');
+  const isFee = (i) => /^late_fee:/.test(String(i.external_reference || ''));
+  const fees = all.filter(isFee);
+  const rows = all.filter((i) => !isFee(i) && (!i.created_at || now - new Date(i.created_at) > DAY));
   return {
     count: rows.length,
     oldest_days: rows.length ? Math.max(...rows.map((i) => (i.created_at ? Math.floor((now - new Date(i.created_at)) / DAY) : 0))) : 0,
     invoices: rows.slice(0, 10).map((i) => ({ ...invoiceView(i), automatic: /^subscriptions?:/.test(String(i.external_reference || '')) })),
+    late_fees: {
+      count: fees.length,
+      invoices: fees.slice(0, 10).map((i) => ({ ...invoiceView(i), for_invoice: String(i.external_reference).slice('late_fee:'.length) })),
+    },
   };
 }
 
 export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) {
   const part = async (fn) => { try { return { ok: true, data: await fn() }; } catch (err) { return { ok: false, error: err.message }; } };
-  const [summary, alerts, expiring, overdue, list, opps, steps, drafts] = await Promise.all([
+  const [summary, alerts, expiring, overdue, list, opps, steps, drafts, lateFees] = await Promise.all([
     part(() => crm.get('/dashboard/summary')),
     part(() => crm.get('/dashboard/alerts')),
     part(() => crm.get('/subscriptions/expiring/list?days=45')),
@@ -131,6 +140,8 @@ export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) 
     part(() => crm.get('/tasks' + qs({ tag: 'onboarding', limit: 100 }))),
     // Invoices the system raised by itself (from subscriptions, or a set-up) wait as drafts until a person issues them.
     part(() => crm.get('/billing/invoices' + qs({ status: 'draft', limit: 100 }))),
+    // The late payment fee: on or off, and after how many days (the contracts say so).
+    part(() => crm.get('/billing/late-fees')),
   ]);
   if (![summary, alerts, expiring, overdue, list, opps].some((p) => p.ok)) {
     throw new Error(summary.error || 'the CRM gave nothing back');
@@ -151,6 +162,7 @@ export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) 
     pipelines: (opps.data?.pipelines || []).map((p) => ({ id: p.id, name: p.name, stages: (p.stages || []).map((s) => ({ id: s.id, name: s.name })) })),
     onboarding: onboardingView(steps.ok ? steps.data?.tasks : [], now),
     draft_invoices: draftsView(drafts.ok ? drafts.data?.invoices : [], now),
+    late_fees: lateFees.ok && lateFees.data ? { enabled: !!lateFees.data.enabled, grace_days: Number(lateFees.data.graceDays) || 7 } : null,
     unavailable: Object.entries({ summary, alerts, expiring, overdue, clients: list, opportunities: opps, onboarding: steps, draft_invoices: drafts })
       .filter(([, p]) => !p.ok).map(([k, p]) => `${k}: ${p.error}`),
   };
@@ -162,7 +174,7 @@ export function crmForContext(s) {
   return {
     summary: s.summary, alerts: s.alerts, expiring_subscriptions: s.expiring_subscriptions, overdue_invoices: s.overdue_invoices,
     clients_total: s.clients_total, open_opportunities: s.open_opportunities.slice(0, 25), pipeline_value: s.pipeline_value,
-    onboarding: (s.onboarding || []).slice(0, 15), draft_invoices: s.draft_invoices || null,
+    onboarding: (s.onboarding || []).slice(0, 15), draft_invoices: s.draft_invoices || null, late_fees: s.late_fees || null,
     unavailable: s.unavailable,
   };
 }

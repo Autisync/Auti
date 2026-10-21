@@ -101,6 +101,17 @@ await check('overdue invoices and renewals become drafts, firmer the later, neve
   assert.deepEqual(await accounts.runAccounts({ db, crm: null, brain: brain({}) }), { considered: 0, drafted: 0 });
 });
 
+await check('a reminder mentions the late payment fee only when the CRM has it on and the invoice is past the grace days', async () => {
+  const accounts = await import('../src/accounts.js');
+  const inv = { id: 'inv-7' };
+  assert.equal(accounts.lateFeeFor({ late_fees: { enabled: false, grace_days: 7 } }, inv, 30), null);
+  assert.equal(accounts.lateFeeFor({ late_fees: null }, inv, 30), null);
+  assert.equal(accounts.lateFeeFor({ late_fees: { enabled: true, grace_days: 7 } }, inv, 5), null);
+  assert.equal(accounts.lateFeeFor({ late_fees: { enabled: true, grace_days: 7 } }, inv, 8), 'a late payment fee applies, as the contract says');
+  const crm = { late_fees: { enabled: true, grace_days: 7 }, draft_invoices: { late_fees: { invoices: [{ for_invoice: 'inv-7', total: '45.63', currency: 'EUR' }] } } };
+  assert.equal(accounts.lateFeeFor(crm, inv, 20), 'a late payment fee of 45.63 EUR applies, as the contract says');
+});
+
 await check('a new enquiry in the CRM is due today, so the next run drafts the reply', async () => {
   const { syncCrmClients } = await import('../src/crm.js');
   const fake = { get: async () => ({ clients: [

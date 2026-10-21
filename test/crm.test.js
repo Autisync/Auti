@@ -29,10 +29,12 @@ function fakeCrm({ token = 'tok-1', deny = [] } = {}) {
     if (path === '/dashboard/summary') return json(200, { summary: { activeClients: 7, monthlyRecurringRevenue: 1250, revenueThisMonth: 900, outstandingInvoices: { count: 2, total: 300 }, expiringSubscriptions: 1 }, recentActivity: [] });
     if (path === '/dashboard/alerts') return json(200, { alerts: [{ type: 'expiring_subscription', severity: 'high', title: 'Hosting renews soon', message: 'Acme', password_hash: 'x' }] });
     if (path.startsWith('/subscriptions/expiring/list')) return json(200, { subscriptions: [{ id: ID(1), client_name: 'Acme', service_name: 'Email hosting', end_date: '2026-10-20', monthly_cost: '40.00', internal: 'hidden' }] });
+    if (path === '/billing/late-fees') return json(200, { enabled: true, graceDays: 7, mode: 'law', since: '2026-10-21' });
     if (path.startsWith('/billing/invoices')) {
       const all = [{ id: ID(2), customer_name: 'Beta', crm_client_id: ID(3), invoice_number: 'INV-9', status: 'overdue', total: '150.00', currency: 'EUR', due_date: '2026-09-01', pdf_secret: 'x' },
         { id: ID(8), customer_name: 'Gamma', crm_client_id: ID(9), invoice_number: 'INV-10', status: 'paid', total: '80.00', currency: 'EUR' },
-        { id: ID(10), customer_name: 'Delta', crm_client_id: ID(12), invoice_number: 'FT 2026/14', status: 'draft', total: '59.00', currency: 'GBP', created_at: '2026-01-02T10:00:00Z', external_reference: 'subscription:abc:2026-01-02' }];
+        { id: ID(10), customer_name: 'Delta', crm_client_id: ID(12), invoice_number: 'FT 2026/14', status: 'draft', total: '59.00', currency: 'GBP', created_at: '2026-01-02T10:00:00Z', external_reference: 'subscription:abc:2026-01-02' },
+        { id: ID(13), customer_name: 'Beta', crm_client_id: ID(3), invoice_number: 'RASC-1A2B3C4D', status: 'draft', total: '43.20', currency: 'EUR', created_at: new Date().toISOString(), external_reference: `late_fee:${ID(2)}` }];
       const status = new URL('http://x' + path).searchParams.get('status');
       return json(200, { invoices: all.filter((i) => !status || i.status === status), pagination: { total: 2 } });
     }
@@ -98,6 +100,11 @@ await check('the snapshot gathers money, renewals, overdue invoices and the pipe
   // Drafts the CRM raised by itself, waiting for a person to issue them.
   assert.equal(s.draft_invoices.count, 1);
   assert.equal(s.draft_invoices.invoices[0].automatic, true);
+  // A late payment fee is counted apart, from the day it is drafted, with the invoice it is for.
+  assert.equal(s.draft_invoices.late_fees.count, 1);
+  assert.equal(s.draft_invoices.late_fees.invoices[0].for_invoice, ID(2));
+  assert.deepEqual(s.late_fees, { enabled: true, grace_days: 7 });
+  assert.deepEqual(crm.crmForContext(s).late_fees, { enabled: true, grace_days: 7 });
   assert.ok(crm.crmForContext(s).onboarding.length === 1 && crm.crmForContext(s).draft_invoices.count === 1);
   assert.deepEqual(s.unavailable, []);
   assert.ok(f.calls.every((c) => c.method === 'GET' || c.path === '/auth/login'));   // reading never writes
@@ -150,7 +157,7 @@ await check('a change Auti proposes waits for the owner, then runs only on appro
   assert.equal(f.calls.filter((x) => x.method === 'PATCH').length, 0);              // nothing happened in the CRM yet
   assert.match((await tools.call('crm_propose_change', { kind: 'create_client', payload: { companyName: 'X' }, reason: 'r' })).error, /required/);
   const inv = await tools.call('crm_invoices', { clientId: ID(3) });
-  assert.deepEqual(inv.invoices.map((i) => [i.invoice_number, i.client_name, i.client_id]), [['INV-9', 'Beta', ID(3)]]);   // billing module, mapped names
+  assert.deepEqual(inv.invoices.map((i) => [i.invoice_number, i.client_name, i.client_id]), [['INV-9', 'Beta', ID(3)], ['RASC-1A2B3C4D', 'Beta', ID(3)]]);   // billing module, mapped names (with the late fee drafted for INV-9)
   assert.equal(inv.invoices[0].pdf_secret, undefined);
 
   const web = await import('../src/web.js');

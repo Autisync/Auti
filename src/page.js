@@ -687,6 +687,8 @@ function decisionQueue() {
     (crm.onboarding || []).filter((o) => o.overdue.length).slice(0, 3).forEach((o) => add('now', 'Onboarding', o.client + ': ' + o.overdue[0].step,
       o.overdue[0].days + ' day' + (o.overdue[0].days === 1 ? '' : 's') + ' late' + (o.overdue.length > 1 ? ', ' + (o.overdue.length - 1) + ' more step' + (o.overdue.length > 2 ? 's' : '') + ' late' : ''),
       'Open', () => { go('crm'); setTimeout(() => document.getElementById('crm-onboarding')?.scrollIntoView({ behavior: 'smooth' }), 80); }));
+    if (crm.draft_invoices?.late_fees?.count) add('now', 'Late payment fees to check', crm.draft_invoices.late_fees.count + ' late fee' + (crm.draft_invoices.late_fees.count > 1 ? 's' : '') + ' drafted',
+      'Invoices still unpaid past the grace days: check each one (a business client, no payment plan agreed) and issue it or delete it in Billing', 'Open', () => go('crm'));
     if (crm.draft_invoices?.count) add('now', 'Invoices to send', crm.draft_invoices.count + ' draft invoice' + (crm.draft_invoices.count > 1 ? 's' : '') + ' not issued yet',
       'Raised from subscriptions or a set-up' + (crm.draft_invoices.oldest_days ? ', oldest ' + crm.draft_invoices.oldest_days + ' days' : '') + ': issue and send them from Billing in the CRM', 'Open', () => go('crm'));
     crm.expiring_subscriptions.filter((s) => !s.end_date || (new Date(s.end_date) - Date.now()) < 14 * 864e5).slice(0, 3)
@@ -1795,6 +1797,10 @@ function viewCrm(root) {
   if (d.draft_invoices?.count) {
     const dr = section('Draft invoices to send', crmTable('crm:drafts', [['client_name', 'Client'], ['invoice_number', 'Invoice'], ['issue_date', 'Raised', (v) => v ? day(v) : ''], ['total', 'Total', (v, r) => money(v, r.currency)]], d.draft_invoices.invoices));
     dr.id = 'crm-drafts'; root.append(dr);
+  }
+  if (d.draft_invoices?.late_fees?.count) {
+    const lf = section('Late payment fees to check', crmTable('crm:latefees', [['client_name', 'Client'], ['invoice_number', 'Draft'], ['issue_date', 'Raised', (v) => v ? day(v) : ''], ['total', 'Fee', (v, r) => money(v, r.currency)]], d.draft_invoices.late_fees.invoices));
+    lf.id = 'crm-latefees'; root.append(lf);
   }
   const overdue = section('Overdue invoices', d.overdue_invoices.length
     ? crmTable('crm:overdue', [['client_name', 'Client'], ['invoice_number', 'Invoice'], ['due_date', 'Due', (v) => v ? day(v) : ''], ['total', 'Total', (v, r) => money(v, r.currency)], ['amount_paid', 'Paid', (v, r) => money(v, r.currency)]], d.overdue_invoices)

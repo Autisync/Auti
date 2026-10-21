@@ -29,11 +29,11 @@ await check('the numbers: brief headline, leads in the last day, AI spend for th
 await check('the text says what waits on the team, ads and spend', async () => {
   const n = await dailyNumbers(db, now);
   const t = dailyText(n, {
-    crm: { draft_invoices: { count: 4 }, overdue_invoices: [{}], onboarding: [{ overdue: [{ days: 2 }] }, { overdue: [] }], expiring_subscriptions: [{ auto_renew: false }] },
+    crm: { draft_invoices: { count: 4, late_fees: { count: 2 } }, overdue_invoices: [{}], onboarding: [{ overdue: [{ days: 2 }] }, { overdue: [] }], expiring_subscriptions: [{ auto_renew: false }] },
     ads: { currency: 'GBP', totals: { spend: 12.5, leads: 2, cpl: 6.25 } }, now,
   });
   assert.match(t, /Weakest link: No new clients this week/);
-  assert.match(t, /4 draft invoices to issue; 1 overdue invoice to chase; 1 client with late onboarding steps; 1 renewal without auto-renew/);
+  assert.match(t, /4 draft invoices to issue; 2 late payment fees to check and issue; 1 overdue invoice to chase; 1 client with late onboarding steps; 1 renewal without auto-renew/);
   assert.match(t, /Leads: 2 found in the last day \(1 strong\)/);
   assert.match(t, /Ads yesterday: GBP 12\.50 spent, 2 leads, GBP 6\.25 a lead/);
   assert.match(t, /AI spend: \$0\.53 in the last day, \$0\.76 in the last 30 days/);
