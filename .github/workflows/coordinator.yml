@@ -18,6 +18,11 @@ on:
         type: choice
         options: [nightly, standup]
         default: nightly
+      focus:
+        description: What the leads agent looks for (nightly runs only)
+        type: choice
+        options: [rotation, uk-trades, uk, portugal, angola, namibia]
+        default: rotation
 
 # Never two runs at once; a late run waits instead of overlapping.
 concurrency:
@@ -93,12 +98,20 @@ jobs:
         if: steps.mode.outputs.mode == 'nightly'
         continue-on-error: true
         timeout-minutes: 15          # web research is slow (about 12 minutes for 8 searches); a slow run is cut here, never the whole job
+        env:
+          LEADS_FOCUS: ${{ inputs.focus || 'rotation' }}   # uk-trades: UK trades losing calls, for CallCatch
         run: node src/run.js leads
       # Mondays the weekly report, the 1st the monthly one. Saved in the database (Documents tab); nothing is printed.
       - name: Reports
         if: steps.mode.outputs.mode == 'nightly'
         continue-on-error: true
         run: node src/run.js report
+      # Last: the day's report (what waits on the team, leads, ads and AI spend) to the team's WhatsApp group,
+      # sent by the CRM from its connected number. Needs the group chosen in the CRM (Settings, Notifications).
+      - name: Daily report to the team
+        if: steps.mode.outputs.mode == 'nightly'
+        continue-on-error: true
+        run: node src/run.js daily
       # A failed run tells the owner: one open issue, commented on by later failures. GitHub notifies on new issues and
       # comments. The text is generic (the repository is public): no names, no figures, only the link to the run.
       - name: Tell the owner a run failed

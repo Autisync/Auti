@@ -26,6 +26,22 @@ export function focusFor(now = new Date(), angles = null) {
   const list = angles?.length ? angles.flatMap((a) => Array(Math.max(1, Math.min(5, a.weight || 1))).fill({ market: a.market, angle: a.angle })) : FOCUS;
   return list[Math.floor(now.getTime() / 864e5) % list.length];
 }
+/**
+ * A chosen focus instead of the day's rotation (the Coordinator workflow's "focus" input):
+ *   'uk-trades'  the UK missed-call angles, for CallCatch (one of them, by day)
+ *   a market     that market's angles, by day ('uk', 'portugal', 'angola', 'namibia')
+ * Anything else, or nothing to match, is the normal rotation.
+ */
+export function focusByChoice(choice, now = new Date(), angles = []) {
+  const c = String(choice || '').trim().toLowerCase();
+  if (!c || c === 'rotation') return null;
+  const pool = c === 'uk-trades'
+    ? angles.filter((a) => a.market === 'uk' && /missed calls/i.test(a.angle))
+    : angles.filter((a) => a.market === c);
+  if (!pool.length) return null;
+  const a = pool[Math.floor(now.getTime() / 864e5) % pool.length];
+  return { market: a.market, angle: a.angle };
+}
 export async function leadAngles(db) {
   return (await db.query(`SELECT market, angle, weight FROM lead_angle WHERE enabled ORDER BY market, created_at, angle`)
     .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;

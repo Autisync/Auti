@@ -200,12 +200,13 @@ await check('Today ranks what needs the owner, money and CRM changes first', asy
 await check('angles come from the database, by weight, and Namibia is a market', async () => {
   const angles = await leads.leadAngles(db);
   assert.ok(angles.some((a) => a.market === 'namibia'));
-  assert.ok(angles.some((a) => /missed calls/.test(a.angle) && a.weight === 2));
+  assert.ok(angles.some((a) => /missed calls: plumbers, electricians/.test(a.angle) && a.weight === 5));   // CallCatch's UK trades, weighted up (015)
+  assert.ok(angles.some((a) => /Greater Manchester/.test(a.angle) && a.weight === 3));
   const total = angles.reduce((n, a) => n + a.weight, 0);
   const seen = new Map();
   for (let d = 0; d < total; d++) { const f = leads.focusFor(new Date(Date.UTC(2026, 9, 4 + d)), angles); const k = f.market + ':' + f.angle; seen.set(k, (seen.get(k) || 0) + 1); }
-  const twice = angles.find((a) => a.weight === 2);
-  assert.equal(seen.get(twice.market + ':' + twice.angle), 2);                   // twice per rotation
+  const five = angles.find((a) => a.weight === 5);
+  assert.equal(seen.get(five.market + ':' + five.angle), 5);                     // five times per rotation
   assert.equal(seen.size, angles.length);
   const r = fakeResearcher({ leads: [] });
   await leads.runLeads({ db, researcher: r, now: new Date(Date.UTC(2026, 9, 4)), checker: noCheck });
@@ -246,6 +247,18 @@ await check('the evidence is checked in code: confirmed needs raise a lead, cont
   const again = fakeResearcher({ leads: [good({ company: 'Old Shop Trading', website: 'http://www.oldshop.example/', services: ['website'] })] });
   assert.equal((await leads.runLeads({ db, researcher: again, focus: FOCUS, checker: noCheck })).saved, 0);
   assert.match(again.seen[0].user, /oldshop\.example/);
+});
+
+await check('a run can be pointed at UK trades for CallCatch, or at one market, instead of the rotation', async () => {
+  const angles = [{ market: 'uk', angle: 'missed calls: plumbers in Merseyside', weight: 5 }, { market: 'uk', angle: 'CRM: estate agents', weight: 1 },
+    { market: 'uk', angle: 'missed calls: trades in Greater Manchester', weight: 3 }, { market: 'portugal', angle: 'websites', weight: 1 }];
+  const day = (n) => new Date(n * 864e5);
+  assert.equal(leads.focusByChoice('rotation', day(0), angles), null);
+  assert.equal(leads.focusByChoice('', day(0), angles), null);
+  const a = leads.focusByChoice('uk-trades', day(0), angles), b = leads.focusByChoice('uk-trades', day(1), angles);
+  assert.ok(/missed calls/.test(a.angle) && /missed calls/.test(b.angle) && a.angle !== b.angle);   // both UK trade angles, by day
+  assert.deepEqual(leads.focusByChoice('portugal', day(3), angles), { market: 'portugal', angle: 'websites' });
+  assert.equal(leads.focusByChoice('namibia', day(3), angles), null);                                   // nothing to match: the rotation
 });
 
 console.log(`\n${passed} passed`);

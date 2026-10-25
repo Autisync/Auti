@@ -12,7 +12,7 @@ export const AGENTS = [
   {
     id: 'retention',
     name: 'Retention',
-    role: 'Watches clients due or overdue for contact and drafts a follow-up for each. For leads you track it writes a four-touch outreach sequence (opener, value, observation, last note), one touch at a time; a reply stops it. New enquiries in the CRM are due the same day. It never sends anything on its own: every draft waits for you on the Approvals tab.',
+    role: 'Watches clients due or overdue for contact and drafts a follow-up for each. For leads you track it writes a four-touch outreach sequence (opener, value, observation, last note), one touch at a time; a reply stops it. Cold lists in the CRM (prospects tagged outreach-...) and lists you import (npm run import:leads) join the sequence by themselves, a few a day (outreach_per_day). New enquiries in the CRM are due the same day. It never sends anything on its own: every draft waits for you on the Approvals tab.',
     schedule: 'After every coordinator run',
   },
   {

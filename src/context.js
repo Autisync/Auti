@@ -1,6 +1,7 @@
 import { listDocuments } from './documents.js';
 import { crmForContext } from './crm.js';
 import { leadsForContext } from './leads.js';
+import { outreachForContext } from './outreach.js';
 import { projectsForContext } from './projects.js';
 
 // Reads everything the coordinator needs to think, in one snapshot.
@@ -59,6 +60,8 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     .catch((err) => { if (err.code === '42P01') return []; throw err; });
 
   const leads = await leadsForContext(db);
+  // Cold-outreach sequences from the CRM's outreach lists and imported lists: counts only.
+  const outreach = await outreachForContext(db);
   // The projects the owner follows: goals, status, and health worked out in code (time used vs milestones done, budget, quiet days).
   const projectFollow = await projectsForContext(db, now);
 
@@ -85,6 +88,7 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     documents,                           // the company's contract templates, policies and checklists
     recentActions,                       // steps Auti took on its own, last 14 days
     leads,                               // businesses the leads agent found, waiting for the owner
+    outreach,                            // cold-outreach sequences running, queued and replied
     projectFollow,                       // followed projects: goals, status, health flags, check-ins waiting
     ...(crm ? { crm: crmForContext(crm) } : {}),   // live from the company CRM: money, renewals, pipeline
   };
