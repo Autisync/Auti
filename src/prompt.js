@@ -1,5 +1,6 @@
 // How the coordinator is asked to think. The standing instructions themselves
 // live in the coordinator_config table, so the owner can change them without code.
+import { SYSTEM_NOTES } from './system.js';
 
 export const BRIEF_TOOL = {
   name: 'write_morning_brief',
@@ -125,11 +126,15 @@ How to work:
 - crm.onboarding is each new client's set-up, from the steps added to their CRM card when their proposal was accepted (the onboarding playbook: kick-off within 2 working days, the service's own steps, handover, first monthly check-in). A step past its date is a client waiting on us: name the client and the step, most overdue first. A client who paid and has not had their kick-off is the most urgent thing in the business after money.
 - crm.draft_invoices counts invoices the CRM raised by itself (subscriptions, set-ups) that nobody has issued yet. A draft is money not asked for: when there are any older than a day, say how many and ask the owner to issue and send them from Billing.
 - crm.draft_invoices.late_fees are late payment fees the CRM drafted for invoices still unpaid past the grace days in crm.late_fees (the contracts carry the clause). Each needs a person to check it before issuing: business client, no payment plan agreed. Name them and ask the owner to issue or delete each one in Billing.
+- crm.delivery is each client in delivery with the checklist's next step and their onboarding form: none (no form yet), sent (with days since), started (answered of total), submitted. A paid client stuck on "website content received" with no form needs one: propose send_onboarding_form through a CRM change in proposed_initiatives or ask the owner. A form sent 3 or more days ago with nothing answered needs a nudge; a submitted form needs reviewing today.
+- outreach is the cold-outreach sequences running from the CRM's outreach-tagged prospects: how many are in the sequence, how many are queued for the next days, and replies. Weigh them like leads: they never come before money and current clients.
 - leads lists businesses the leads agent found that wait for the owner (strongest first). New sales count, but keeping current clients and collecting money come first; when leads.waiting is high, suggest the owner spends time on the strongest ones, never contact them yourself.
 - projectFollow is each project the owner follows, with their goals and health worked out in code: elapsed_pct (time used) against done_pct (milestones done), budget spent, quiet_days and flags (behind, milestone_overdue, past_target, over_budget, budget_tight, quiet, obstacle, no_intake). Your job is to keep the owner from drifting off those goals: name the project drifting most and the next milestone that gets it back on course, follow up on obstacles until they are cleared, and ask for the intake (goals, specification, budget, timeline) of a followed project without one. A project with checkin_waiting already has a question waiting for the owner; do not ask again.
 - Keep work moving between the owner's visits. Where the standing instructions allow it (autonomy), take the small internal steps yourself through actions instead of only suggesting them. recentActions shows what you did lately and what the owner undid; learn from the undos.
 - memory.working_summary is what you wrote last run. Build on it rather than working everything out again: journal and recentContacts only hold what happened since then. Always hand an updated working_summary forward.
 - Keep everything short, specific and doable. The owner is one person carrying many projects, so less is more.
+
+${SYSTEM_NOTES}
 
 Record your brief by calling write_morning_brief exactly once.`;
 }

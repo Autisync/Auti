@@ -59,6 +59,7 @@ export function crmClient({
     get: (path) => request('GET', path),
     post: (path, body) => request('POST', path, body),
     patch: (path, body) => request('PATCH', path, body),
+    put: (path, body) => request('PUT', path, body),
   };
 }
 
@@ -127,6 +128,55 @@ export function draftsView(invoices, now = new Date()) {
   };
 }
 
+// The checklist's step keys, in words, so the brief can name a step without guessing what a key means.
+const STEP_WORDS = {
+  details: 'client details complete', pipeline: 'deal in the pipeline', discovery: 'discovery call', proposal_sent: 'proposal sent',
+  proposal_accepted: 'proposal accepted', contract_signed: 'contract signed', deal_won: 'deal won', paid: 'first payment in', kickoff: 'kick-off',
+  website_content: 'website content received', website_preview: 'website preview approved', website_forms: 'website forms tested',
+  website_live: 'website live on their domain', website_seo: 'website SEO and Search Console', social_connected: 'social pages connected',
+  social_google: 'Google Business Profile connected', social_report: 'monthly report on', social_first_post: 'first post scheduled',
+  crm_account: 'CRM account created', crm_team: 'CRM team signed in', crm_connections: 'CRM connections done', crm_walkthrough: 'CRM walkthrough',
+  email_domain: 'mail domain added', email_dns: 'mail DNS records right', email_mailboxes: 'mailboxes created', email_logins: 'logins sent',
+  email_crm: 'mailbox connected to the CRM', cc_number: 'CallCatch number connected', cc_greeting: 'CallCatch greeting recorded',
+  cc_calls: 'CallCatch test calls', cc_automations: 'CallCatch automations', handover: 'handover', review: 'review asked for',
+};
+export const stepWords = (key) => STEP_WORDS[key] || String(key || '').replace(/_/g, ' ');
+
+/**
+ * Clients in delivery: the checklist's next step and their onboarding form, for the few clients being set up
+ * (open onboarding steps, or clients made in the last 45 days). Needs the CRM's client checklist and onboarding
+ * form (only on the company's own account): a CRM without them gives an empty list.
+ */
+export async function deliveryView(crm, { onboarding = [], clients = [], now = new Date(), max = 8 } = {}) {
+  const ids = [];
+  for (const o of onboarding) if (o.client_id && !ids.includes(o.client_id)) ids.push(o.client_id);
+  for (const c of clients) {
+    if (ids.length >= max) break;
+    const recent = c.created_at && now - new Date(c.created_at) < 45 * DAY;
+    if (c.id && c.status === 'active' && recent && !ids.includes(c.id)) ids.push(c.id);
+  }
+  const names = new Map([...onboarding.map((o) => [o.client_id, o.client]), ...clients.map((c) => [c.id, c.company_name || c.contact_name])]);
+  const out = [];
+  for (const id of ids.slice(0, max)) {
+    let j = null, f = null;
+    try { j = await crm.get(`/clients/${id}/journey`); } catch { j = null; }
+    if (!j) continue;                                   // no checklist for this client (or not on this CRM yet)
+    try { f = (await crm.get(`/clients/${id}/intake?lang=en`))?.intake ?? null; } catch { f = undefined; }
+    const days = (v) => (v ? Math.floor((now - new Date(v)) / DAY) : null);
+    out.push({
+      client_id: id, client: names.get(id) || null,
+      services: j.services || [], paid: !!j.paid, complete: !!j.complete,
+      progress: j.progress ? `${j.progress.done}/${j.progress.total}` : null,
+      next_step: j.next ? stepWords(j.next) : null,
+      form: f === undefined ? 'unknown' : !f ? 'none' : {
+        status: f.status, answered: f.progress?.answered ?? 0, total: f.progress?.total ?? 0,
+        days_since_sent: days(f.sentAt), submitted_days_ago: days(f.submittedAt),
+      },
+    });
+  }
+  return out;
+}
+
 export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) {
   const part = async (fn) => { try { return { ok: true, data: await fn() }; } catch (err) { return { ok: false, error: err.message }; } };
   const [summary, alerts, expiring, overdue, list, opps, steps, drafts, lateFees] = await Promise.all([
@@ -147,6 +197,8 @@ export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) 
     throw new Error(summary.error || 'the CRM gave nothing back');
   }
   const stages = new Map((opps.data?.pipelines || []).flatMap((p) => (p.stages || []).map((s) => [s.id, { stage: s.name, pipeline: p.name, win_probability: s.win_probability }])));
+  const onboarding = onboardingView(steps.ok ? steps.data?.tasks : [], now);
+  const delivery = await deliveryView(crm, { onboarding, clients: list.data?.clients || [], now }).catch(() => []);
   const open = (opps.data?.opportunities || []).map((o) => ({ ...pick(o, OPP_KEYS), ...(stages.get(o.stage_id) || {}) }));
   return {
     fetched_at: new Date().toISOString(),
@@ -160,7 +212,8 @@ export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) 
     open_opportunities: open,
     pipeline_value: open.reduce((s, o) => s + (Number(o.value) || 0), 0),
     pipelines: (opps.data?.pipelines || []).map((p) => ({ id: p.id, name: p.name, stages: (p.stages || []).map((s) => ({ id: s.id, name: s.name })) })),
-    onboarding: onboardingView(steps.ok ? steps.data?.tasks : [], now),
+    onboarding,
+    delivery,
     draft_invoices: draftsView(drafts.ok ? drafts.data?.invoices : [], now),
     late_fees: lateFees.ok && lateFees.data ? { enabled: !!lateFees.data.enabled, grace_days: Number(lateFees.data.graceDays) || 7 } : null,
     unavailable: Object.entries({ summary, alerts, expiring, overdue, clients: list, opportunities: opps, onboarding: steps, draft_invoices: drafts })
@@ -174,7 +227,7 @@ export function crmForContext(s) {
   return {
     summary: s.summary, alerts: s.alerts, expiring_subscriptions: s.expiring_subscriptions, overdue_invoices: s.overdue_invoices,
     clients_total: s.clients_total, open_opportunities: s.open_opportunities.slice(0, 25), pipeline_value: s.pipeline_value,
-    onboarding: (s.onboarding || []).slice(0, 15), draft_invoices: s.draft_invoices || null, late_fees: s.late_fees || null,
+    onboarding: (s.onboarding || []).slice(0, 15), delivery: s.delivery || [], draft_invoices: s.draft_invoices || null, late_fees: s.late_fees || null,
     unavailable: s.unavailable,
   };
 }
@@ -247,6 +300,14 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
     if (res.rows.length) out.updated++;
     else await db.query('UPDATE clients SET crm_synced_at = now() WHERE id = $1', [cur.id]);
   }
+  // Cold lists in the CRM (prospects tagged outreach-...) start the outreach sequence, a few a day.
+  try {
+    const { startCrmOutreach } = await import('./outreach.js');
+    const o = await startCrmOutreach(db, rows, { marketOf });
+    if (o.started) out.outreach = o.started;
+  } catch (err) {
+    out.outreach_error = err.message;
+  }
   return out;
 }
 
@@ -292,6 +353,31 @@ export const CRM_CHANGES = {
     },
     run: (crm, p) => crm.patch(`/clients/${p.clientId}`, { status: p.status }),
     describe: (p) => `Set ${p.clientName || 'the client'}'s CRM status to ${p.status}.`,
+  },
+  // The onboarding form: one private link with what is still missing (logo, photos, domain, mailboxes...).
+  // This one reaches the client (an email from the CRM), so it only ever runs on the owner's approval.
+  send_onboarding_form: {
+    label: 'Send the onboarding form',
+    check(p) {
+      if (!/^[0-9a-f-]{36}$/i.test(String(p?.clientId ?? ''))) throw new Error('clientId must be a CRM id');
+      const parts = ['business', 'website', 'email', 'social', 'crm', 'callcatch'];
+      const sections = Array.isArray(p.sections) ? [...new Set(p.sections.filter((x) => parts.includes(x)))] : [];
+      if (p.language != null && !['pt', 'en'].includes(p.language)) throw new Error('language must be pt or en');
+      const note = String(p.note ?? '').trim().slice(0, 1000);
+      return { ...pick(p, ['clientId', 'clientName', 'language']), ...(sections.length ? { sections } : {}), ...(note ? { note } : {}) };
+    },
+    // Sets the form up first when the client has none (the parts they bought, unless named), then emails the link.
+    async run(crm, p) {
+      const cur = await crm.get(`/clients/${p.clientId}/intake?lang=en`);
+      if (!cur?.intake) {
+        await crm.put(`/clients/${p.clientId}/intake`, {
+          sections: p.sections || cur?.suggested?.sections || ['business', 'website'], skip: [], custom: [],
+          note: p.note || '', language: p.language || cur?.suggested?.language || 'en',
+        });
+      }
+      return crm.post(`/clients/${p.clientId}/intake/send`, {});
+    },
+    describe: (p) => `Email ${p.clientName || 'the client'} the onboarding form${p.sections ? ` (${p.sections.join(', ')})` : ''}, so they send what is still missing in one go.`,
   },
 };
 
@@ -352,7 +438,7 @@ export const CRM_TOOL_DEFS = [
   { name: 'crm_invoices', description: 'CRM invoices, optionally by status or client.',
     input_schema: { type: 'object', additionalProperties: false, properties: {
       status: { type: 'string', enum: ['draft', 'sent', 'paid', 'overdue', 'partial', 'cancelled'] }, clientId: { type: 'string' }, page: { type: 'integer', minimum: 1 } } } },
-  { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName and email (required), contactName, phone, country, city, website, notes. create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status.`,
+  { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName and email (required), contactName, phone, country, city, website, notes. create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status. send_onboarding_form payload: clientId, clientName, and optionally sections (business, website, email, social, crm, callcatch), language (pt or en) and a note; it sets the form up if the client has none and emails the link.`,
     input_schema: { type: 'object', additionalProperties: false, required: ['kind', 'payload', 'reason'], properties: {
       kind: { type: 'string', enum: Object.keys(CRM_CHANGES) }, payload: { type: 'object' }, reason: { type: 'string' } } } },
 ];

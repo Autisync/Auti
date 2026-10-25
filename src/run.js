@@ -1,4 +1,4 @@
-// Entry point for the scheduler:  node src/run.js nightly|standup|retention|accounts|leads|report|daily
+// Entry point for the scheduler:  node src/run.js nightly|standup|retention|accounts|leads|report|daily|import-leads <file>
 // In CI (GitHub Actions) logs can be public, so the brief's content is never
 // printed there; only counts. Read the brief with `npm run brief` instead.
 import { connect } from './db.js';
@@ -14,6 +14,8 @@ import { runAccounts } from './accounts.js';
 import { runReport, reportsDue } from './reports.js';
 import { CHEAP } from './models.js';
 import { postDailyReport } from './daily.js';
+import { importLeads } from './outreach.js';
+import fs from 'node:fs';
 
 const mode = process.argv[2] || 'nightly';
 const quiet = process.env.CI === 'true' || process.env.JARVIS_QUIET === '1';
@@ -61,7 +63,7 @@ async function coordinator() {
     // Then copy the CRM's clients into Auti's own list, so the Clients tab and the retention agent see them.
     try {
       const sync = await syncCrmClients(db, crmClient());
-      console.log(`crm clients: seen=${sync.seen} added=${sync.added} updated=${sync.updated} linked=${sync.linked}${sync.inbound ? ` new_enquiries=${sync.inbound}` : ''}`);
+      console.log(`crm clients: seen=${sync.seen} added=${sync.added} updated=${sync.updated} linked=${sync.linked}${sync.inbound ? ` new_enquiries=${sync.inbound}` : ''}${sync.outreach ? ` outreach_started=${sync.outreach}` : ''}${sync.outreach_error ? ` outreach_skipped=(${sync.outreach_error})` : ''}`);
     } catch (err) {
       console.error(`crm client sync skipped: ${err.message}`);
     }
@@ -142,8 +144,19 @@ async function daily() {
   console.log(`[${new Date().toISOString()}] daily report ${out.posted ? 'posted to the team group' : 'not posted: ' + out.reason}`);
 }
 
+// A lead list the owner keeps outside the repository (seed/ is never published):
+//   npm run import:leads -- seed/my-leads.json
+// Counts only in the output, never names.
+async function importLeadsFile() {
+  const file = process.argv[3];
+  if (!file) throw new Error('give the file: npm run import:leads -- path/to/leads.json');
+  const rows = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const out = await importLeads(db, Array.isArray(rows) ? rows : rows.leads);
+  console.log(`import: ${out.seen} in the file, ${out.added} added (${out.tracking} into the outreach sequence, ${out.waiting} waiting on the Leads tab), ${out.skipped} skipped${out.problems.length ? `; ${out.problems.length} rows had problems: ${out.problems.slice(0, 5).join('; ')}` : ''}`);
+}
+
 try {
-  const MODES = { retention, leads, accounts, report, daily };
+  const MODES = { retention, leads, accounts, report, daily, 'import-leads': importLeadsFile };
   await (MODES[mode] ? MODES[mode]() : coordinator());
 } catch (err) {
   console.error(`[${new Date().toISOString()}] ${mode} run failed: ${err.message}`);

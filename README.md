@@ -130,3 +130,18 @@ Natural voice (optional): set one key in the Vercel project and replies are spok
 - A scheduled run that fails opens one issue labelled `auti-run-failed` (later failures comment on it), so GitHub tells you. It holds only a link to the run.
 - Chat stores only token counts (`agent_usage`), never what was said.
 - Icons are drawn by `python3 scripts/make-icons.py`.
+
+## Cold outreach from your own lists
+
+Two ways to hand Auti a list of businesses to approach. Either way each one gets the four-touch outreach sequence:
+every touch is a draft on the Approvals tab that you send yourself, and a reply stops it. New sequences start a few
+a day (the `outreach_per_day` standing instruction, 5 to begin with), strongest first.
+
+- **In the CRM:** import or add them as prospects with a tag starting `outreach-` (for example `outreach-oct26`).
+  The next run picks them up. Tag one `outreach-sent-1` (or 2, 3) if you already sent that touch, or `no-outreach`
+  to hold it back.
+- **From a file:** put the list in `seed/` (never published) as JSON and run `npm run import:leads -- seed/leads.json`.
+  Each row: `company`, `market` (uk, portugal, angola, namibia), `signals` (what you saw), and optionally `city`,
+  `sector`, `website`, `services`, `fit` (1-5), `pitch`, `contact_route`, `sources`, `touch_sent` with
+  `contacted_on` (YYYY-MM-DD) for ones you already contacted, and `track: false` to leave it on the Leads tab instead.
+

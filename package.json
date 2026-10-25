@@ -4,7 +4,9 @@
   "private": true,
   "description": "Auti v1 coordinator: reads a company's state from Postgres, thinks with the Claude API, writes the morning brief back.",
   "type": "module",
-  "engines": { "node": ">=22.9" },
+  "engines": {
+    "node": ">=22.9"
+  },
   "scripts": {
     "migrate": "node --env-file-if-exists=.env src/migrate.js",
     "seed": "node --env-file-if-exists=.env src/seed.js",
@@ -12,8 +14,9 @@
     "standup": "node --env-file-if-exists=.env src/run.js standup",
     "brief": "node --env-file-if-exists=.env src/show.js",
     "compare": "node --env-file-if-exists=.env src/compare.js",
+    "import:leads": "node --env-file-if-exists=.env src/run.js import-leads",
     "check:private": "node scripts/check-private.js",
-    "test": "node test/coordinator.test.js && node test/crm.test.js && node test/leads.test.js && node test/models.test.js && node test/voice.test.js && node test/projects.test.js && node test/agents.test.js && node test/daily.test.js"
+    "test": "node test/coordinator.test.js && node test/crm.test.js && node test/leads.test.js && node test/models.test.js && node test/voice.test.js && node test/projects.test.js && node test/agents.test.js && node test/daily.test.js && node test/outreach.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
