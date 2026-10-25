@@ -46,6 +46,16 @@ await check('the CRM\'s outreach-tagged prospects start the sequence by themselv
   assert.equal(again.outreach, undefined);                                         // never started twice
 });
 
+await check('a cold list added to the CRM today is not taken for new enquiries', async () => {
+  const today = new Date().toISOString();
+  const rows = [prospect(20, { created_at: today }), prospect(21, { created_at: today, tags: ['instagram'] })];
+  const out = await crm.syncCrmClients(db, { get: async () => ({ clients: rows, pagination: { total: rows.length } }) });
+  assert.equal(out.inbound, 1, JSON.stringify(out));                               // only the inbound one
+  const cold = (await db.query(`SELECT notes, outreach_step FROM clients WHERE name = 'Imobiliaria 20'`)).rows[0];
+  assert.equal(cold.notes, null); assert.equal(cold.outreach_step, 1);
+  assert.match((await db.query(`SELECT notes FROM clients WHERE name = 'Imobiliaria 21'`)).rows[0].notes, /reply today/);
+});
+
 await check('the retention agent sees each due touch with what the CRM said about them', async () => {
   const due = await clientsDue(db);
   const one = due.find((c) => c.outreach_step === 1);

@@ -274,7 +274,9 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
     if (!cur) {
       // A prospect that arrived in the CRM in the last three days is someone waiting for an answer (a website form,
       // the quiz, a missed call): due today, so the next run drafts the reply. Everyone else is spread over weeks.
-      const fresh = (status ?? 'active') === 'lead' && c.created_at && Date.now() - new Date(c.created_at).getTime() < 3 * 864e5;
+      // A cold-outreach list (tagged outreach-...) is not an enquiry: nobody is waiting, the sequence paces it.
+      const cold = (c.tags || []).some((t) => /^outreach/i.test(String(t)));
+      const fresh = !cold && (status ?? 'active') === 'lead' && c.created_at && Date.now() - new Date(c.created_at).getTime() < 3 * 864e5;
       // Someone who rang CallCatch's own demo line is a UK trade trying the product: a hot prospect for CallCatch.
       const demo = (c.tags || []).includes('callcatch-demo');
       const email = c.email && !/\.invalid$/i.test(c.email) ? c.email : null;
