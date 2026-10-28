@@ -340,7 +340,7 @@ export function connectedTools(env = process.env) {
       detail: githubToken(env) ? 'Auti chat can list your repos, see commits, pull requests and issues, and read files.'
         : 'Public repos only. Add a read-only GITHUB_TOKEN in Vercel to let Auti chat see your private repos.' },
     { id: 'crm', name: 'CRM', connected: crmConfigured(env), access: crmConfigured(env) ? 'reads; changes on your approval' : 'not connected',
-      detail: crmConfigured(env) ? 'Auti reads clients, subscriptions, invoices, the dashboard and the pipeline, and proposes changes for you to approve.'
+      detail: crmConfigured(env) ? 'Auti reads clients, subscriptions, invoices, the dashboard and the pipeline, and proposes changes for you to approve (including sending an invoice to a client on WhatsApp).'
         : 'Create a CRM user for Auti, then set CRM_API_URL, CRM_EMAIL and CRM_PASSWORD in Vercel and as GitHub secrets.' },
     { id: 'tasks', name: 'Task list', connected: false, access: 'planned', detail: 'Your existing task list, once connected, syncs with the Tasks tab.' },
   ];

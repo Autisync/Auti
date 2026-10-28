@@ -21,16 +21,17 @@ export function crmClient({
   if (!/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)/.test(base)) throw new Error('CRM_API_URL must start with https://');
   const key = `${base}|${email}`;
 
-  const call = async (method, path, body, token) => {
+  // body is sent as JSON; raw (a Buffer, with its type) is sent as it is. binary reads the answer as bytes (a PDF).
+  const call = async (method, path, body, token, { raw, type, binary } = {}) => {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
     try {
       const r = await fetch(base + path, {
         method, signal: ctl.signal,
-        headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        ...(body ? { body: JSON.stringify(body) } : {}),
+        headers: { Accept: binary ? '*/*' : 'application/json', ...(raw ? { 'Content-Type': type } : body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        ...(raw ? { body: raw } : body ? { body: JSON.stringify(body) } : {}),
       });
-      const out = await r.json().catch(() => ({}));
+      const out = binary && r.ok ? Buffer.from(await r.arrayBuffer()) : await r.json().catch(() => ({}));
       return { status: r.status, ok: r.ok, out };
     } catch (err) {
       throw new Error(err.name === 'AbortError' ? 'the CRM did not answer in time' : `could not reach the CRM (${err.message})`);
@@ -45,9 +46,9 @@ export function crmClient({
   };
   const token = async () => (cached?.key === key && now() - cached.at < TOKEN_TTL_MS ? cached.token : login());
 
-  const request = async (method, path, body) => {
-    let res = await call(method, path, body, await token());
-    if (res.status === 401) res = await call(method, path, body, await login());   // expired or revoked: sign in once more
+  const request = async (method, path, body, opt) => {
+    let res = await call(method, path, body, await token(), opt);
+    if (res.status === 401) res = await call(method, path, body, await login(), opt);   // expired or revoked: sign in once more
     if (res.status === 403) throw new Error(`Auti's CRM user is not allowed to do that (${method} ${path.split('?')[0]}). Give it a role with that permission.`);
     if (!res.ok) {
       const why = res.out?.error || res.out?.errors?.map?.((e) => `${e.path || e.param}: ${e.msg}`).join(', ') || res.status;
@@ -60,6 +61,8 @@ export function crmClient({
     post: (path, body) => request('POST', path, body),
     patch: (path, body) => request('PATCH', path, body),
     put: (path, body) => request('PUT', path, body),
+    bytes: (path, method = 'POST') => request(method, path, null, { binary: true }),
+    upload: (path, raw, type) => request('POST', path, null, { raw, type }),
   };
 }
 
@@ -315,6 +318,22 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
 
 // ---------- changing, only on the owner's tap ----------
 
+// Invoices that can go to a client (issued and not settled), and those that count as still open for the duplicate check.
+const SENDABLE = ['issued', 'sent', 'partially_paid', 'partial', 'overdue'];
+const OPEN_INVOICE = [...SENDABLE, 'draft'];
+const money = (v, cur) => (v == null || v === '' ? '' : `${Number(v).toLocaleString('pt-PT', { maximumFractionDigits: 2 })} ${cur || ''}`.trim());
+const dmy = (d) => (d ? d.split('-').reverse().join('/') : '');
+
+// The words that go with the PDF: the owner's own if given, otherwise a short note in Portuguese (or English).
+export function invoiceMessage(p) {
+  if (p.message) return p.message;
+  const owed = money(p.balance ?? p.total, p.currency);
+  const name = String(p.clientName || '').trim();
+  return p.language === 'en'
+    ? `Hello${name ? ` ${name}` : ''}, here is invoice ${p.invoiceNumber || ''} for ${owed}${p.dueDate ? `, due on ${dmy(p.dueDate)}` : ''}. The PDF follows in this chat.${p.paymentUrl ? ` You can pay here: ${p.paymentUrl}` : ''} Any questions, just reply here. Thank you!`
+    : `Olá${name ? ` ${name}` : ''}, segue a fatura ${p.invoiceNumber || ''} no valor de ${owed}${p.dueDate ? `, com vencimento a ${dmy(p.dueDate)}` : ''}. O PDF segue nesta conversa.${p.paymentUrl ? ` Pode pagar aqui: ${p.paymentUrl}` : ''} Qualquer dúvida, responda a esta mensagem. Obrigado!`;
+}
+
 export const CRM_CHANGES = {
   create_client: {
     label: 'Add a client',
@@ -381,6 +400,73 @@ export const CRM_CHANGES = {
     },
     describe: (p) => `Email ${p.clientName || 'the client'} the onboarding form${p.sections ? ` (${p.sections.join(', ')})` : ''}, so they send what is still missing in one go.`,
   },
+  // An issued invoice to the client on WhatsApp, through the CRM's own Conversations (so it shows in their thread):
+  // a short message with the number, amount and due date, then the invoice PDF. It reaches the client, so it only
+  // runs on the owner's approval. Before it is proposed, prepare() reads the invoice from the CRM and stops on a draft
+  // (a person issues it in Billing: that fixes its number and files it with AGT), on anything paid or void, on the same
+  // invoice already waiting or sent by Auti in the last week, and names the client's other open or draft invoices,
+  // so two invoices for the same thing are not sent. Needs the CRM's WhatsApp connected and the client's mobile number.
+  send_invoice_whatsapp: {
+    label: 'Send an invoice by WhatsApp',
+    check(p) {
+      if (!/^[0-9a-f-]{36}$/i.test(String(p?.invoiceId ?? ''))) throw new Error('invoiceId must be a CRM invoice id (from crm_invoices)');
+      if (p.clientId != null && p.clientId !== '' && !/^[0-9a-f-]{36}$/i.test(String(p.clientId))) throw new Error('clientId must be a CRM id');
+      if (p.language != null && !['pt', 'en'].includes(p.language)) throw new Error('language must be pt or en');
+      const message = String(p.message ?? '').trim();
+      if (message.length > 1000) throw new Error('message is too long (1000 characters at most)');
+      const out = pick(p, ['invoiceId', 'clientId', 'clientName', 'invoiceNumber', 'language', 'total', 'balance', 'currency', 'dueDate', 'paymentUrl']);
+      if (message) out.message = message;
+      if (p.resend === true) out.resend = true;
+      if (Array.isArray(p.warnings) && p.warnings.length) out.warnings = p.warnings.map(String).slice(0, 10);
+      return out;
+    },
+    async prepare(crm, p, db) {
+      const inv = (await crm.get(`/billing/invoices/${p.invoiceId}`))?.invoice;
+      if (!inv) throw new Error('that invoice is not in the CRM');
+      const number = inv.invoice_number || 'the invoice';
+      if (inv.status === 'draft') throw new Error(`${number} is still a draft. Issue it in Billing first (that gives it its number and files it with AGT), then it can be sent.`);
+      if (!SENDABLE.includes(inv.status)) throw new Error(`${number} is ${inv.status}: there is nothing to send.`);
+      const clientId = inv.crm_client_id || p.clientId;
+      if (!clientId) throw new Error(`${number} is not linked to a CRM client, so there is no WhatsApp number to send it to. Pass clientId.`);
+      const prior = (await db.query(
+        `SELECT id, status, decided_at FROM crm_request
+          WHERE kind = 'send_invoice_whatsapp' AND payload->>'invoiceId' = $1
+            AND (status IN ('awaiting_approval', 'running') OR (status = 'done' AND decided_at > now() - interval '7 days'))
+          ORDER BY created_at DESC LIMIT 1`, [p.invoiceId])).rows[0];
+      if (prior && prior.status !== 'done') return { waiting: prior.id };
+      if (prior && !p.resend) throw new Error(`Auti already sent ${number} by WhatsApp on ${dayOf(prior.decided_at)}. Ask again with resend if it should go a second time.`);
+      // The client's other invoices still open or not issued: a second invoice for the same renewal is the mistake to catch.
+      const list = (await crm.get('/billing/invoices' + qs({ limit: 100 })))?.invoices || [];
+      const total = Number(inv.total);
+      const warnings = list.map(invoiceView)
+        .filter((o) => o.client_id === clientId && o.id !== inv.id && OPEN_INVOICE.includes(o.status))
+        .map((o) => `${o.invoice_number || 'an unnumbered draft'} (${o.status}, ${money(o.total, o.currency)})${Number(o.total) === total ? ': the same amount, check it is not a duplicate' : ''}`);
+      const balance = Number(inv.balance_due ?? inv.total);
+      return {
+        ...p, clientId, clientName: inv.customer_name || p.clientName, invoiceNumber: inv.invoice_number,
+        total: inv.total, balance: Number.isFinite(balance) ? balance : undefined, currency: inv.currency,
+        dueDate: dayOf(inv.due_date), paymentUrl: inv.payment_url || undefined,
+        ...(warnings.length ? { warnings } : {}),
+      };
+    },
+    async run(crm, p) {
+      // Read again at the moment of sending: it may have been paid or voided while it waited.
+      const inv = (await crm.get(`/billing/invoices/${p.invoiceId}`))?.invoice;
+      if (!inv) throw new Error('that invoice is no longer in the CRM');
+      if (!SENDABLE.includes(inv.status)) throw new Error(`${inv.invoice_number || 'the invoice'} is now ${inv.status}: not sent.`);
+      // Everything that can fail goes before the first message, so a failure never leaves half a send.
+      const pdf = await crm.bytes(`/billing/invoices/${p.invoiceId}/pdf`);
+      const filename = `${String(inv.invoice_number || 'invoice').replace(/[^\w.-]+/g, '_')}.pdf`;
+      const { attachment } = await crm.upload(`/conversations/attachments${qs({ filename })}`, pdf, 'application/pdf');
+      if (!attachment?.url) throw new Error('the CRM did not keep the invoice PDF');
+      const { conversationId } = await crm.post('/conversations/start', { clientId: p.clientId, channel: 'whatsapp' });
+      await crm.post(`/conversations/${conversationId}/reply`, { content: invoiceMessage(p) });
+      await crm.post(`/conversations/${conversationId}/reply`, { content: '', attachments: [attachment] });
+      return { conversationId, sent: inv.invoice_number };
+    },
+    describe: (p) => `WhatsApp ${p.clientName || 'the client'} invoice ${p.invoiceNumber || ''} (${money(p.balance ?? p.total, p.currency)}${p.dueDate ? `, due ${p.dueDate}` : ''}) with the PDF, saying: "${invoiceMessage(p)}"`
+      + (p.warnings?.length ? ` Also open for this client: ${p.warnings.join('; ')}.` : ''),
+  },
 };
 
 // The owner's own change from the CRM tab: runs now.
@@ -391,10 +477,20 @@ export async function applyCrmChange(crm, kind, payload) {
 }
 
 // Auti (chat or coordinator) proposes a change; it waits on the Approvals tab.
-export async function proposeCrmChange(db, { kind, payload, reason, proposed_by = 'assistant' }) {
+// A change with prepare() is looked up in the CRM first (crm: the client, or a function that makes one).
+export async function proposeCrmChange(db, { kind, payload, reason, proposed_by = 'assistant', crm }) {
   const c = CRM_CHANGES[kind];
   if (!c) throw new Error(`unknown change; use one of ${Object.keys(CRM_CHANGES).join(', ')}`);
-  const clean = c.check(payload || {});
+  let clean = c.check(payload || {});
+  if (c.prepare) {
+    if (!crm) throw new Error(`${c.label} needs the CRM connected`);
+    const ready = await c.prepare(typeof crm === 'function' ? crm() : crm, clean, db);
+    if (ready.waiting) {
+      const row = (await db.query(`SELECT id, summary FROM crm_request WHERE id = $1`, [ready.waiting])).rows[0];
+      return { id: row.id, waiting_for_owner: true, already_waiting: true, summary: row.summary };
+    }
+    clean = c.check(ready);
+  }
   const row = (await db.query(
     `INSERT INTO crm_request (kind, payload, summary, reason, proposed_by) VALUES ($1, $2::jsonb, $3, $4, $5) RETURNING id, summary`,
     [kind, JSON.stringify(clean), c.describe(clean), String(reason ?? '').slice(0, 1000) || null, proposed_by])).rows[0];
@@ -440,7 +536,7 @@ export const CRM_TOOL_DEFS = [
   { name: 'crm_invoices', description: 'CRM invoices, optionally by status or client.',
     input_schema: { type: 'object', additionalProperties: false, properties: {
       status: { type: 'string', enum: ['draft', 'sent', 'paid', 'overdue', 'partial', 'cancelled'] }, clientId: { type: 'string' }, page: { type: 'integer', minimum: 1 } } } },
-  { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName and email (required), contactName, phone, country, city, website, notes. create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status. send_onboarding_form payload: clientId, clientName, and optionally sections (business, website, email, social, crm, callcatch), language (pt or en) and a note; it sets the form up if the client has none and emails the link.`,
+  { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName and email (required), contactName, phone, country, city, website, notes. create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status. send_onboarding_form payload: clientId, clientName, and optionally sections (business, website, email, social, crm, callcatch), language (pt or en) and a note; it sets the form up if the client has none and emails the link. send_invoice_whatsapp payload: invoiceId (from crm_invoices), and optionally clientId (when the invoice has none), language (pt, the default, or en), message (the words to send instead of the standard note) and resend (true only when the owner wants an invoice sent again); it sends the client a WhatsApp from the CRM with the number, amount and due date, then the PDF. It refuses drafts (the owner issues them in Billing first) and paid or void invoices, and the summary it returns names the client's other open or draft invoices: tell the owner about those, they may be duplicates.`,
     input_schema: { type: 'object', additionalProperties: false, required: ['kind', 'payload', 'reason'], properties: {
       kind: { type: 'string', enum: Object.keys(CRM_CHANGES) }, payload: { type: 'object' }, reason: { type: 'string' } } } },
 ];
@@ -468,7 +564,7 @@ export function crmTools(db, { client = () => crmClient() } = {}) {
       const invoices = (out.invoices || []).map(invoiceView).filter((i) => !clientId || i.client_id === clientId);
       return { invoices, pagination: out.pagination };
     },
-    crm_propose_change: async ({ kind, payload, reason }) => proposeCrmChange(db, { kind, payload, reason }),
+    crm_propose_change: async ({ kind, payload, reason }) => proposeCrmChange(db, { kind, payload, reason, crm: client }),
   };
   return {
     defs: CRM_TOOL_DEFS,
