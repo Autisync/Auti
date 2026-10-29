@@ -306,7 +306,11 @@ export async function autoSendOutreach(db, crm, { resolver } = {}) {
   if (!(await settingOn(db, 'outreach_autosend'))) return { skipped: 'switched off', sent: 0 };
   const { decideFollowUp } = await import('./web.js');
   const { checkClientEmail, sendFollowUpViaCrm } = await import('./crm.js');
-  const limit = await outreachPerDay(db);
+  // outreach_per_day is a day's total, not a run's: the scheduled runs come several times a day.
+  const sentToday = Number((await db.query(
+    `SELECT count(*)::int AS n FROM follow_up WHERE sent_via = 'auto' AND decided_at >= date_trunc('day', now())`)).rows[0].n);
+  const limit = Math.max(0, (await outreachPerDay(db)) - sentToday);
+  if (!limit) return { skipped: 'today\'s outreach already sent', sent: 0 };
   const rows = (await db.query(
     `SELECT f.id, f.subject, f.body, f.step, c.id AS client_id, c.crm_id, c.name,
             (SELECT min(t.happened_at) FROM client_touchpoint t WHERE t.client_id = c.id) AS first_touch
@@ -342,4 +346,12 @@ export async function autoSendOutreach(db, crm, { resolver } = {}) {
     } catch { out.failed++; }      // left waiting: the owner sees it on the Approvals tab
   }
   return out;
+}
+
+/** Cold emails go out on working days in office hours only (9:00-18:00 in the company's time zone), never from the overnight run. */
+export function officeHours(now = new Date(), timezone = 'Europe/Lisbon') {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: timezone, weekday: 'short', hour: 'numeric', hour12: false })
+    .formatToParts(now).map((p) => [p.type, p.value]));
+  const hour = Number(parts.hour) % 24;
+  return !['Sat', 'Sun'].includes(parts.weekday) && hour >= 9 && hour < 18;
 }
