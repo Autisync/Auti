@@ -14,7 +14,7 @@ import { runAccounts } from './accounts.js';
 import { runReport, reportsDue } from './reports.js';
 import { CHEAP } from './models.js';
 import { postDailyReport } from './daily.js';
-import { importLeads, autoSendOutreach, leadsToCrm } from './outreach.js';
+import { importLeads, autoSendOutreach, leadsToCrm, officeHours } from './outreach.js';
 import fs from 'node:fs';
 
 const mode = process.argv[2] || 'nightly';
@@ -99,6 +99,10 @@ async function retention() {
   // Outreach touches to CRM prospects send themselves when the owner switched outreach_autosend on. Counts only.
   if (crmConfigured()) {
     try {
+      if (!officeHours(new Date(), process.env.JARVIS_TIMEZONE || 'Europe/Lisbon')) {
+        console.log('outreach autosend: outside office hours, the drafts wait for the next daytime run');
+        return;
+      }
       const a = await autoSendOutreach(db, crmClient());
       if (!a.skipped) console.log(`outreach autosend: sent=${a.sent} replied=${a.replied} bad_email=${a.bad_email} failed=${a.failed}`);
     } catch (err) { console.error(`outreach autosend skipped: ${err.message}`); }

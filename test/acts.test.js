@@ -206,4 +206,22 @@ await check('Auti reads a whole conversation before replying: who said what, in 
   assert.match(await chat.systemFor('assistant', db), /read the conversation first \(crm_conversation\)/);
 });
 
+await check('cold emails go out in office hours only, and outreach_per_day is a day\'s total', async () => {
+  // 29 Oct 2026 is a Thursday; Lisbon is on UTC in winter.
+  assert.equal(outreach.officeHours(new Date('2026-10-29T04:17:00Z')), false);
+  assert.equal(outreach.officeHours(new Date('2026-10-29T12:23:00Z')), true);
+  assert.equal(outreach.officeHours(new Date('2026-10-29T17:59:00Z')), true);
+  assert.equal(outreach.officeHours(new Date('2026-10-29T18:00:00Z')), false);
+  assert.equal(outreach.officeHours(new Date('2026-10-31T12:00:00Z')), false);   // Saturday
+  await db.query(`UPDATE coordinator_config SET value = '1 a day', enabled = true WHERE key = 'outreach_per_day'`);
+  await db.query(`UPDATE coordinator_config SET enabled = true WHERE key = 'outreach_autosend'`);
+  const c = (await db.query(`INSERT INTO clients (name, market, status, crm_id, outreach_step, next_contact_due) VALUES ('Capped Ltd', 'uk', 'lead', $1, 1, current_date) RETURNING id`, [ID(888)])).rows[0].id;
+  await db.query(`INSERT INTO follow_up (client_id, channel, subject, body, created_by_agent, step) VALUES ($1, 'email', 'Hello', 'Hi. If it isn''t for you, just reply no.', 'outreach', 1)`, [c]);
+  const sentAlready = Number((await db.query(`SELECT count(*)::int AS n FROM follow_up WHERE sent_via = 'auto' AND decided_at >= date_trunc('day', now())`)).rows[0].n);
+  const out = await outreach.autoSendOutreach(db, fakeCrm());
+  if (sentAlready >= 1) assert.match(out.skipped, /already sent/);
+  else assert.equal(out.sent, 1);
+  await db.query(`UPDATE coordinator_config SET enabled = false WHERE key = 'outreach_autosend'`);
+});
+
 console.log(`\n${passed} passed`);
