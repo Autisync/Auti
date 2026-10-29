@@ -2,7 +2,7 @@
 // Plain facts about the tools, never company data or names (this repository is public). Update it when the
 // CRM ships something the owner or a client will use: the coordinator and the chat both read it on every run.
 
-export const SYSTEMS_UPDATED = '2026-10-25';
+export const SYSTEMS_UPDATED = '2026-10-29';
 
 export const SYSTEM_NOTES = `What the company CRM does as of ${SYSTEMS_UPDATED} (the company's own account in it):
 - Client checklist, on every client card: the sale in order (details, pipeline, discovery call, proposal sent, proposal accepted, contract signed, deal won, paid), then delivery once they have paid: kick-off, each service they bought (website, social media, CRM account, business email, CallCatch) step by step, then handover and a review. Many steps tick themselves (a sent proposal, a paid invoice, a connected Facebook page, a website answering on its domain). "Deal won" can only happen once per client, so a second won deal is a mistake to fix, not a sale. crm.delivery shows each client's next step.
@@ -13,4 +13,5 @@ export const SYSTEM_NOTES = `What the company CRM does as of ${SYSTEMS_UPDATED} 
 - Google Business Profile connects on its own, apart from the full Google connection, so a client's profile can be managed before they connect their calendar and Gmail.
 - WhatsApp: the official business number sends messages and templates; WhatsApp groups (the team group, client groups) need the QR-linked phone (the WhatsApp gateway) until Meta grants an Official Business Account (requested, waiting on Meta). Team notices (proposal accepted, payment in, invoice overdue, new enquiry, onboarding form received, the daily report) go to the team group, and to Telegram when chosen.
 - Client CRM accounts: choosing a plan fills in its users, clients, storage and largest file; uploads respect them.
-- Nothing Auti proposes reaches a client by itself: every message, form and invoice still goes out on a person's tap.`;
+- Auti's own plans and proposals still wait for the owner. What the owner asks Auti to do in the chat happens there and then: adding clients, prospects and deals, changing a status, sending an email or a WhatsApp from the CRM, replying in the CRM inbox, sending the onboarding form, scheduling a contact or an outreach sequence.
+- Leads the leads agent finds with a business email go into the CRM as prospects and join the outreach queue by themselves (switch: leads_to_crm). Outreach emails to CRM prospects send themselves, a few a day, only when the owner has switched outreach_autosend on; a reply stops the sequence. Follow-ups to existing clients and invoices still go out on a person's tap.`;

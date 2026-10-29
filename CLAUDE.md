@@ -30,5 +30,7 @@ npm run brief            # print the latest brief
 - The repo is public. Company data lives only in `seed/private.sql` and the database. Never commit it, and never print brief content in CI logs (`JARVIS_QUIET`).
 - Never read out, log or commit secrets: `.env`, API keys, connection strings.
 - Initiatives created by the coordinator stay `awaiting_approval`. Don't remove the `CHECK` constraint or let the coordinator approve anything.
-- Automatic steps live in `src/autonomy.js`: each kind is validated in code, logged in `coordinator_action` and undoable. Only add a kind that is internal and reversible; anything that contacts a client, sends a document or spends money stays a proposal. Messages are drafts: "Send from the CRM" only runs on the owner's tap.
+- Automatic steps live in `src/autonomy.js`: each kind is validated in code, logged in `coordinator_action` and undoable. Only add a kind that is internal and reversible; anything the coordinator itself thinks of that contacts a client, sends a document or spends money stays a proposal.
+- The chat is different: the owner is talking to Auti, so what they ask for runs (`OWNER_ACTIONS` in `src/crm.js`: CRM changes, email, WhatsApp, inbox replies, scheduling), each written in the journal. The scheduled runs never call those.
+- Two owner switches (coordinator_config, Agents tab): `leads_to_crm` (on) puts leads with a business email into the CRM and the outreach queue; `outreach_autosend` (off until the owner turns it on) emails outreach touches to CRM prospects without review, at most outreach_per_day a run, never after a reply. Follow-ups to existing clients are always drafts.
 - Keep the tests green, and add a test with every behaviour change.

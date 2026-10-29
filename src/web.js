@@ -117,6 +117,8 @@ export async function getDashboard(db) {
     .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows.map((r) => r.target_id));
   for (const t of tasks) t.by_synaut = bySynaut.has(t.id);
   const autonomy = (await db.query(`SELECT enabled FROM coordinator_config WHERE key = 'autonomy'`)).rows[0] || null;
+  // The two switches from migration 018: leads straight into the CRM, and outreach that sends itself. null until it runs.
+  const sw = Object.fromEntries((await db.query(`SELECT key, enabled FROM coordinator_config WHERE key IN ('leads_to_crm', 'outreach_autosend')`)).rows.map((r) => [r.key, r.enabled]));
   // CRM changes Auti proposed, waiting for the owner. Missing until migration 007 runs.
   const crmRequests = (await db.query(`
     SELECT id, kind, summary, reason, proposed_by, error, created_at FROM crm_request
@@ -130,6 +132,7 @@ export async function getDashboard(db) {
     latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools(),
     actions, autonomy: autonomy ? autonomy.enabled : null,   // null: not set up yet
     crmRequests, crmOn: crmConfigured(), leads, leadsOn, voice, checkins,
+    leadsToCrm: sw.leads_to_crm ?? null, outreachAutosend: sw.outreach_autosend ?? null,
   };
 }
 
@@ -297,7 +300,7 @@ export async function setProjectRepo(db, { id, github_repo } = {}) {
 // this draft went out: the sequence stops, the reply is logged, and the draft is dropped.
 export async function decideFollowUp(db, { id, decision, body, next_contact_due, sent_via = 'owner', subject } = {}) {
   if (!['sent', 'drop', 'replied'].includes(decision)) throw new Error('decision must be sent, drop or replied');
-  if (!['owner', 'crm'].includes(sent_via)) throw new Error('sent_via must be owner or crm');
+  if (!['owner', 'crm', 'auto'].includes(sent_via)) throw new Error('sent_via must be owner, crm or auto');
   if (!UUID.test(String(id))) throw new Error('bad follow-up id');
   if (next_contact_due && !DAY.test(String(next_contact_due))) throw new Error('next contact must be YYYY-MM-DD');
   const text = String(body ?? '').trim();

@@ -14,7 +14,7 @@ import { runAccounts } from './accounts.js';
 import { runReport, reportsDue } from './reports.js';
 import { CHEAP } from './models.js';
 import { postDailyReport } from './daily.js';
-import { importLeads } from './outreach.js';
+import { importLeads, autoSendOutreach, leadsToCrm } from './outreach.js';
 import fs from 'node:fs';
 
 const mode = process.argv[2] || 'nightly';
@@ -95,6 +95,13 @@ async function retention() {
   // Drafts only; the owner sends. Counts only, never client names.
   const out = await withModel('retention', (model) => claudeBrain({ model }), (brain) => runRetention({ db, brain }));
   console.log(`[${new Date().toISOString()}] retention done. clients_due=${out.considered} drafts=${out.drafted}`);
+  // Outreach touches to CRM prospects send themselves when the owner switched outreach_autosend on. Counts only.
+  if (crmConfigured()) {
+    try {
+      const a = await autoSendOutreach(db, crmClient());
+      if (!a.skipped) console.log(`outreach autosend: sent=${a.sent} replied=${a.replied} failed=${a.failed}`);
+    } catch (err) { console.error(`outreach autosend skipped: ${err.message}`); }
+  }
 }
 
 // Collections and renewals from the CRM. Drafts only. Needs the CRM; counts only in the log.
@@ -132,6 +139,13 @@ async function leads() {
   if (focus) console.log(`[${new Date().toISOString()}] leads focus: ${focus.market} (chosen)`);
   const out = await withModel('leads', (model) => claudeResearcher({ model }), (researcher) => runLeads({ db, researcher, focus }));
   console.log(`[${new Date().toISOString()}] leads done. ` + (out.skipped ? `skipped: ${out.skipped}` : `found=${out.found} saved=${out.saved} searches=${out.searches}${out.dropped ? ` dropped_by_checks=${out.dropped}` : ''}`));
+  // Leads with a business email go straight into the CRM and the outreach queue (leads_to_crm). Counts only.
+  if (crmConfigured()) {
+    try {
+      const c = await leadsToCrm(db, crmClient());
+      if (!c.skipped) console.log(`leads to crm: added=${c.added} no_email=${c.no_email} refused=${c.refused}`);
+    } catch (err) { console.error(`leads to crm skipped: ${err.message}`); }
+  }
 }
 
 // After the overnight run: the day's report to the team's WhatsApp group, through the CRM. Never prints the text.
