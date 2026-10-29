@@ -7,7 +7,8 @@ import { guard, getDb } from './_shared.js';
 import { decideFollowUp, sendFollowUpFromCrm } from '../src/web.js';
 import { crmClient, crmConfigured } from '../src/crm.js';
 
-export const config = { maxDuration: 30 };
+// 60 s: a CRM send can wait up to 25 s per call (CRM_TIMEOUT_MS) on a cold CRM.
+export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
   if (!guard(req, res)) return;

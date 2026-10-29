@@ -233,7 +233,7 @@ const PHONE = /\+?\d[\d\s().-]{7,}\d/;
  */
 export async function leadsToCrm(db, crm, { max = 20, resolver, checkEmail } = {}) {
   if (!(await settingOn(db, 'leads_to_crm'))) return { skipped: 'switched off', added: 0 };
-  const { applyCrmChange } = await import('./crm.js');
+  const { applyCrmChange, AUTI_LEADS } = await import('./crm.js');
   const check = checkEmail || (await import('./emailcheck.js')).checkEmail;
   const rows = (await db.query(
     `SELECT * FROM lead WHERE status = 'new' AND found_at > now() - interval '14 days' ORDER BY fit DESC, found_at LIMIT $1`, [max])).rows;
@@ -260,7 +260,7 @@ export async function leadsToCrm(db, crm, { max = 20, resolver, checkEmail } = {
     try {
       const res = await applyCrmChange(crm, 'create_client', {
         companyName: l.company, email, phone: phone || undefined, country: COUNTRY[l.market], city: l.city || undefined,
-        website: l.website || undefined, notes: leadNotes(l), status: 'prospect',
+        website: l.website || undefined, notes: leadNotes(l), status: 'prospect', ...AUTI_LEADS,
       });
       crmId = res?.client?.id || res?.id;
     } catch { out.refused++; continue; }

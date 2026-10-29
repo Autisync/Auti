@@ -126,6 +126,8 @@ await check('leads with a business email go into the CRM as prospects, paced; th
   const posted = f.calls.filter((c) => c.path === '/clients').map((c) => c.body);
   assert.equal(posted.find((b) => b.email === 'geral@lead1.example').phone, '+351 210 000 001');
   assert.equal(posted[0].country, 'Portugal');
+  // The leads agent's finds say who put them there.
+  assert.ok(posted.every((b) => b.source === 'Auti (leads agent)' && b.tags.join() === 'auti,auti-leads'), JSON.stringify(posted));
   const st = Object.fromEntries((await db.query(`SELECT company, status FROM lead WHERE company LIKE 'Lead %'`)).rows.map((r) => [r.company, r.status]));
   assert.deepEqual(st, { 'Lead 1': 'in_crm', 'Lead 2': 'new', 'Lead 3': 'in_crm', 'Lead 4': 'new' });
   const cl = (await db.query(`SELECT name, crm_id, outreach_step, (next_contact_due - current_date) AS days FROM clients WHERE name IN ('Lead 1', 'Lead 3') ORDER BY name`)).rows;

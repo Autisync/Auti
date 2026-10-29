@@ -1,10 +1,12 @@
 // GET  /api/crm                          : a live picture of the company CRM (or how to connect it).
+// GET  /api/crm?health=1                 : is the CRM answering, and how fast ({ ok, ms, error? }).
 // POST /api/crm {change, payload}        : the owner changes something in the CRM now (add client, opportunity, status).
 // POST /api/crm {request, decision}      : the owner approves or drops a change Auti proposed.
 import { guard, getDb } from './_shared.js';
-import { crmClient, crmConfigured, crmSnapshot, applyCrmChange, decideCrmRequest } from '../src/crm.js';
+import { crmClient, crmConfigured, crmSnapshot, crmHealth, applyCrmChange, decideCrmRequest } from '../src/crm.js';
 
-export const config = { maxDuration: 30 };
+// Served through api/ops.js (60 s); kept in step for clarity.
+export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
   if (!guard(req, res)) return;
@@ -12,6 +14,7 @@ export default async function handler(req, res) {
     return res.status(req.method === 'GET' ? 200 : 409).json({ connected: false, error: 'The CRM is not connected yet.' });
   }
   try {
+    if (req.method === 'GET' && req.query?.health) return res.status(200).json({ connected: true, ...(await crmHealth(crmClient())) });
     if (req.method === 'GET') return res.status(200).json({ connected: true, ...(await crmSnapshot(crmClient())) });
     if (req.method !== 'POST') return res.status(405).json({ error: 'GET or POST only' });
     if (!String(req.headers['content-type'] || '').startsWith('application/json')) return res.status(415).json({ error: 'Send JSON' });

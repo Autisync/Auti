@@ -3,6 +3,7 @@
 // the owner sees it. Research only: it never contacts anyone, and every lead waits for the owner, who tracks it as a
 // lead, adds it to the CRM, or dismisses it (the reason teaches the next run).
 import { adjustedFit, checkAll, domainOf } from './verify.js';
+import { AUTI_LEADS } from './crm.js';
 
 export const LEAD_MARKETS = ['angola', 'uk', 'portugal', 'namibia'];
 export const LEAD_SERVICES = ['crm', 'domain', 'email', 'hosting', 'software', 'website', 'missed_calls'];
@@ -236,7 +237,7 @@ export async function decideLead(db, { id, action, reason, crm_id, proposeCrm = 
       crmRequest = await proposeCrm(tx, { kind: 'create_client', proposed_by: 'leads',
         reason: `You started tracking ${l.company}; this puts it in the CRM pipeline as a prospect.`,
         payload: { companyName: l.company, email, website: l.website || undefined, city: l.city || undefined,
-          country: COUNTRY[l.market], notes: leadNotes(l), status: 'prospect' } }).catch(() => null);
+          country: COUNTRY[l.market], notes: leadNotes(l), status: 'prospect', ...AUTI_LEADS } }).catch(() => null);
     }
     return { id, status, client_id: clientId, ...(crmRequest ? { crm_request: crmRequest.id } : {}) };
   });

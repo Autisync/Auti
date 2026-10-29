@@ -3,27 +3,51 @@
 // is audited under its name and the owner can cut it off by disabling that one user.
 // Reading is free. Changing anything in the CRM happens only when the owner taps to confirm:
 // from the CRM tab directly, or by approving a change Auti proposed (crm_request, on the Approvals tab).
-// Settings: CRM_API_URL (the API base, ending in /api), CRM_EMAIL, CRM_PASSWORD. Nothing is logged.
+// Settings: CRM_API_URL (the API base, ending in /api), CRM_EMAIL, CRM_PASSWORD, and optionally CRM_TIMEOUT_MS
+// (per request, 25 s by default). Nothing is logged.
 
-const TIMEOUT_MS = 12000;
+const TIMEOUT_MS = 25000;                  // a cold CRM behind Cloudflare, under ~10 parallel calls, can take 10 s and more
 const TOKEN_TTL_MS = 20 * 3600e3;          // the CRM issues 24 h tokens; renew a little early
+const GET_BACKOFF_MS = [300, 1000];        // a read is tried up to three times on a network failure
+
+// Network failures that happen before the CRM can have seen the request: refused, DNS, connect timeout, and
+// the reset or "other side closed" (UND_ERR_SOCKET) Node's fetch hits when it reuses a keep-alive socket the
+// CRM or Cloudflare already closed (Vercel freezes the function between invocations, so pooled sockets go stale).
+// Only these let a POST, PATCH or PUT be tried once more. A timeout never does: the CRM may have done it
+// already, and a second WhatsApp or email to a client is worse than an error the owner can check.
+const NOT_SENT = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'ECONNRESET']);
+
+/** The low-level reason a fetch failed, as a short code (never the URL or a header). */
+export function networkCode(err) {
+  const c = err?.cause;
+  const code = c?.code || err?.code || (c?.errors?.[0]?.code);       // AggregateError when every address refused
+  if (code) return String(code);
+  if (/other side closed/i.test(`${c?.message || ''} ${err?.message || ''}`)) return 'UND_ERR_SOCKET';
+  if (c?.name && c.name !== 'Error') return String(c.name).slice(0, 60);
+  const short = String(c?.message || '');                              // e.g. "bad port"; never one carrying a URL
+  return (short && short.length <= 40 && !/[/@?]/.test(short) ? short : String(err?.message || 'network error')).slice(0, 60);
+}
 
 export const crmConfigured = (env = process.env) => Boolean(env.CRM_API_URL && env.CRM_EMAIL && env.CRM_PASSWORD);
 
 let cached = null;    // { key, token, at } per warm instance
 
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
 export function crmClient({
   url = process.env.CRM_API_URL, email = process.env.CRM_EMAIL, password = process.env.CRM_PASSWORD,
   fetch = globalThis.fetch, now = () => Date.now(),
+  timeoutMs = Number(process.env.CRM_TIMEOUT_MS) || TIMEOUT_MS, sleep = pause, backoff = GET_BACKOFF_MS,
 } = {}) {
   if (!url || !email || !password) throw new Error('The CRM is not connected: set CRM_API_URL, CRM_EMAIL and CRM_PASSWORD.');
   const base = String(url).replace(/\/+$/, '');
   if (!/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)/.test(base)) throw new Error('CRM_API_URL must start with https://');
   const key = `${base}|${email}`;
 
-  const call = async (method, path, body, token) => {
+  // One attempt. Throws { network: true, code, timedOut } on a failure to get an answer; an HTTP status is an answer.
+  const once = async (method, path, body, token, what) => {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
     try {
       const r = await fetch(base + path, {
         method, signal: ctl.signal,
@@ -33,8 +57,37 @@ export function crmClient({
       const out = await r.json().catch(() => ({}));
       return { status: r.status, ok: r.ok, out };
     } catch (err) {
-      throw new Error(err.name === 'AbortError' ? 'the CRM did not answer in time' : `could not reach the CRM (${err.message})`);
+      const timedOut = err?.name === 'AbortError' || ctl.signal.aborted;
+      const code = timedOut ? 'TIMEOUT' : networkCode(err);
+      const msg = timedOut
+        ? `the CRM did not answer in time (${what}, ${timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)} s` : `${timeoutMs} ms`})`
+        : `could not reach the CRM (${what}: ${code})`;
+      throw Object.assign(new Error(msg), { network: true, timedOut, code, method });
     } finally { clearTimeout(timer); }
+  };
+
+  // Reads (and the sign-in, which changes nothing) are tried up to three times on a network failure. A change is
+  // tried once more only when the failure shows the request never reached the CRM (NOT_SENT above).
+  // A timed-out request is not tried again: a read would blow the function's time limit, a change might be done twice.
+  // HTTP error statuses are the CRM's answer and are never retried here.
+  const call = async (method, path, body, token) => {
+    const what = `${method} ${path.split('?')[0]}`;
+    const safe = method === 'GET' || path === '/auth/login';
+    const tries = safe ? backoff.length + 1 : 2;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await once(method, path, body, token, what);
+      } catch (err) {
+        const again = attempt < tries && !err.timedOut && (safe || NOT_SENT.has(err.code));
+        if (!again) {
+          if (attempt > 1) err.message += ` after ${attempt} tries`;
+          if (err.timedOut && !safe) err.message += '; it may still have gone through, so check before trying again';
+          err.attempts = attempt;
+          throw err;
+        }
+        await sleep(backoff[Math.min(attempt - 1, backoff.length - 1)] ?? 300);
+      }
+    }
   };
 
   const login = async () => {
@@ -65,6 +118,17 @@ export function crmClient({
 }
 
 export const forgetCrmToken = () => { cached = null; };
+
+/** Is the CRM answering, and how fast? One small read (which signs in first when needed). Never throws. */
+export async function crmHealth(crm, { clock = Date.now } = {}) {
+  const t0 = clock();
+  try {
+    await crm.get('/clients?limit=1');
+    return { ok: true, ms: clock() - t0 };
+  } catch (err) {
+    return { ok: false, ms: clock() - t0, error: err.message, ...(err.network ? { retried: (err.attempts || 1) > 1 } : {}) };
+  }
+}
 
 // ---------- reading ----------
 
@@ -167,8 +231,10 @@ export const stepWords = (key) => STEP_WORDS[key] || String(key || '').replace(/
  * Clients in delivery: the checklist's next step and their onboarding form, for the few clients being set up
  * (open onboarding steps, or clients made in the last 45 days). Needs the CRM's client checklist and onboarding
  * form (only on the company's own account): a CRM without them gives an empty list.
+ * Two calls per client, a few clients at a time (concurrency). With budgetMs, whatever is not back by then is left
+ * out and onCut() is called, so a slow CRM cannot hold up the whole snapshot.
  */
-export async function deliveryView(crm, { onboarding = [], clients = [], now = new Date(), max = 8 } = {}) {
+export async function deliveryView(crm, { onboarding = [], clients = [], now = new Date(), max = 8, concurrency = 4, budgetMs = Infinity, onCut = () => {} } = {}) {
   const ids = [];
   for (const o of onboarding) if (o.client_id && !ids.includes(o.client_id)) ids.push(o.client_id);
   for (const c of clients) {
@@ -177,14 +243,13 @@ export async function deliveryView(crm, { onboarding = [], clients = [], now = n
     if (c.id && c.status === 'active' && recent && !ids.includes(c.id)) ids.push(c.id);
   }
   const names = new Map([...onboarding.map((o) => [o.client_id, o.client]), ...clients.map((c) => [c.id, c.company_name || c.contact_name])]);
-  const out = [];
-  for (const id of ids.slice(0, max)) {
+  const days = (v) => (v ? Math.floor((now - new Date(v)) / DAY) : null);
+  const one = async (id) => {
     let j = null, f = null;
     try { j = await crm.get(`/clients/${id}/journey`); } catch { j = null; }
-    if (!j) continue;                                   // no checklist for this client (or not on this CRM yet)
+    if (!j) return null;                                // no checklist for this client (or not on this CRM yet)
     try { f = (await crm.get(`/clients/${id}/intake?lang=en`))?.intake ?? null; } catch { f = undefined; }
-    const days = (v) => (v ? Math.floor((now - new Date(v)) / DAY) : null);
-    out.push({
+    return {
       client_id: id, client: names.get(id) || null,
       services: j.services || [], paid: !!j.paid, complete: !!j.complete,
       progress: j.progress ? `${j.progress.done}/${j.progress.total}` : null,
@@ -193,12 +258,33 @@ export async function deliveryView(crm, { onboarding = [], clients = [], now = n
         status: f.status, answered: f.progress?.answered ?? 0, total: f.progress?.total ?? 0,
         days_since_sent: days(f.sentAt), submitted_days_ago: days(f.submittedAt),
       },
-    });
+    };
+  };
+  const todo = ids.slice(0, max);
+  const rows = new Array(todo.length).fill(null);
+  let next = 0, cut = false;
+  const worker = async () => {
+    while (!cut && next < todo.length) { const i = next++; const r = await one(todo[i]); if (!cut) rows[i] = r; }
+  };
+  const work = Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, todo.length)) }, worker));
+  if (Number.isFinite(budgetMs)) {
+    let timer;
+    const late = new Promise((r) => { timer = setTimeout(() => r('late'), budgetMs); });
+    const won = await Promise.race([work.then(() => 'done'), late]);
+    clearTimeout(timer);
+    if (won === 'late') { cut = true; onCut(); }
+  } else {
+    await work;
   }
-  return out;
+  return rows.filter(Boolean);
 }
 
-export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) {
+/**
+ * The CRM in one picture. The main reads run in parallel, each failing on its own. The per-client delivery reads
+ * come after and get deliveryBudgetMs at most (8 s by default), so the chat's crm_overview and /api/crm stay well
+ * inside the function's time limit even when the CRM is slow.
+ */
+export async function crmSnapshot(crm, { clients = 50, now = new Date(), deliveryBudgetMs = 8000 } = {}) {
   const part = async (fn) => { try { return { ok: true, data: await fn() }; } catch (err) { return { ok: false, error: err.message }; } };
   const [summary, alerts, expiring, overdue, list, opps, steps, drafts, lateFees, partial] = await Promise.all([
     part(() => crm.get('/dashboard/summary')),
@@ -221,7 +307,8 @@ export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) 
   }
   const stages = new Map((opps.data?.pipelines || []).flatMap((p) => (p.stages || []).map((s) => [s.id, { stage: s.name, pipeline: p.name, win_probability: s.win_probability }])));
   const onboarding = onboardingView(steps.ok ? steps.data?.tasks : [], now);
-  const delivery = await deliveryView(crm, { onboarding, clients: list.data?.clients || [], now }).catch(() => []);
+  let deliveryCut = false;
+  const delivery = await deliveryView(crm, { onboarding, clients: list.data?.clients || [], now, budgetMs: deliveryBudgetMs, onCut: () => { deliveryCut = true; } }).catch(() => []);
   const open = (opps.data?.opportunities || []).map((o) => ({ ...pick(o, OPP_KEYS), ...(stages.get(o.stage_id) || {}) }));
   return {
     fetched_at: new Date().toISOString(),
@@ -240,7 +327,8 @@ export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) 
     draft_invoices: draftsView(drafts.ok ? drafts.data?.invoices : [], now),
     late_fees: lateFees.ok && lateFees.data ? { enabled: !!lateFees.data.enabled, grace_days: Number(lateFees.data.graceDays) || 7 } : null,
     unavailable: Object.entries({ summary, alerts, expiring, overdue, clients: list, opportunities: opps, onboarding: steps, draft_invoices: drafts })
-      .filter(([, p]) => !p.ok).map(([k, p]) => `${k}: ${p.error}`),
+      .filter(([, p]) => !p.ok).map(([k, p]) => `${k}: ${p.error}`)
+      .concat(deliveryCut ? [`delivery: the CRM was slow, so only ${delivery.length} client(s) in delivery are shown`] : []),
   };
 }
 
@@ -338,6 +426,19 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
 
 // ---------- changing, only on the owner's tap ----------
 
+// Every client or prospect Auti puts in the CRM says so: tagged auti (with any tags it came with, such as an
+// outreach list's) and source Auti, so the owner can filter for them there. The leads agent's own finds pass
+// AUTI_LEADS. A CRM that does not know these fields ignores them.
+export const AUTI_SOURCE = 'Auti';
+export const AUTI_LEADS = { tags: ['auti', 'auti-leads'], source: 'Auti (leads agent)' };
+const TAG = /^[\w][\w.:-]{0,49}$/;
+function autiMark(p) {
+  const given = Array.isArray(p?.tags) ? p.tags : typeof p?.tags === 'string' ? p.tags.split(',') : [];
+  const tags = [...new Set(['auti', ...given.map((t) => String(t).trim().toLowerCase()).filter((t) => TAG.test(t))])].slice(0, 20);
+  const source = /^Auti\b/.test(String(p?.source ?? '')) ? String(p.source).trim().slice(0, 80) : AUTI_SOURCE;
+  return { tags, source };
+}
+
 export const CRM_CHANGES = {
   create_client: {
     label: 'Add a client',
@@ -346,11 +447,11 @@ export const CRM_CHANGES = {
       for (const k of ['companyName', 'email']) if (!String(p?.[k] ?? '').trim()) throw new Error(`${k} is required`);
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.email)) throw new Error('email is not valid');
       if (p.status != null && !['prospect', 'active'].includes(p.status)) throw new Error('status must be prospect or active');
-      return pick(p, ['companyName', 'contactName', 'email', 'phone', 'country', 'city', 'website', 'notes', 'status']);
+      return { ...pick(p, ['companyName', 'contactName', 'email', 'phone', 'country', 'city', 'website', 'notes', 'status']), ...autiMark(p) };
     },
     // The CRM creates clients as active; a prospect is set straight after.
     async run(crm, { status, ...p }) {
-      const out = await crm.post('/clients', p);
+      const out = await crm.post('/clients', { ...p, ...autiMark(p) });
       const id = out?.client?.id || out?.id;
       if (status === 'prospect' && id) await crm.patch(`/clients/${id}`, { status: 'prospect' });
       return out;
@@ -631,7 +732,7 @@ export const CRM_TOOL_DEFS = [
   { name: 'auti_schedule_contact', description: "Schedule when to get in touch with a CRM client next (Auti drafts it that day). outreach: true starts the four-touch outreach sequence on that day for a prospect who never heard from us. When the owner asks to follow someone up later or to reach out to a list on a date.",
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'date'], properties: {
       clientId: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD, today or later' }, note: { type: 'string' }, outreach: { type: 'boolean' } } } },
-  { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName and email (required), contactName, phone, country, city, website, notes. create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status. send_onboarding_form payload: clientId, clientName, and optionally sections (business, website, email, social, crm, callcatch), language (pt or en) and a note; it sets the form up if the client has none and emails the link.`,
+  { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName and email (required), contactName, phone, country, city, website, notes, tags (the auti tag and source Auti are always added). create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status. send_onboarding_form payload: clientId, clientName, and optionally sections (business, website, email, social, crm, callcatch), language (pt or en) and a note; it sets the form up if the client has none and emails the link.`,
     input_schema: { type: 'object', additionalProperties: false, required: ['kind', 'payload', 'reason'], properties: {
       kind: { type: 'string', enum: Object.keys(CRM_CHANGES) }, payload: { type: 'object' }, reason: { type: 'string' } } } },
 ];
@@ -679,7 +780,14 @@ export function crmTools(db, { client = () => crmClient(), resolver } = {}) {
     defs: CRM_TOOL_DEFS,
     async call(name, input) {
       if (!run[name]) return { error: `unknown tool ${name}` };
-      try { return await run[name](input || {}); } catch (err) { return { error: err.message }; }
+      try { return await run[name](input || {}); } catch (err) {
+        if (!err.network) return { error: err.message };
+        // Already tried again by crmClient where that is safe; say so, so the chat does not hammer the CRM or resend.
+        return { error: err.message, crm_unreachable: true, tried: err.attempts || 1,
+          note: err.timedOut && err.method !== 'GET'
+            ? 'The CRM did not answer in time. Auti did not try this again by itself, because it may have gone through: tell the owner plainly, and check (crm_inbox, crm_clients) before trying again.'
+            : 'The CRM did not answer; Auti already tried again automatically before giving up. Tell the owner plainly that the CRM is not answering right now and offer to try again in a minute.' };
+      }
     },
   };
 }
