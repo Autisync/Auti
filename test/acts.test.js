@@ -71,9 +71,9 @@ await check('at the owner\'s word: a prospect is added now, emailed, sent a What
   assert.ok(f.calls.some((c) => c.method === 'POST' && c.path === '/clients'));
   assert.ok(f.calls.some((c) => c.method === 'PATCH' && c.path === `/clients/${id}` && c.body.status === 'prospect'));
 
-  const mail = await tools.call('crm_send_email', { clientId: id, subject: 'Your listings', body: 'Hello from Autisync.' });
+  const mail = await tools.call('crm_send_email', { clientId: id, subject: 'Your listings', body: 'Hello from us.' });
   assert.equal(mail.sent, true);
-  assert.deepEqual(f.calls.find((c) => c.path === `/clients/${id}/email`).body, { subject: 'Your listings', body: 'Hello from Autisync.' });
+  assert.deepEqual(f.calls.find((c) => c.path === `/clients/${id}/email`).body, { subject: 'Your listings', body: 'Hello from us.' });
 
   const wa = await tools.call('crm_send_whatsapp', { clientId: id, message: 'Olá! Podemos falar amanhã?' });
   assert.equal(wa.sent, true);
