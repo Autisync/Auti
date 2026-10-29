@@ -173,4 +173,37 @@ await check('the Agents tab shows both switches and the API changes them', async
   new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);
 });
 
+await check('Auti reads a whole conversation before replying: who said what, in order', async () => {
+  const conv = ID(950);
+  const f = {
+    async get(path) {
+      if (path.startsWith('/conversations?')) return { conversations: [
+        { id: conv, contact_id: ID(951), channel: 'whatsapp', last_message: 'Já transferi.', last_message_at: '2026-10-29T16:00:00Z' },
+        { id: ID(952), contact_id: ID(999), channel: 'email', last_message: 'other' }] };
+      if (path === `/conversations/${conv}`) return {
+        conversation: { id: conv, channel: 'whatsapp', status: 'open', company_name: 'Casa Azul', contact_name: 'Rita', contact_id: ID(951), client_id: ID(951), phone: '+351900000000' },
+        whatsappWindow: { cloudApi: true, open: true },
+        messages: [
+          { direction: 'outbound', content: 'Lembrete: a fatura vence amanhã.', sent_at: '2026-10-28T09:00:00Z', status: 'read', sent_by_kind: 'automatic', sent_by_source: 'payment_reminder' },
+          { direction: 'outbound', content: 'Olá Rita, obrigado pelo pagamento parcial.', sent_at: '2026-10-28T10:00:00Z', status: 'delivered', sent_by_kind: 'assistant', sent_by_name: 'Auti' },
+          { direction: 'outbound', content: 'Qualquer dúvida, diga.', sent_at: '2026-10-28T11:00:00Z', status: 'read', sent_by_kind: 'person', sent_by_name: 'Ana Costa' },
+          { direction: 'inbound', content: 'Já transferi o resto, segue o comprovativo.', sent_at: '2026-10-29T16:00:00Z' },
+        ] };
+      throw new Error('the CRM said: not found');
+    },
+  };
+  const tools = crm.crmTools(db, { client: () => f });
+  const list = await tools.call('crm_conversations_for', { clientId: ID(951) });
+  assert.deepEqual(list.conversations.map((c) => c.id), [conv]);
+  const v = await tools.call('crm_conversation', { conversationId: conv });
+  assert.deepEqual(v.messages.map((m) => [m.from, m.who]), [
+    ['us', 'automatic (payment reminder)'], ['us', 'Auti'], ['us', 'Ana Costa'], ['them', 'Rita']]);
+  assert.match(v.last_from_them.text, /comprovativo/);
+  assert.equal(v.conversation.client, 'Casa Azul');
+  assert.equal((await tools.call('crm_conversation', { conversationId: conv, last: 1 })).messages.length, 1);
+  assert.match((await tools.call('crm_conversation', { conversationId: 'abc' })).error, /CRM id/);
+  const chat = await import('../src/chat.js');
+  assert.match(await chat.systemFor('assistant', db), /read the conversation first \(crm_conversation\)/);
+});
+
 console.log(`\n${passed} passed`);
