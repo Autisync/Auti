@@ -59,4 +59,14 @@ await check('payment reminders are written in the client\'s language', async () 
   assert.equal(by['B-1'][0], 'en');      // the card says English, even with a Portuguese number and market
 });
 
+await check('messages are signed as the team, never as one named person', async () => {
+  const db = new PGlite();
+  await migrate(db, () => {});
+  const so = (await db.query(`SELECT value, enabled FROM coordinator_config WHERE key = 'sign_off'`)).rows[0];
+  assert.ok(so && so.enabled);
+  assert.match(so.value, /never with a person's name/);
+  const { readFileSync } = await import('node:fs');
+  for (const f of ['src/retention.js', 'src/accounts.js', 'src/chat.js']) assert.match(readFileSync(new URL('../' + f, import.meta.url), 'utf8'), /never (as one named person|with a person's name)/);
+});
+
 console.log(`\n${passed} passed`);

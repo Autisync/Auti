@@ -130,6 +130,7 @@ export async function runAccounts({ db, brain, crm, client = null, now = new Dat
   const system = `You are Auti's accounts agent for a small company. You draft short messages the owner sends about money:
 overdue invoices (collections) and services about to end (renewals).
 Rules:
+- Write as the company's team ("we"), never as one named person, and sign off as the sign_off standing instruction says (otherwise as the company's team, in the message's language).
 - Use only the numbers, dates and names listed. Never invent a discount, a deadline or a consequence that is not in the tone given.
 - Collections: follow the tone given for each invoice exactly. Always include the invoice number, the amount due and the due date. One clear ask.
 - Collections: write for the channel given (whatsapp or email) and use it. A WhatsApp is short and personal, with the subject as a one-line purpose; the owner sends it from the CRM.
