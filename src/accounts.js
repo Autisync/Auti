@@ -6,6 +6,7 @@
 //   upgrade only where the data supports one).
 // Drafts only, like every message Auti writes: each waits on the Approvals tab, and the owner sends it (or taps Send
 // from the CRM). The same invoice is not chased again within 7 days, nor the same renewal within 30.
+import { languageFor, writeIn } from './language.js';
 
 const CHANNELS = ['email', 'whatsapp', 'call'];
 const DAY = 864e5;
@@ -69,6 +70,14 @@ const money = (n, cur) => `${Number(n || 0).toLocaleString('en-GB', { minimumFra
 export async function accountItems(db, crm, now = new Date(), { phoneOf } = {}) {
   if (!crm) return [];
   const listed = new Map((crm.clients || []).map((c) => [String(c.id), c.phone || null]));
+  const cards = new Map((crm.clients || []).map((c) => [String(c.id), c]));
+  // The language on the CRM card, or worked out from country/phone/email; the market only when the CRM says nothing.
+  const langOf = (id, tel, market) => {
+    const card = cards.get(String(id)) || {};
+    const l = languageFor({ ...card, phone: card.phone || tel });
+    const code = l.code || (market === 'portugal' || market === 'angola' ? 'pt' : 'en');
+    return { language: code, write_in: writeIn(code, { country: card.country, phone: card.phone || tel, market }) };
+  };
   const phone = async (id) => {
     if (listed.get(String(id))) return listed.get(String(id));
     try { return (await phoneOf?.(id)) || null; } catch { return null; }
@@ -95,7 +104,7 @@ export async function accountItems(db, crm, now = new Date(), { phoneOf } = {}) 
     items.push({ agent: 'collections', ref, client_id: c.id, client: c.name, market: c.market,
       invoice: i.invoice_number, amount_due: money(owed, i.currency), due_date: i.due_date ? String(i.due_date).slice(0, 10) : null,
       ...(partial ? { partially_paid: true, invoice_total: money(total, i.currency), paid_so_far: money(paid, i.currency) } : {}),
-      channel: whatsappable(tel) ? 'whatsapp' : 'email',
+      channel: whatsappable(tel) ? 'whatsapp' : 'email', ...langOf(i.client_id, tel, c.market),
       days_late: daysLate, tone: tone(daysLate ?? 0), ...(fee ? { late_fee: fee } : {}) });
     busy.add(c.id);
   }
@@ -103,7 +112,7 @@ export async function accountItems(db, crm, now = new Date(), { phoneOf } = {}) 
     const c = byCrm.get(String(s.client_id));
     const ref = `subscription:${s.id}`;
     if (!c || s.auto_renew || recent.has(ref) || busy.has(c.id)) continue;
-    items.push({ agent: 'renewals', ref, client_id: c.id, client: c.name, market: c.market,
+    items.push({ agent: 'renewals', ref, client_id: c.id, client: c.name, market: c.market, ...langOf(s.client_id, null, c.market),
       service: s.service_name, tier: s.tier || null, ends: s.end_date ? String(s.end_date).slice(0, 10) : null,
       price: s.monthly_cost != null ? `${money(s.monthly_cost)} a month` : null, billing_cycle: s.billing_cycle || null });
     busy.add(c.id);
@@ -127,7 +136,7 @@ Rules:
 - When an item is partially_paid: thank them for the payment received (paid_so_far, of invoice_total), then ask only for what is left (amount_due). Never ask for the whole invoice again.
 - When an item has late_fee, say it once, plainly and without threats, in the words given (with the amount only if it is given). Never mention a late fee for an item without late_fee.
 - Renewals: thank them, name the service and the end date, make renewing easy (reply to confirm). Suggest an upgrade only if the standing instructions name one that fits.
-- Short: under 110 words for email, under 50 for WhatsApp. Portuguese (Portugal for portugal, Angolan usage for angola) for clients in portugal or angola, English otherwise.
+- Short: under 110 words for email, under 50 for WhatsApp. Write each message in its item's write_in language (from the client's CRM card, or worked out from their country and phone), never another.
 - Nothing is sent by you; the owner reviews every draft.
 
 Standing instructions from the owner:

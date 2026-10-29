@@ -6,6 +6,7 @@
 // Settings: CRM_API_URL (the API base, ending in /api), CRM_EMAIL, CRM_PASSWORD, and optionally CRM_TIMEOUT_MS
 // (per request, 25 s by default). Nothing is logged.
 
+import { languageFor, writeIn, LANGUAGES } from './language.js';
 const TIMEOUT_MS = 25000;                  // a cold CRM behind Cloudflare, under ~10 parallel calls, can take 10 s and more
 const TOKEN_TTL_MS = 20 * 3600e3;          // the CRM issues 24 h tokens; renew a little early
 const GET_BACKOFF_MS = [300, 1000];        // a read is tried up to three times on a network failure
@@ -137,7 +138,7 @@ const qs = (o) => {
   return p.length ? '?' + p.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&') : '';
 };
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o?.[k] !== undefined).map((k) => [k, o[k]]));
-const CLIENT_KEYS = ['id', 'company_name', 'contact_name', 'email', 'phone', 'country', 'city', 'website', 'status', 'created_at', 'active_subscriptions', 'outstanding_invoices', 'assigned_first_name', 'tags'];
+const CLIENT_KEYS = ['id', 'company_name', 'contact_name', 'email', 'phone', 'language', 'country', 'city', 'website', 'status', 'created_at', 'active_subscriptions', 'outstanding_invoices', 'assigned_first_name', 'tags'];
 const SUB_KEYS = ['id', 'client_id', 'client_name', 'service_name', 'service_type', 'tier', 'status', 'start_date', 'end_date', 'monthly_cost', 'billing_cycle', 'auto_renew'];
 const INV_KEYS = ['id', 'invoice_number', 'client_id', 'client_name', 'status', 'issue_date', 'due_date', 'total', 'amount_paid', 'currency'];
 const OPP_KEYS = ['id', 'name', 'value', 'status', 'stage_id', 'pipeline_id', 'contact_id', 'source', 'created_at', 'updated_at'];
@@ -480,6 +481,17 @@ export const CRM_CHANGES = {
     run: (crm, p) => crm.patch(`/clients/${p.clientId}`, { status: p.status }),
     describe: (p) => `Set ${p.clientName || 'the client'}'s CRM status to ${p.status}.`,
   },
+  // The language to write to the client in, on their CRM card: messages, reminders and Auti follow it.
+  set_client_language: {
+    label: 'Set a client\'s language',
+    check(p) {
+      if (!/^[0-9a-f-]{36}$/i.test(String(p?.clientId ?? ''))) throw new Error('clientId must be a CRM id');
+      if (!LANGUAGES.includes(String(p.language || '').toLowerCase())) throw new Error(`language must be one of ${LANGUAGES.join(', ')}`);
+      return { ...pick(p, ['clientId', 'clientName']), language: String(p.language).toLowerCase() };
+    },
+    run: (crm, p) => crm.patch(`/clients/${p.clientId}`, { language: p.language }),
+    describe: (p) => `Set ${p.clientName || 'the client'}'s language in the CRM to ${p.language}.`,
+  },
   // The onboarding form: one private link with what is still missing (logo, photos, domain, mailboxes...).
   // This one reaches the client (an email from the CRM), so it only ever runs on the owner's approval.
   send_onboarding_form: {
@@ -718,9 +730,12 @@ export function conversationView(res, last = 30) {
     status: m.direction === 'outbound' ? m.status || null : undefined,
   }));
   const lastIn = [...msgs].reverse().find((m) => m.from === 'them');
+  const lang = languageFor({ language: c.client_language, country: c.client_country, phone: c.phone, email: c.email });
   return {
     conversation: { id: c.id, channel: c.channel, status: c.status, client: c.company_name || c.contact_name || null, client_id: c.client_id || c.contact_id || null,
       email: c.email || null, phone: c.phone || null },
+    // The client's language: on the card (set: true), or worked out from country/phone/email (set: false).
+    language: { code: lang.code, set: lang.set, from: lang.reason, write_in: lang.code ? writeIn(lang.code, { country: c.client_country, phone: c.phone }) : null },
     // On the official WhatsApp number, outside 24 h since they last wrote, the CRM sends the text inside an approved template.
     whatsapp_window: res?.whatsappWindow ?? null,
     messages: msgs,
@@ -794,7 +809,9 @@ export function crmTools(db, { client = () => crmClient(), resolver } = {}) {
       if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw new Error('id must be a CRM client id');
       const c = client();
       const [one, stats] = await Promise.all([c.get(`/clients/${id}`), c.get(`/clients/${id}/stats`).catch(() => null)]);
-      return { ...one, stats };
+      const row = one?.client || one || {};
+      const lang = languageFor(row);
+      return { ...one, stats, language_to_write: { code: lang.code, set: lang.set, from: lang.reason, write_in: lang.code ? writeIn(lang.code, row) : null } };
     },
     crm_subscriptions: async ({ status, clientId, page }) => {
       const out = await client().get('/subscriptions' + qs({ status, clientId, page, limit: 50 }));
