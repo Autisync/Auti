@@ -99,7 +99,7 @@ async function retention() {
   if (crmConfigured()) {
     try {
       const a = await autoSendOutreach(db, crmClient());
-      if (!a.skipped) console.log(`outreach autosend: sent=${a.sent} replied=${a.replied} failed=${a.failed}`);
+      if (!a.skipped) console.log(`outreach autosend: sent=${a.sent} replied=${a.replied} bad_email=${a.bad_email} failed=${a.failed}`);
     } catch (err) { console.error(`outreach autosend skipped: ${err.message}`); }
   }
 }
@@ -107,8 +107,10 @@ async function retention() {
 // Collections and renewals from the CRM. Drafts only. Needs the CRM; counts only in the log.
 async function accounts() {
   if (!crmConfigured()) return console.log('accounts: skipped, the CRM is not connected');
-  const crm = await crmSnapshot(crmClient());
-  const out = await runAccounts({ db, brain: claudeBrain({ model: process.env.AUTI_ACCOUNTS_MODEL || CHEAP }), crm });
+  const client = crmClient();
+  const crm = await crmSnapshot(client);
+  // client: to read the phone on a card the snapshot did not list (a reminder goes by WhatsApp when there is one).
+  const out = await runAccounts({ db, brain: claudeBrain({ model: process.env.AUTI_ACCOUNTS_MODEL || CHEAP }), crm, client });
   console.log(`[${new Date().toISOString()}] accounts done. items=${out.considered} drafts=${out.drafted}`);
 }
 
@@ -143,7 +145,7 @@ async function leads() {
   if (crmConfigured()) {
     try {
       const c = await leadsToCrm(db, crmClient());
-      if (!c.skipped) console.log(`leads to crm: added=${c.added} no_email=${c.no_email} refused=${c.refused}`);
+      if (!c.skipped) console.log(`leads to crm: added=${c.added} no_email=${c.no_email} bad_email=${c.bad_email} refused=${c.refused}`);
     } catch (err) { console.error(`leads to crm skipped: ${err.message}`); }
   }
 }

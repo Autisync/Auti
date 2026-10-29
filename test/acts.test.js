@@ -120,7 +120,8 @@ await check('leads with a business email go into the CRM as prospects, paced; th
   await db.query(`UPDATE coordinator_config SET enabled = true WHERE key = 'leads_to_crm'`);
 
   const f = fakeCrm({ refuse: ['dup@lead4.example'] });
-  const out = await outreach.leadsToCrm(db, f);
+  // These made-up addresses are on a reserved test domain, so the email check is stood in for (test/billing.test.js covers it).
+  const out = await outreach.leadsToCrm(db, f, { checkEmail: async (email) => ({ email, valid: true, reason: 'test' }) });
   assert.deepEqual([out.added, out.no_email, out.refused], [2, 1, 1]);
   const posted = f.calls.filter((c) => c.path === '/clients').map((c) => c.body);
   assert.equal(posted.find((b) => b.email === 'geral@lead1.example').phone, '+351 210 000 001');

@@ -48,10 +48,11 @@ export function crmClient({
   const request = async (method, path, body) => {
     let res = await call(method, path, body, await token());
     if (res.status === 401) res = await call(method, path, body, await login());   // expired or revoked: sign in once more
-    if (res.status === 403) throw new Error(`Auti's CRM user is not allowed to do that (${method} ${path.split('?')[0]}). Give it a role with that permission.`);
+    const fail = (msg) => Object.assign(new Error(msg), { status: res.status });     // the status lets a caller tell a 404 apart
+    if (res.status === 403) throw fail(`Auti's CRM user is not allowed to do that (${method} ${path.split('?')[0]}). Give it a role with that permission.`);
     if (!res.ok) {
       const why = res.out?.error || res.out?.errors?.map?.((e) => `${e.path || e.param}: ${e.msg}`).join(', ') || res.status;
-      throw new Error(`the CRM said: ${why}`);
+      throw fail(`the CRM said: ${why}`);
     }
     return res.out;
   };
@@ -80,9 +81,29 @@ const OPP_KEYS = ['id', 'name', 'value', 'status', 'stage_id', 'pipeline_id', 'c
 // Its rows name the customer customer_name and link the CRM client as crm_client_id: mapped to the names Auti uses.
 const invoiceView = (i) => pick({ ...i, client_name: i.client_name ?? i.customer_name, client_id: i.client_id ?? i.crm_client_id }, INV_KEYS);
 
+/**
+ * The overdue invoices, with the partly paid ones past their due date added (once each). A partly paid invoice is
+ * marked partial: true with what was paid, so a reminder thanks them for it and asks only for what is left.
+ */
+export function overdueInvoices(overdue = [], partial = [], now = new Date()) {
+  const today = dayOf(now.toISOString());
+  const seen = new Set();
+  const out = [];
+  for (const raw of [...(overdue || []), ...(partial || [])]) {
+    const i = invoiceView(raw);
+    if (i.id != null && seen.has(String(i.id))) continue;
+    const isPartial = PARTIAL.includes(String(i.status)) || (Number(i.amount_paid) > 0 && Number(i.amount_paid) < Number(i.total));
+    if (PARTIAL.includes(String(i.status)) && !(i.due_date && dayOf(i.due_date) < today)) continue;   // partly paid, not yet due
+    if (i.id != null) seen.add(String(i.id));
+    out.push(isPartial ? { ...i, partial: true } : i);
+  }
+  return out;
+}
+
 // One picture of the business for the coordinator, the chat and the CRM tab. Each part fails on its own,
 // so a permission the Auti user lacks hides one section instead of the whole CRM.
 const DAY = 864e5;
+const PARTIAL = ['partial', 'partially_paid'];
 const dayOf = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : null);
 
 /**
@@ -179,7 +200,7 @@ export async function deliveryView(crm, { onboarding = [], clients = [], now = n
 
 export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) {
   const part = async (fn) => { try { return { ok: true, data: await fn() }; } catch (err) { return { ok: false, error: err.message }; } };
-  const [summary, alerts, expiring, overdue, list, opps, steps, drafts, lateFees] = await Promise.all([
+  const [summary, alerts, expiring, overdue, list, opps, steps, drafts, lateFees, partial] = await Promise.all([
     part(() => crm.get('/dashboard/summary')),
     part(() => crm.get('/dashboard/alerts')),
     part(() => crm.get('/subscriptions/expiring/list?days=45')),
@@ -192,6 +213,8 @@ export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) 
     part(() => crm.get('/billing/invoices' + qs({ status: 'draft', limit: 100 }))),
     // The late payment fee: on or off, and after how many days (the contracts say so).
     part(() => crm.get('/billing/late-fees')),
+    // Partly paid invoices keep their own status in the billing module; past their due date they are overdue too.
+    part(() => crm.get('/billing/invoices' + qs({ status: 'partially_paid', limit: 100 }))),
   ]);
   if (![summary, alerts, expiring, overdue, list, opps].some((p) => p.ok)) {
     throw new Error(summary.error || 'the CRM gave nothing back');
@@ -206,7 +229,7 @@ export async function crmSnapshot(crm, { clients = 50, now = new Date() } = {}) 
     recent_activity: (summary.data?.recentActivity || []).slice(0, 10).map((a) => pick(a, ['action', 'entity_type', 'created_at', 'first_name', 'changes_summary'])),
     alerts: (alerts.data?.alerts || []).slice(0, 20).map((a) => pick(a, ['type', 'severity', 'title', 'message', 'entityType', 'entityId'])),
     expiring_subscriptions: (expiring.data?.subscriptions || []).map((s) => pick(s, SUB_KEYS)),
-    overdue_invoices: (overdue.data?.invoices || []).map(invoiceView),
+    overdue_invoices: overdueInvoices(overdue.data?.invoices, partial.ok ? partial.data?.invoices : [], now),
     clients: (list.data?.clients || []).map((c) => pick(c, CLIENT_KEYS)),
     clients_total: list.data?.pagination?.total ?? null,
     open_opportunities: open,
@@ -457,6 +480,61 @@ async function logContact(db, crm, crmId, channel, summary) {
 }
 const journal = (db, body) => db.query(`INSERT INTO journal (kind, author, body) VALUES ('decision', 'owner', $1)`, [body.slice(0, 2000)]).catch(() => undefined);
 
+// A client's card in the CRM, or null when it cannot be read.
+async function clientCard(crm, crmId) {
+  try { const c = await crm.get(`/clients/${crmId}`); return c?.client || c || null; } catch { return null; }
+}
+
+/**
+ * Can this CRM client's email address take mail? The CRM's own check first (GET /clients/:id/email-check, which
+ * answers { valid, reason }); where the CRM has none (404) or it fails, the address on the card is checked here
+ * (src/emailcheck.js). Returns { email, valid: true | false | null, reason, source: 'crm' | 'local', phone? }.
+ * phone is set when the card was read (so a refusal can offer WhatsApp without another call).
+ */
+export async function checkClientEmail(crm, crmId, { email, resolver } = {}) {
+  const id = needId(crmId, 'clientId');
+  try {
+    const r = await crm.get(`/clients/${id}/email-check`);
+    if (r && [true, false, null].includes(r.valid)) {
+      return { email: r.email ?? email ?? null, valid: r.valid, reason: String(r.reason || (r.valid ? 'the CRM says it takes email' : r.valid === false ? 'the CRM says it cannot receive email' : 'the CRM could not tell')), source: 'crm' };
+    }
+  } catch { /* 404: this CRM has no check yet. Anything else: the local check still answers. */ }
+  const card = email ? null : await clientCard(crm, id);
+  const address = email || card?.email || null;
+  if (!address) return { email: null, valid: null, reason: 'no email address on the CRM card', source: 'local', ...(card ? { phone: card.phone || null } : {}) };
+  const { checkEmail } = await import('./emailcheck.js');
+  return { ...(await checkEmail(address, { resolver })), source: 'local', ...(card ? { phone: card.phone || null } : {}) };
+}
+
+/** The refusal when an address cannot take mail, offering WhatsApp when the client has a phone in the CRM. */
+export function badEmailMessage(check, phone) {
+  return `Not sent: ${check.email || 'their email address'} cannot receive email (${check.reason}).`
+    + (phone ? ` They have a phone in the CRM (${phone}): send it by WhatsApp from the CRM instead.` : ' Find a working address, or another way to reach them.');
+}
+
+/**
+ * Sends a follow-up from the CRM, as Auti's CRM user, so it is filed in the client's inbox there.
+ * email: POST /clients/:id/email { subject, body }.
+ * whatsapp: POST /conversations/start { clientId, channel: 'whatsapp' } (opens or reuses their thread), then
+ * POST /conversations/:conversationId/reply { content }. Never a wa.me link: the message goes through the CRM.
+ */
+export async function sendFollowUpViaCrm(crm, { channel, crmId, subject, body }) {
+  const id = needId(crmId, 'clientId');
+  if (channel === 'email') {
+    const s = needText(subject, 'subject', 300), b = needText(body, 'body', 8000);
+    await crm.post(`/clients/${id}/email`, { subject: s, body: b });
+    return { sent: true, channel };
+  }
+  if (channel === 'whatsapp') {
+    const m = needText(body, 'message', 4000);
+    const conv = await crm.post('/conversations/start', { clientId: id, channel: 'whatsapp' });
+    if (!conv?.conversationId) throw new Error('the CRM did not open a WhatsApp thread for that client');
+    await crm.post(`/conversations/${conv.conversationId}/reply`, { content: m });
+    return { sent: true, channel, conversationId: conv.conversationId };
+  }
+  throw new Error('only an email or a WhatsApp can be sent from the CRM');
+}
+
 export const OWNER_ACTIONS = {
   // The four CRM changes, now, because the owner asked.
   async crm_do(db, crm, { kind, payload }) {
@@ -467,10 +545,16 @@ export const OWNER_ACTIONS = {
     await journal(db, `Done in the CRM at the owner's word (chat): ${c.describe(clean)}`);
     return { done: true, summary: c.describe(clean), id: out?.client?.id || out?.opportunity?.id || out?.id || null };
   },
-  async crm_send_email(db, crm, { clientId, subject, body }) {
+  // Checked first: an address that cannot take mail is never sent to; WhatsApp is offered when they have a phone.
+  async crm_send_email(db, crm, { clientId, subject, body }, { resolver } = {}) {
     const id = needId(clientId, 'clientId');
     const s = needText(subject, 'subject', 300), b = needText(body, 'body', 8000);
-    await crm.post(`/clients/${id}/email`, { subject: s, body: b });
+    const chk = await checkClientEmail(crm, id, { resolver });
+    if (chk.valid === false) {
+      const phone = chk.phone !== undefined ? chk.phone : (await clientCard(crm, id))?.phone || null;
+      return { sent: false, error: badEmailMessage(chk, phone), email_check: chk, ...(phone ? { try_instead: 'crm_send_whatsapp' } : {}) };
+    }
+    await sendFollowUpViaCrm(crm, { channel: 'email', crmId: id, subject: s, body: b });
     const c = await logContact(db, crm, id, 'email', `Email sent from the CRM at the owner's word: "${s}"`);
     await journal(db, `Emailed ${c?.name || 'a CRM client'} from the CRM at the owner's word: "${s}".`);
     return { sent: true, channel: 'email', to: c?.name || id };
@@ -479,9 +563,7 @@ export const OWNER_ACTIONS = {
   async crm_send_whatsapp(db, crm, { clientId, message }) {
     const id = needId(clientId, 'clientId');
     const m = needText(message, 'message', 4000);
-    const conv = await crm.post('/conversations/start', { clientId: id, channel: 'whatsapp' });
-    if (!conv?.conversationId) throw new Error('the CRM did not open a WhatsApp thread for that client');
-    await crm.post(`/conversations/${conv.conversationId}/reply`, { content: m });
+    const conv = await sendFollowUpViaCrm(crm, { channel: 'whatsapp', crmId: id, body: m });
     const c = await logContact(db, crm, id, 'whatsapp', `WhatsApp sent from the CRM at the owner's word: ${m.slice(0, 200)}`);
     await journal(db, `Sent ${c?.name || 'a CRM client'} a WhatsApp from the CRM at the owner's word.`);
     return { sent: true, channel: 'whatsapp', to: c?.name || id, conversationId: conv.conversationId };
@@ -528,13 +610,15 @@ export const CRM_TOOL_DEFS = [
       status: { type: 'string', enum: ['active', 'expired', 'cancelled', 'expiring_soon'] }, clientId: { type: 'string' }, page: { type: 'integer', minimum: 1 } } } },
   { name: 'crm_invoices', description: 'CRM invoices, optionally by status or client.',
     input_schema: { type: 'object', additionalProperties: false, properties: {
-      status: { type: 'string', enum: ['draft', 'sent', 'paid', 'overdue', 'partial', 'cancelled'] }, clientId: { type: 'string' }, page: { type: 'integer', minimum: 1 } } } },
+      status: { type: 'string', enum: ['draft', 'sent', 'paid', 'overdue', 'partially_paid', 'cancelled'] }, clientId: { type: 'string' }, page: { type: 'integer', minimum: 1 } } } },
   { name: 'crm_inbox', description: 'The CRM inbox: recent conversations (WhatsApp, email, Facebook...), newest first, optionally only unread ones or one channel. Use it to find a conversationId before replying.',
     input_schema: { type: 'object', additionalProperties: false, properties: {
       unread: { type: 'boolean' }, channel: { type: 'string', enum: ['whatsapp', 'email', 'facebook', 'instagram', 'webchat'] }, page: { type: 'integer', minimum: 1 } } } },
   { name: 'crm_do', description: `Make a change in the CRM NOW, because the owner asked for it in this conversation. Kinds and payloads as in crm_propose_change (create_client also takes status: prospect). Only when the owner asked; for your own ideas use crm_propose_change.`,
     input_schema: { type: 'object', additionalProperties: false, required: ['kind', 'payload'], properties: {
       kind: { type: 'string', enum: Object.keys(CRM_CHANGES) }, payload: { type: 'object' } } } },
+  { name: 'check_email', description: 'Check an email address before sending to it: well formed, not a test or throwaway domain, and its domain takes mail (MX records). valid true, false (do not send; say why) or null (could not tell; sending is fine). Give the address, or a CRM clientId to check the address on their card (the CRM\'s own check when it has one). crm_send_email runs it by itself.',
+    input_schema: { type: 'object', additionalProperties: false, properties: { email: { type: 'string' }, clientId: { type: 'string' } } } },
   { name: 'crm_send_email', description: 'Send an email to a CRM client NOW, from the CRM (it is filed in the inbox). Only when the owner asked for this message in this conversation and has seen or dictated the words. clientId from crm_clients.',
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'subject', 'body'], properties: {
       clientId: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } } } },
@@ -552,8 +636,17 @@ export const CRM_TOOL_DEFS = [
       kind: { type: 'string', enum: Object.keys(CRM_CHANGES) }, payload: { type: 'object' }, reason: { type: 'string' } } } },
 ];
 
-export function crmTools(db, { client = () => crmClient() } = {}) {
+export function crmTools(db, { client = () => crmClient(), resolver } = {}) {
   const run = {
+    check_email: async ({ email, clientId }) => {
+      if (String(email ?? '').trim()) {
+        const { checkEmail } = await import('./emailcheck.js');
+        return checkEmail(email, { resolver });
+      }
+      if (!clientId) throw new Error('give an email address or a clientId');
+      const { phone, ...out } = await checkClientEmail(client(), clientId, { resolver });
+      return out;
+    },
     crm_overview: async () => crmSnapshot(client(), { clients: 20 }),
     crm_clients: async ({ search, status, page }) => {
       const out = await client().get('/clients' + qs({ search, status, page, limit: 25 }));
@@ -580,7 +673,7 @@ export function crmTools(db, { client = () => crmClient() } = {}) {
       const out = await client().get('/conversations' + qs({ unread: unread ? 'true' : undefined, channel, page, limit: 25 }));
       return { conversations: (out.conversations || []).map((c) => ({ ...pick(c, ['id', 'channel', 'status', 'contact_name', 'company_name', 'contact_id', 'subject', 'last_message_preview', 'last_message_at', 'unread_count', 'assigned_first_name']), last_message: String(c.last_message || '').slice(0, 300) })), pagination: out.pagination };
     },
-    ...Object.fromEntries(Object.entries(OWNER_ACTIONS).map(([name, fn]) => [name, (input) => fn(db, client(), input)])),
+    ...Object.fromEntries(Object.entries(OWNER_ACTIONS).map(([name, fn]) => [name, (input) => fn(db, client(), input, { resolver })])),
   };
   return {
     defs: CRM_TOOL_DEFS,

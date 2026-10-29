@@ -18,7 +18,7 @@ export const AGENTS = [
   {
     id: 'accounts',
     name: 'Accounts',
-    role: 'Drafts reminders for overdue CRM invoices (friendly, then firm, then final) and notes for services ending in 45 days without auto-renew. Drafts only; you send them, or tap Send from the CRM.',
+    role: 'Drafts reminders for overdue CRM invoices (friendly, then firm, then final; a partly paid one thanks them for what came in and asks for what is left), by WhatsApp when the client has a mobile in the CRM, by email otherwise, and notes for services ending in 45 days without auto-renew. Drafts only; you send them, or tap Send from the CRM.',
     schedule: 'After every coordinator run, when the CRM is connected',
   },
   {

@@ -924,11 +924,11 @@ function followUpCard(f) {
   const sent = $('button', 'act approve', f.channel === 'call' ? 'Mark called' : 'Mark sent');
   const drop = $('button', 'act', 'Drop');
   const finish = async (decision) => {
-    [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = true; }); hint.className = 'hint'; hint.textContent = decision === 'send_crm' ? 'Sending from the CRM…' : 'Saving…';
+    [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = true; }); hint.className = 'hint'; hint.textContent = decision === 'send_crm' ? (f.channel === 'whatsapp' ? 'Sending the WhatsApp from the CRM…' : 'Sending from the CRM…') : 'Saving…';
     try {
       await post('/api/follow-up', { id: f.id, decision, body: ta.value, subject: si.value, next_contact_due: decision === 'replied' ? null : ni.value });
       c.querySelector('.pending').remove();
-      const DONE = { sent: '✓ LOGGED AS SENT', send_crm: '✓ SENT FROM THE CRM', replied: '✓ REPLY LOGGED · SEQUENCE STOPPED', drop: 'DROPPED' };
+      const DONE = { sent: '✓ LOGGED AS SENT', send_crm: f.channel === 'whatsapp' ? '✓ SENT BY WHATSAPP FROM THE CRM' : '✓ SENT FROM THE CRM', replied: '✓ REPLY LOGGED · SEQUENCE STOPPED', drop: 'DROPPED' };
       actions.replaceWith($('div', 'done ' + (decision === 'drop' ? 'drop' : 'ok'), DONE[decision]));
       data.followUps = data.followUps.filter((x) => x.id !== f.id); drawTabs();
     } catch (e) { [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = false; }); hint.className = 'error'; hint.textContent = e.message; }
@@ -936,14 +936,16 @@ function followUpCard(f) {
   sent.onclick = () => finish('sent');
   let armed = false;
   drop.onclick = () => { if (armed) return finish('drop'); armed = true; drop.textContent = 'Confirm drop'; drop.className = 'act confirm'; };
-  if (f.channel === 'email' && f.crm_id && data.crmOn) {
-    // One tap: emailed from the CRM to the client's address there, and logged here.
-    const viaCrm = $('button', 'act approve', 'Send from the CRM'); viaCrm.onclick = () => finish('send_crm'); actions.append(viaCrm);
+  const crmSend = (f.channel === 'email' || f.channel === 'whatsapp') && f.crm_id && data.crmOn;
+  if (crmSend) {
+    // One tap: emailed to the client's address in the CRM, or sent by WhatsApp through the CRM inbox, and logged here.
+    const viaCrm = $('button', 'act approve', f.channel === 'whatsapp' ? 'Send by WhatsApp from the CRM' : 'Send from the CRM'); viaCrm.onclick = () => finish('send_crm'); actions.append(viaCrm);
     sent.className = 'act'; sent.textContent = 'I sent it myself';
   }
   actions.append(sent, copy);
   if (f.step) { const rep = $('button', 'act', 'They replied'); rep.title = 'Stops the sequence and logs the reply'; rep.onclick = () => finish('replied'); actions.append(rep); }
-  if (f.channel === 'whatsapp') { const wa = $('a', 'act', 'Open WhatsApp'); wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); wa.target = '_blank'; wa.rel = 'noopener'; wa.onclick = () => { wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); }; actions.append(wa); }
+  // A client in the CRM is messaged through the CRM (so it is filed there); the WhatsApp app link is only for the rest.
+  if (f.channel === 'whatsapp' && !crmSend) { const wa = $('a', 'act', 'Open WhatsApp'); wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); wa.target = '_blank'; wa.rel = 'noopener'; wa.onclick = () => { wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); }; actions.append(wa); }
   actions.append(drop, hint); c.append(actions);
   return c;
 }

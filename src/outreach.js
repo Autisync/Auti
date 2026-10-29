@@ -209,7 +209,8 @@ export async function outreachForContext(db) {
            count(*) FILTER (WHERE outreach_step IS NOT NULL AND outreach_ended IS NULL AND next_contact_due <= current_date)::int AS due_today,
            count(*) FILTER (WHERE outreach_step IS NOT NULL AND outreach_ended IS NULL AND next_contact_due > current_date)::int AS queued,
            count(*) FILTER (WHERE outreach_ended = 'replied')::int AS replied,
-           count(*) FILTER (WHERE outreach_ended = 'finished')::int AS finished
+           count(*) FILTER (WHERE outreach_ended = 'finished')::int AS finished,
+           count(*) FILTER (WHERE outreach_ended = 'bad_email')::int AS bad_email
       FROM clients`).catch(() => ({ rows: [{}] }))).rows[0];
   return { ...r, per_day: await outreachPerDay(db).catch(() => DEFAULT_PER_DAY) };
 }
@@ -226,18 +227,34 @@ const PHONE = /\+?\d[\d\s().-]{7,}\d/;
 /**
  * Leads the leads agent found that have a business email go into the CRM as prospects and into the outreach
  * sequence, a few a day. A lead without an email stays on the Leads tab for the owner. One the CRM refuses
- * (already there, say) stays too, with the reason in the count.
+ * (already there, say) stays too, with the reason in the count. So does one whose address cannot take mail
+ * (src/emailcheck.js: bad_email), with the reason shown on its card; an address that could not be checked goes in.
+ * checkEmail and resolver are for tests.
  */
-export async function leadsToCrm(db, crm, { max = 20 } = {}) {
+export async function leadsToCrm(db, crm, { max = 20, resolver, checkEmail } = {}) {
   if (!(await settingOn(db, 'leads_to_crm'))) return { skipped: 'switched off', added: 0 };
   const { applyCrmChange } = await import('./crm.js');
+  const check = checkEmail || (await import('./emailcheck.js')).checkEmail;
   const rows = (await db.query(
     `SELECT * FROM lead WHERE status = 'new' AND found_at > now() - interval '14 days' ORDER BY fit DESC, found_at LIMIT $1`, [max])).rows;
   const perDay = await outreachPerDay(db);
-  const out = { considered: rows.length, added: 0, no_email: 0, refused: 0 };
+  const out = { considered: rows.length, added: 0, no_email: 0, bad_email: 0, refused: 0 };
   for (const l of rows) {
     const email = String(l.contact_route || '').match(EMAIL)?.[0];
     if (!email) { out.no_email++; continue; }
+    const v = await check(email, { resolver }).catch(() => ({ valid: null }));
+    if (v.valid === false) {
+      out.bad_email++;
+      // Said once on the lead's card (✗ in its checks), so the owner sees why it did not go to the CRM.
+      const note = `${email} cannot receive email: ${v.reason}`;
+      await db.query(
+        `UPDATE lead SET checks = jsonb_set(COALESCE(checks, '{}'::jsonb), '{contradicted}',
+                COALESCE(checks->'contradicted', '[]'::jsonb) || to_jsonb($2::text))
+                || jsonb_build_object('email_check', jsonb_build_object('email', $3::text, 'valid', false, 'reason', $4::text))
+          WHERE id = $1 AND NOT COALESCE(checks->'contradicted', '[]'::jsonb) ? $2`,
+        [l.id, note, email, String(v.reason || '')]).catch(() => undefined);
+      continue;
+    }
     const phone = String(l.contact_route || '').replace(EMAIL, ' ').match(PHONE)?.[0]?.trim();
     let crmId;
     try {
@@ -282,19 +299,22 @@ export async function repliedSince(crm, crmId, since) {
  * The outreach touches drafted for prospects in the CRM go out by email from the CRM, at most outreach_per_day a
  * run, when the owner switched outreach_autosend on. Never a follow-up to an existing client, never WhatsApp (a first
  * WhatsApp to a business needs an approved template), and never to someone who wrote back: that ends their sequence.
+ * Nor to an address that cannot take mail (the CRM's check, or src/emailcheck.js): that touch is dropped and the
+ * sequence ends as bad_email, with a line in the journal. An address that could not be checked is sent to.
  */
-export async function autoSendOutreach(db, crm) {
+export async function autoSendOutreach(db, crm, { resolver } = {}) {
   if (!(await settingOn(db, 'outreach_autosend'))) return { skipped: 'switched off', sent: 0 };
   const { decideFollowUp } = await import('./web.js');
+  const { checkClientEmail, sendFollowUpViaCrm } = await import('./crm.js');
   const limit = await outreachPerDay(db);
   const rows = (await db.query(
-    `SELECT f.id, f.subject, f.body, f.step, c.id AS client_id, c.crm_id,
+    `SELECT f.id, f.subject, f.body, f.step, c.id AS client_id, c.crm_id, c.name,
             (SELECT min(t.happened_at) FROM client_touchpoint t WHERE t.client_id = c.id) AS first_touch
        FROM follow_up f JOIN clients c ON c.id = f.client_id
       WHERE f.status = 'awaiting_approval' AND f.created_by_agent = 'outreach' AND f.channel = 'email'
         AND c.crm_id IS NOT NULL AND c.status = 'lead' AND c.outreach_ended IS NULL
       ORDER BY f.created_at LIMIT $1`, [limit])).rows;
-  const out = { sent: 0, replied: 0, failed: 0 };
+  const out = { sent: 0, replied: 0, bad_email: 0, failed: 0 };
   for (const f of rows) {
     try {
       if (f.first_touch && await repliedSince(crm, f.crm_id, new Date(f.first_touch))) {
@@ -303,7 +323,20 @@ export async function autoSendOutreach(db, crm) {
         continue;
       }
       if (!String(f.subject || '').trim() || !String(f.body || '').trim()) { out.failed++; continue; }
-      await crm.post(`/clients/${f.crm_id}/email`, { subject: f.subject, body: f.body });
+      const chk = await checkClientEmail(crm, f.crm_id, { resolver });
+      if (chk.valid === false) {
+        await decideFollowUp(db, { id: f.id, decision: 'drop' });
+        const why = `${chk.email || 'their email address'} cannot receive email (${chk.reason})`;
+        await db.query(
+          `UPDATE clients SET outreach_step = NULL, outreach_ended = 'bad_email', next_contact_due = current_date + 30,
+                  notes = concat_ws(E'\n', notes, $2::text) WHERE id = $1`,
+          [f.client_id, `Outreach stopped on ${new Date().toISOString().slice(0, 10)}: ${why}. Reach them another way (phone, WhatsApp) or find a working address.`]);
+        await db.query(`INSERT INTO journal (kind, author, body, client_id) VALUES ('decision', 'auti', $1, $2)`,
+          [`Stopped the outreach to ${f.name}: ${why}. The touch was dropped, not sent.`, f.client_id]).catch(() => undefined);
+        out.bad_email++;
+        continue;
+      }
+      await sendFollowUpViaCrm(crm, { channel: 'email', crmId: f.crm_id, subject: f.subject, body: f.body });
       await decideFollowUp(db, { id: f.id, decision: 'sent', sent_via: 'auto' });
       out.sent++;
     } catch { out.failed++; }      // left waiting: the owner sees it on the Approvals tab
