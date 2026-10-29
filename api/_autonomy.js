@@ -1,5 +1,6 @@
 // POST /api/autonomy {enabled}  : switch Auti's automatic steps on or off.
 // POST /api/autonomy {undo: id} : undo one step Auti took on its own.
+// POST /api/autonomy {setting: 'leads_to_crm'|'outreach_autosend', enabled} : the owner's two outreach switches.
 import { guard, getDb } from './_shared.js';
 import { setAutonomy, undoAction } from '../src/autonomy.js';
 
@@ -13,6 +14,13 @@ export default async function handler(req, res) {
       const out = await undoAction(getDb(), body.undo);
       if (!out) return res.status(404).json({ error: 'Already undone, or no such step.' });
       return res.status(200).json(out);
+    }
+    if (body.setting !== undefined) {
+      if (!['leads_to_crm', 'outreach_autosend'].includes(body.setting)) return res.status(400).json({ error: 'unknown setting' });
+      if (typeof body.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false' });
+      const r = (await getDb().query(`UPDATE coordinator_config SET enabled = $2, updated_by = 'owner' WHERE key = $1 RETURNING key, enabled`, [body.setting, body.enabled])).rows[0];
+      if (!r) return res.status(400).json({ error: 'not ready yet: the next scheduled run sets this up' });
+      return res.status(200).json(r);
     }
     res.status(200).json(await setAutonomy(getDb(), body.enabled));
   } catch (err) {

@@ -49,7 +49,7 @@ Rules:
 - Short and human: under 120 words for email, under 60 for WhatsApp. No hard sell, no "just checking in" with nothing to offer; give a reason to reply.
 - Write in Portuguese (Portugal for portugal, Angolan usage for angola) for clients in portugal or angola, and English otherwise, unless the notes say otherwise.
 - Sign off with the owner's first name if the standing instructions name them; otherwise no signature.
-- Clients with an outreach object are businesses that never heard from the owner. Write exactly the touch named in outreach.touch, built on outreach.what_we_saw and outreach.opening; never pretend you have spoken before, never mention research or AI, and keep it shorter: under 80 words for email, under 45 for WhatsApp. Pick the channel from outreach.contact_route: whatsapp for a mobile or WhatsApp number, email otherwise.
+- Clients with an outreach object are businesses that never heard from the owner. Write exactly the touch named in outreach.touch, built on outreach.what_we_saw and outreach.opening; never pretend you have spoken before, never mention research or AI, and keep it shorter: under 80 words for email, under 45 for WhatsApp. Pick the channel from outreach.contact_route: email when it has an email address (these may be sent without the owner reading them first), whatsapp only for a WhatsApp number and no email. End every outreach email with one plain line that lets them say no, such as "If it isn't for you, just reply no and I won't write again."
 - Nothing is sent by you. The owner reviews every draft.
 
 Standing instructions from the owner:

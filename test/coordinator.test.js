@@ -475,7 +475,7 @@ await check('consulting Synaut sends the company state, uses no forced tool, and
   assert.equal(sent.body.tool_choice, undefined);
   assert.deepEqual(sent.body.tools.map((t) => t.name), ['github_list_repos', 'github_repo_activity', 'github_read_file', 'documents_list', 'documents_read']);
   assert.match(sent.body.system[0].text, /Example Client/);
-  assert.match(sent.body.system[0].text, /cannot approve/);
+  assert.match(sent.body.system[0].text, /cannot approve your own plans/);
   const u = (await db.query(`SELECT * FROM agent_usage WHERE agent = 'assistant'`)).rows;
   assert.equal(u.length, 1);
   assert.equal(u[0].input_tokens, 1000);

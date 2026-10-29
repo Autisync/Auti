@@ -424,6 +424,95 @@ export async function decideCrmRequest(db, crm, { id, decision }) {
   }
 }
 
+// ---------- acting at the owner's word (chat) ----------
+// In the chat the owner is talking to Auti directly, so what they ask for is their approval: these run now, as Auti's
+// CRM user, and each one is written in the journal. The scheduled runs never call them (they propose instead).
+
+const UUIDRE = /^[0-9a-f-]{36}$/i;
+const needId = (v, what) => { if (!UUIDRE.test(String(v ?? ''))) throw new Error(`${what} must be a CRM id (look it up with crm_clients first)`); return String(v); };
+const needText = (v, what, max) => { const t = String(v ?? '').trim(); if (!t) throw new Error(`${what} is required`); if (t.length > max) throw new Error(`${what} is too long`); return t; };
+
+// Auti's own row for a CRM client (made from the CRM card when it has none), so a contact is logged where the
+// retention agent and the Clients tab see it.
+export async function autiClientFor(db, crm, crmId) {
+  const have = (await db.query(`SELECT id, name, status::text AS status FROM clients WHERE crm_id = $1`, [crmId])).rows[0];
+  if (have) return have;
+  const c = await crm.get(`/clients/${crmId}`);
+  const row = c?.client || c || {};
+  const name = String(row.company_name || row.contact_name || '').trim();
+  if (!name) throw new Error('that CRM client has no name');
+  const status = statusOf(row.status) ?? 'active';
+  return (await db.query(
+    `INSERT INTO clients (name, market, status, crm_id, crm_synced_at, next_contact_due)
+     VALUES ($1, $2::market, $3::client_status, $4, now(), NULL) RETURNING id, name, status::text AS status`,
+    [name, marketOf(row.country), status, crmId])).rows[0];
+}
+
+async function logContact(db, crm, crmId, channel, summary) {
+  try {
+    const c = await autiClientFor(db, crm, crmId);
+    await db.query(`INSERT INTO client_touchpoint (client_id, channel, summary) VALUES ($1, $2, $3)`, [c.id, channel, summary.slice(0, 1000)]);
+    return c;
+  } catch { return null; }   // the message went out; a missing Auti row never undoes that
+}
+const journal = (db, body) => db.query(`INSERT INTO journal (kind, author, body) VALUES ('decision', 'owner', $1)`, [body.slice(0, 2000)]).catch(() => undefined);
+
+export const OWNER_ACTIONS = {
+  // The four CRM changes, now, because the owner asked.
+  async crm_do(db, crm, { kind, payload }) {
+    const c = CRM_CHANGES[kind];
+    if (!c) throw new Error(`unknown change; use one of ${Object.keys(CRM_CHANGES).join(', ')}`);
+    const clean = c.check(payload || {});
+    const out = await c.run(crm, clean);
+    await journal(db, `Done in the CRM at the owner's word (chat): ${c.describe(clean)}`);
+    return { done: true, summary: c.describe(clean), id: out?.client?.id || out?.opportunity?.id || out?.id || null };
+  },
+  async crm_send_email(db, crm, { clientId, subject, body }) {
+    const id = needId(clientId, 'clientId');
+    const s = needText(subject, 'subject', 300), b = needText(body, 'body', 8000);
+    await crm.post(`/clients/${id}/email`, { subject: s, body: b });
+    const c = await logContact(db, crm, id, 'email', `Email sent from the CRM at the owner's word: "${s}"`);
+    await journal(db, `Emailed ${c?.name || 'a CRM client'} from the CRM at the owner's word: "${s}".`);
+    return { sent: true, channel: 'email', to: c?.name || id };
+  },
+  // A WhatsApp to a client: opens (or reuses) their thread in the CRM inbox and sends it there.
+  async crm_send_whatsapp(db, crm, { clientId, message }) {
+    const id = needId(clientId, 'clientId');
+    const m = needText(message, 'message', 4000);
+    const conv = await crm.post('/conversations/start', { clientId: id, channel: 'whatsapp' });
+    if (!conv?.conversationId) throw new Error('the CRM did not open a WhatsApp thread for that client');
+    await crm.post(`/conversations/${conv.conversationId}/reply`, { content: m });
+    const c = await logContact(db, crm, id, 'whatsapp', `WhatsApp sent from the CRM at the owner's word: ${m.slice(0, 200)}`);
+    await journal(db, `Sent ${c?.name || 'a CRM client'} a WhatsApp from the CRM at the owner's word.`);
+    return { sent: true, channel: 'whatsapp', to: c?.name || id, conversationId: conv.conversationId };
+  },
+  async crm_reply(db, crm, { conversationId, message }) {
+    const id = needId(conversationId, 'conversationId');
+    const m = needText(message, 'message', 4000);
+    await crm.post(`/conversations/${id}/reply`, { content: m });
+    await journal(db, `Replied in the CRM inbox at the owner's word (conversation ${id.slice(0, 8)}).`);
+    return { sent: true, conversationId: id };
+  },
+  // When to get in touch next. outreach: true starts the four-touch sequence on that day for a prospect.
+  async auti_schedule_contact(db, crm, { clientId, date, note, outreach }) {
+    const id = needId(clientId, 'clientId');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) throw new Error('date must be YYYY-MM-DD');
+    const ok = (await db.query(`SELECT $1::date >= current_date AS ok`, [date])).rows[0].ok;
+    if (!ok) throw new Error('date must be today or later');
+    const c = await autiClientFor(db, crm, id);
+    const n = String(note ?? '').trim().slice(0, 1000);
+    if (outreach) {
+      if (c.status !== 'lead') await db.query(`UPDATE clients SET status = 'lead' WHERE id = $1 AND status = 'active' AND NOT EXISTS (SELECT 1 FROM client_touchpoint t WHERE t.client_id = $1)`, [c.id]);
+      await db.query(`UPDATE clients SET outreach_step = COALESCE(outreach_step, 1), outreach_ended = NULL, next_contact_due = $2::date,
+                             notes = CASE WHEN $3 = '' THEN notes ELSE concat_ws(E'\n', notes, $3) END WHERE id = $1`, [c.id, date, n]);
+    } else {
+      await db.query(`UPDATE clients SET next_contact_due = $2::date, notes = CASE WHEN $3 = '' THEN notes ELSE concat_ws(E'\n', notes, $3) END WHERE id = $1`, [c.id, date, n]);
+    }
+    await journal(db, `${outreach ? 'Outreach sequence' : 'Next contact'} for ${c.name} set for ${date} at the owner's word.`);
+    return { scheduled: true, client: c.name, date, outreach: !!outreach };
+  },
+};
+
 // ---------- chat tools ----------
 
 export const CRM_TOOL_DEFS = [
@@ -440,6 +529,24 @@ export const CRM_TOOL_DEFS = [
   { name: 'crm_invoices', description: 'CRM invoices, optionally by status or client.',
     input_schema: { type: 'object', additionalProperties: false, properties: {
       status: { type: 'string', enum: ['draft', 'sent', 'paid', 'overdue', 'partial', 'cancelled'] }, clientId: { type: 'string' }, page: { type: 'integer', minimum: 1 } } } },
+  { name: 'crm_inbox', description: 'The CRM inbox: recent conversations (WhatsApp, email, Facebook...), newest first, optionally only unread ones or one channel. Use it to find a conversationId before replying.',
+    input_schema: { type: 'object', additionalProperties: false, properties: {
+      unread: { type: 'boolean' }, channel: { type: 'string', enum: ['whatsapp', 'email', 'facebook', 'instagram', 'webchat'] }, page: { type: 'integer', minimum: 1 } } } },
+  { name: 'crm_do', description: `Make a change in the CRM NOW, because the owner asked for it in this conversation. Kinds and payloads as in crm_propose_change (create_client also takes status: prospect). Only when the owner asked; for your own ideas use crm_propose_change.`,
+    input_schema: { type: 'object', additionalProperties: false, required: ['kind', 'payload'], properties: {
+      kind: { type: 'string', enum: Object.keys(CRM_CHANGES) }, payload: { type: 'object' } } } },
+  { name: 'crm_send_email', description: 'Send an email to a CRM client NOW, from the CRM (it is filed in the inbox). Only when the owner asked for this message in this conversation and has seen or dictated the words. clientId from crm_clients.',
+    input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'subject', 'body'], properties: {
+      clientId: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } } } },
+  { name: 'crm_send_whatsapp', description: 'Send a WhatsApp message to a CRM client NOW, through the CRM inbox (opens their thread if they have none). Only when the owner asked for this message and has seen or dictated the words. clientId from crm_clients.',
+    input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'message'], properties: {
+      clientId: { type: 'string' }, message: { type: 'string' } } } },
+  { name: 'crm_reply', description: 'Reply NOW in an existing CRM inbox conversation (whatever channel it is on). Only when the owner asked and has seen or dictated the words. conversationId from crm_inbox.',
+    input_schema: { type: 'object', additionalProperties: false, required: ['conversationId', 'message'], properties: {
+      conversationId: { type: 'string' }, message: { type: 'string' } } } },
+  { name: 'auti_schedule_contact', description: "Schedule when to get in touch with a CRM client next (Auti drafts it that day). outreach: true starts the four-touch outreach sequence on that day for a prospect who never heard from us. When the owner asks to follow someone up later or to reach out to a list on a date.",
+    input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'date'], properties: {
+      clientId: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD, today or later' }, note: { type: 'string' }, outreach: { type: 'boolean' } } } },
   { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName and email (required), contactName, phone, country, city, website, notes. create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status. send_onboarding_form payload: clientId, clientName, and optionally sections (business, website, email, social, crm, callcatch), language (pt or en) and a note; it sets the form up if the client has none and emails the link.`,
     input_schema: { type: 'object', additionalProperties: false, required: ['kind', 'payload', 'reason'], properties: {
       kind: { type: 'string', enum: Object.keys(CRM_CHANGES) }, payload: { type: 'object' }, reason: { type: 'string' } } } },
@@ -469,6 +576,11 @@ export function crmTools(db, { client = () => crmClient() } = {}) {
       return { invoices, pagination: out.pagination };
     },
     crm_propose_change: async ({ kind, payload, reason }) => proposeCrmChange(db, { kind, payload, reason }),
+    crm_inbox: async ({ unread, channel, page }) => {
+      const out = await client().get('/conversations' + qs({ unread: unread ? 'true' : undefined, channel, page, limit: 25 }));
+      return { conversations: (out.conversations || []).map((c) => ({ ...pick(c, ['id', 'channel', 'status', 'contact_name', 'company_name', 'contact_id', 'subject', 'last_message_preview', 'last_message_at', 'unread_count', 'assigned_first_name']), last_message: String(c.last_message || '').slice(0, 300) })), pagination: out.pagination };
+    },
+    ...Object.fromEntries(Object.entries(OWNER_ACTIONS).map(([name, fn]) => [name, (input) => fn(db, client(), input)])),
   };
   return {
     defs: CRM_TOOL_DEFS,
