@@ -55,7 +55,8 @@ async function coordinator() {
   let crm = null;
   if (crmConfigured()) {
     try {
-      crm = await crmSnapshot(crmClient());
+      // No function time limit on a scheduled run: the delivery reads may take their time.
+      crm = await crmSnapshot(crmClient(), { deliveryBudgetMs: 60000 });
       console.log(`crm: read, ${crm.unavailable.length} part(s) unavailable`);
     } catch (err) {
       console.error(`crm skipped: ${err.message}`);
@@ -120,7 +121,7 @@ async function report() {
   if (!kinds.length) return console.log('report: none due today');
   let crm = null, ads = null;
   if (crmConfigured()) {
-    try { crm = await crmSnapshot(crmClient()); } catch (err) { console.error(`report: crm skipped: ${err.message}`); }
+    try { crm = await crmSnapshot(crmClient(), { deliveryBudgetMs: 60000 }); } catch (err) { console.error(`report: crm skipped: ${err.message}`); }
     for (const k of kinds) {
       try { ads = await crmClient().get(`/ads?days=${k === 'month' ? 30 : 7}`); } catch (err) { console.error(`report: ads skipped: ${err.message}`); }
       const out = await runReport({ db, brain: claudeBrain({ model: process.env.AUTI_REPORT_MODEL || CHEAP }), kind: k, crm, ads });

@@ -3,9 +3,10 @@
 // POST /api/leads {enabled}                                      : switch the leads agent on or off.
 import { guard, getDb } from './_shared.js';
 import { decideLead, setLeadsAgent, leadNotes, COUNTRY } from '../src/leads.js';
-import { applyCrmChange, crmClient, crmConfigured, proposeCrmChange } from '../src/crm.js';
+import { applyCrmChange, crmClient, crmConfigured, proposeCrmChange, AUTI_LEADS } from '../src/crm.js';
 
-export const config = { maxDuration: 30 };
+// Served through api/ops.js (60 s); kept in step for clarity.
+export const config = { maxDuration: 60 };
 
 
 export default async function handler(req, res) {
@@ -25,7 +26,7 @@ export default async function handler(req, res) {
       if (l.status === 'in_crm') return res.status(409).json({ error: 'Already in the CRM.' });
       const out = await applyCrmChange(crmClient(), 'create_client', {
         companyName: l.company, contactName: body.contactName || undefined, email: body.email, phone: body.phone || undefined,
-        country: COUNTRY[l.market], city: l.city || undefined, website: l.website || undefined, notes: leadNotes(l),
+        country: COUNTRY[l.market], city: l.city || undefined, website: l.website || undefined, notes: leadNotes(l), ...AUTI_LEADS,
       });
       crmId = out?.client?.id || out?.id || null;
     }
