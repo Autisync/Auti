@@ -696,6 +696,38 @@ export const OWNER_ACTIONS = {
   },
 };
 
+// One conversation as the chat needs it: who said what, in order. The CRM works out who sent each outbound message
+// (sent_by_kind: person, assistant = Auti, automatic, external); inbound ones are the client.
+const SOURCE_WORDS = { payment_reminder: 'payment reminder', payment_receipt: 'payment receipt', qualifier: 'welcome questions', opener: 'WhatsApp opener',
+  automation: 'automation', 'delivery-auto-reply': 'delivery message', callcatch: 'CallCatch' };
+export function conversationView(res, last = 30) {
+  const c = res?.conversation || {};
+  const n = Math.min(60, Math.max(1, Number(last) || 30));
+  const who = (m) => {
+    if (m.direction !== 'outbound') return c.contact_name || c.company_name || 'the client';
+    if (m.sent_by_kind === 'assistant') return 'Auti';
+    if (m.sent_by_kind === 'automatic') return `automatic (${SOURCE_WORDS[m.sent_by_source] || m.sent_by_source || 'the CRM'})`;
+    if (m.sent_by_kind === 'external') return SOURCE_WORDS[m.sent_by_source] || 'outside the CRM';
+    return m.sent_by_name || 'the team';
+  };
+  const msgs = (res?.messages || []).slice(-n).map((m) => ({
+    at: m.sent_at || m.created_at || null,
+    from: m.direction === 'outbound' ? 'us' : 'them',
+    who: who(m),
+    text: String(m.content || '').slice(0, 1500) || (Array.isArray(m.attachments_json) && m.attachments_json.length ? `[${m.attachments_json.length} attachment(s)]` : ''),
+    status: m.direction === 'outbound' ? m.status || null : undefined,
+  }));
+  const lastIn = [...msgs].reverse().find((m) => m.from === 'them');
+  return {
+    conversation: { id: c.id, channel: c.channel, status: c.status, client: c.company_name || c.contact_name || null, client_id: c.client_id || c.contact_id || null,
+      email: c.email || null, phone: c.phone || null },
+    // On the official WhatsApp number, outside 24 h since they last wrote, the CRM sends the text inside an approved template.
+    whatsapp_window: res?.whatsappWindow ?? null,
+    messages: msgs,
+    last_from_them: lastIn ? { at: lastIn.at, text: lastIn.text } : null,
+  };
+}
+
 // ---------- chat tools ----------
 
 export const CRM_TOOL_DEFS = [
@@ -726,7 +758,12 @@ export const CRM_TOOL_DEFS = [
   { name: 'crm_send_whatsapp', description: 'Send a WhatsApp message to a CRM client NOW, through the CRM inbox (opens their thread if they have none). Only when the owner asked for this message and has seen or dictated the words. clientId from crm_clients.',
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'message'], properties: {
       clientId: { type: 'string' }, message: { type: 'string' } } } },
-  { name: 'crm_reply', description: 'Reply NOW in an existing CRM inbox conversation (whatever channel it is on). Only when the owner asked and has seen or dictated the words. conversationId from crm_inbox.',
+  { name: 'crm_conversations_for', description: "A client's conversations in the CRM inbox (WhatsApp, email, Facebook...), newest first, by CRM client id. Use it to find the thread to read or reply in.",
+    input_schema: { type: 'object', additionalProperties: false, required: ['clientId'], properties: { clientId: { type: 'string' } } } },
+  { name: 'crm_conversation', description: "Read one CRM inbox conversation in full: every message in order, who wrote it (the client, a named person on the team, Auti, or an automatic message such as a payment reminder), when, and whether it was delivered or read. Read it before writing any reply, so the reply fits what was actually said.",
+    input_schema: { type: 'object', additionalProperties: false, required: ['conversationId'], properties: {
+      conversationId: { type: 'string' }, last: { type: 'integer', minimum: 1, maximum: 60, description: 'How many of the latest messages (default 30).' } } } },
+  { name: 'crm_reply', description: 'Reply NOW in an existing CRM inbox conversation (whatever channel it is on). Read it first with crm_conversation. Only when the owner asked and has seen or dictated the words. conversationId from crm_inbox or crm_conversations_for.',
     input_schema: { type: 'object', additionalProperties: false, required: ['conversationId', 'message'], properties: {
       conversationId: { type: 'string' }, message: { type: 'string' } } } },
   { name: 'auti_schedule_contact', description: "Schedule when to get in touch with a CRM client next (Auti drafts it that day). outreach: true starts the four-touch outreach sequence on that day for a prospect who never heard from us. When the owner asks to follow someone up later or to reach out to a list on a date.",
@@ -774,6 +811,14 @@ export function crmTools(db, { client = () => crmClient(), resolver } = {}) {
       const out = await client().get('/conversations' + qs({ unread: unread ? 'true' : undefined, channel, page, limit: 25 }));
       return { conversations: (out.conversations || []).map((c) => ({ ...pick(c, ['id', 'channel', 'status', 'contact_name', 'company_name', 'contact_id', 'subject', 'last_message_preview', 'last_message_at', 'unread_count', 'assigned_first_name']), last_message: String(c.last_message || '').slice(0, 300) })), pagination: out.pagination };
     },
+    crm_conversations_for: async ({ clientId }) => {
+      const id = needId(clientId, 'clientId');
+      const out = await client().get('/conversations' + qs({ limit: 100 }));
+      const mine = (out.conversations || []).filter((c) => String(c.contact_id) === id);
+      return { conversations: mine.map((c) => ({ ...pick(c, ['id', 'channel', 'status', 'subject', 'last_message_at', 'unread_count']), last_message: String(c.last_message || '').slice(0, 300) })),
+        note: mine.length ? undefined : 'No conversation with this client among the 100 most recent in the inbox. To start one on WhatsApp, use crm_send_whatsapp.' };
+    },
+    crm_conversation: async ({ conversationId, last }) => conversationView(await client().get(`/conversations/${needId(conversationId, 'conversationId')}`), last),
     ...Object.fromEntries(Object.entries(OWNER_ACTIONS).map(([name, fn]) => [name, (input) => fn(db, client(), input, { resolver })])),
   };
   return {

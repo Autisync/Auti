@@ -150,7 +150,7 @@ await check('a change Auti proposes waits for the owner, then runs only on appro
   crm.forgetCrmToken();
   const f = fakeCrm();
   const tools = crm.crmTools(db, { client: () => crm.crmClient(opts(f)) });
-  assert.deepEqual(tools.defs.map((d) => d.name), ['crm_overview', 'crm_clients', 'crm_client', 'crm_subscriptions', 'crm_invoices', 'crm_inbox', 'crm_do', 'check_email', 'crm_send_email', 'crm_send_whatsapp', 'crm_reply', 'auti_schedule_contact', 'crm_propose_change']);
+  assert.deepEqual(tools.defs.map((d) => d.name), ['crm_overview', 'crm_clients', 'crm_client', 'crm_subscriptions', 'crm_invoices', 'crm_inbox', 'crm_do', 'check_email', 'crm_send_email', 'crm_send_whatsapp', 'crm_conversations_for', 'crm_conversation', 'crm_reply', 'auti_schedule_contact', 'crm_propose_change']);
   const p = await tools.call('crm_propose_change', { kind: 'update_client_status', payload: { clientId: ID(3), clientName: 'Acme', status: 'churned' }, reason: 'No services left.' });
   assert.equal(p.waiting_for_owner, true);
   assert.match(p.summary, /Acme's CRM status to churned/);
