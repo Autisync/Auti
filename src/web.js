@@ -5,7 +5,7 @@ import { agentsSummary } from './agents.js';
 import { voiceUsage } from './voice.js';
 import { normaliseRepo, githubToken } from './github.js';
 import { repairWeakestLink } from './coordinator.js';
-import { crmConfigured } from './crm.js';
+import { crmConfigured, sendFollowUpViaCrm, checkClientEmail, badEmailMessage } from './crm.js';
 import { GAP } from './retention.js';
 import { milestonesByProject, openCheckins, projectHealth, ymd } from './projects.js';
 import { listLeads, leadsAgentOn } from './leads.js';
@@ -334,6 +334,31 @@ export async function decideFollowUp(db, { id, decision, body, next_contact_due,
     }
     return { id: f.id, status: decision === 'sent' ? 'sent' : 'dropped' };
   });
+}
+
+// The owner tapped Send from the CRM on a draft (Approvals tab): an email or a WhatsApp, sent as Auti's CRM user to
+// the client's address or number there, then logged like Mark sent (sent_via 'crm'). An email to an address that
+// cannot take mail is refused before the CRM is called, with the reason. Returns null when the draft is no longer
+// waiting. An error with httpStatus is the owner's to fix (400, 422); anything else came from the CRM.
+export async function sendFollowUpFromCrm(db, crm, { id, subject, body, next_contact_due } = {}, { resolver } = {}) {
+  const fail = (msg, httpStatus = 400) => Object.assign(new Error(msg), { httpStatus });
+  if (!UUID.test(String(id))) throw fail('bad follow-up id');
+  if (next_contact_due && !DAY.test(String(next_contact_due))) throw fail('next contact must be YYYY-MM-DD');
+  const f = (await db.query(
+    `SELECT f.channel, f.subject, f.body, f.status, c.crm_id FROM follow_up f JOIN clients c ON c.id = f.client_id WHERE f.id = $1`, [id])).rows[0];
+  if (!f || f.status !== 'awaiting_approval') return null;
+  if (!['email', 'whatsapp'].includes(f.channel) || !f.crm_id) throw fail('Only an email or a WhatsApp to a client that is in the CRM can be sent from there.');
+  const s = String(subject ?? f.subject ?? '').trim(), b = String(body ?? f.body ?? '').trim();
+  if (!b) throw fail('There is no message to send.');
+  if (b.length > 8000) throw fail('message is too long');
+  if (f.channel === 'email') {
+    if (!s) throw fail('An email needs a subject and a message.');
+    const chk = await checkClientEmail(crm, f.crm_id, { resolver });
+    if (chk.valid === false) throw Object.assign(fail(badEmailMessage(chk, chk.phone), 422), { email_check: chk });
+  }
+  const sent = await sendFollowUpViaCrm(crm, { channel: f.channel, crmId: f.crm_id, subject: s, body: b });
+  const out = await decideFollowUp(db, { id, decision: 'sent', body: b, subject: s, next_contact_due, sent_via: 'crm' });
+  return { ...out, sent_via: 'crm', channel: f.channel, ...(sent.conversationId ? { conversationId: sent.conversationId } : {}) };
 }
 
 // What Auti can reach beyond its own database. Only whether a key is set is shown, never the key.
