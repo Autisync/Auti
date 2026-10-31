@@ -375,6 +375,7 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
     out.seen++;
     const status = statusOf(c.status);
     const market = marketOf(c.country);
+    const reach = reachOf(c);
     let cur = (await db.query('SELECT id FROM clients WHERE crm_id = $1', [crmId])).rows[0];
     if (!cur) {
       cur = (await db.query(
@@ -391,14 +392,14 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
       const fresh = !cold && (status ?? 'active') === 'lead' && c.created_at && Date.now() - new Date(c.created_at).getTime() < 3 * 864e5;
       // Someone who rang CallCatch's own demo line is a UK trade trying the product: a hot prospect for CallCatch.
       const demo = (c.tags || []).includes('callcatch-demo');
-      const email = c.email && !/\.invalid$/i.test(c.email) ? c.email : null;
+      const email = reach === 'email' ? c.email : null;
       const note = demo
         ? `Rang the CallCatch demo line on ${String(c.created_at || '').slice(0, 10)}${c.phone ? ` from ${c.phone}` : ''}: a UK trade trying CallCatch. Ring or text them today and offer to set up their own (first month free, then £35 a month).`
-        : fresh ? `New enquiry in the CRM on ${String(c.created_at).slice(0, 10)}${email ? ` (${email})` : ''}: reply today; people buy from whoever answers first.` : null;
+        : fresh ? `New enquiry in the CRM on ${String(c.created_at).slice(0, 10)}${email ? ` (${email})` : SOCIAL_NAME[reach] ? ` on ${SOCIAL_NAME[reach]}` : ''}: reply today; people buy from whoever answers first.` : null;
       await db.query(
-        `INSERT INTO clients (name, market, status, crm_id, crm_synced_at, next_contact_due, notes)
-         VALUES ($1, $2::market, $3::client_status, $4, now(), current_date + $5::int, $6)`,
-        [name, demo && market === 'other' ? 'uk' : market, status ?? 'active', crmId, fresh || demo ? 0 : 7 + (out.added % 28), note]);
+        `INSERT INTO clients (name, market, status, crm_id, crm_synced_at, next_contact_due, notes, reach)
+         VALUES ($1, $2::market, $3::client_status, $4, now(), current_date + $5::int, $6, $7)`,
+        [name, demo && market === 'other' ? 'uk' : market, status ?? 'active', crmId, fresh || demo ? 0 : 7 + (out.added % 28), note, reach]);
       if (demo) out.demo = (out.demo || 0) + 1;
       out.added++;
       if (fresh) out.inbound = (out.inbound || 0) + 1;
@@ -408,12 +409,21 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
       `UPDATE clients SET name = $2, market = $3::market,
               status = COALESCE($4::client_status, status),
               lost_reason = CASE WHEN $4::text = 'lost' THEN COALESCE(lost_reason, 'Marked as no longer a client in the CRM') ELSE lost_reason END,
-              crm_synced_at = now()
-        WHERE id = $1 AND (name <> $2 OR market <> $3::market OR ($4::client_status IS NOT NULL AND status <> $4::client_status))
-        RETURNING id`, [cur.id, name, market, status]);
+              reach = $5, crm_synced_at = now()
+        WHERE id = $1 AND (name <> $2 OR market <> $3::market OR ($4::client_status IS NOT NULL AND status <> $4::client_status)
+                           OR reach IS DISTINCT FROM $5)
+        RETURNING id`, [cur.id, name, market, status, reach]);
     if (res.rows.length) out.updated++;
     else await db.query('UPDATE clients SET crm_synced_at = now() WHERE id = $1', [cur.id]);
   }
+  // An email draft waiting for someone who can only be reached on Instagram or Facebook would go to a placeholder
+  // address: it is dropped, and the next run drafts a message for the right channel.
+  const stale = await db.query(
+    `UPDATE follow_up SET status = 'dropped', decided_at = now()
+      WHERE status = 'awaiting_approval' AND channel = 'email'
+        AND client_id IN (SELECT id FROM clients WHERE reach IN ('instagram', 'facebook'))
+      RETURNING id`).catch(() => ({ rows: [] }));
+  if (stale.rows.length) out.socialDraftsRedone = stale.rows.length;
   // Cold lists in the CRM (prospects tagged outreach-...) start the outreach sequence, a few a day.
   try {
     const { startCrmOutreach } = await import('./outreach.js');
@@ -599,6 +609,50 @@ async function clientCard(crm, crmId) {
 }
 
 /**
+ * People who first wrote on Instagram or Facebook get a placeholder address on their CRM card
+ * (<id>@instagram.local, <id>@facebook.local): not an inbox, so an email to it bounces (one did, 29 Oct).
+ * Their way back is a reply in that Instagram or Facebook conversation. Returns 'instagram', 'facebook' or null.
+ */
+export function socialRouteOf(email) {
+  const domain = String(email || '').trim().toLowerCase().split('@')[1] || '';
+  if (domain === 'instagram.local') return 'instagram';
+  if (domain === 'facebook.local' || domain === 'messenger.local') return 'facebook';
+  return null;
+}
+const SOCIAL_NAME = { instagram: 'Instagram', facebook: 'Facebook' };
+/** How a CRM client can be reached, from their card: instagram, facebook, whatsapp, email, phone, or null. */
+export function reachOf(c) {
+  const email = String(c?.email || '').trim();
+  const social = socialRouteOf(email);
+  if (social) return social;
+  if (/@whatsapp\.local$/i.test(email)) return 'whatsapp';
+  if (email && !/\.(invalid|local)$/i.test(email)) return 'email';
+  return c?.phone ? 'phone' : null;
+}
+/** Meta lets a business answer a direct message for 24 hours after the person's last message, and never write first. */
+export const DM_WINDOW_HOURS = 24;
+
+// The client's newest Instagram or Facebook conversation in the CRM inbox (one channel, or either), or null.
+async function socialThread(crm, crmId, channel) {
+  const out = await crm.get('/conversations' + qs({ limit: 100, channel: channel || undefined }));
+  return (out.conversations || [])
+    .filter((c) => String(c.contact_id) === crmId && (channel ? c.channel === channel : ['instagram', 'facebook'].includes(c.channel)))
+    .sort((a, b) => String(b.last_message_at || '').localeCompare(String(a.last_message_at || '')))[0] || null;
+}
+
+// Why a DM cannot go: no conversation (they never wrote there) or the 24-hour window has closed.
+function dmRefusal(channel, lastInboundMs, now = Date.now()) {
+  const name = SOCIAL_NAME[channel] || channel;
+  if (!lastInboundMs) {
+    return `Not sent: there is no ${name} conversation with them in the CRM inbox. On ${name} a business can only answer someone who wrote first, so it cannot start one.`;
+  }
+  const days = Math.floor((now - lastInboundMs) / 86_400_000);
+  const ago = days >= 1 ? `${days} day${days === 1 ? '' : 's'} ago` : `${Math.floor((now - lastInboundMs) / 3_600_000)} hours ago`;
+  return `Not sent: ${name} only lets a business reply within ${DM_WINDOW_HOURS} hours of the person's last message, and theirs was ${ago} (${new Date(lastInboundMs).toISOString().slice(0, 10)}). `
+    + `It can go as soon as they write again; until then reach them another way (a call or WhatsApp if they gave a number).`;
+}
+
+/**
  * Can this CRM client's email address take mail? The CRM's own check first (GET /clients/:id/email-check, which
  * answers { valid, reason }); where the CRM has none (404) or it fails, the address on the card is checked here
  * (src/emailcheck.js). Returns { email, valid: true | false | null, reason, source: 'crm' | 'local', phone? }.
@@ -606,14 +660,21 @@ async function clientCard(crm, crmId) {
  */
 export async function checkClientEmail(crm, crmId, { email, resolver } = {}) {
   const id = needId(crmId, 'clientId');
+  const placeholder = (address, extra = {}) => {
+    const route = socialRouteOf(address);
+    return route ? { email: address, valid: false, reason: `a placeholder from ${SOCIAL_NAME[route]}, not an inbox: they wrote to us on ${SOCIAL_NAME[route]}`, social: route, source: 'local', ...extra } : null;
+  };
+  if (email && placeholder(email)) return placeholder(email);
   try {
     const r = await crm.get(`/clients/${id}/email-check`);
     if (r && [true, false, null].includes(r.valid)) {
+      if (placeholder(r.email)) return placeholder(r.email);
       return { email: r.email ?? email ?? null, valid: r.valid, reason: String(r.reason || (r.valid ? 'the CRM says it takes email' : r.valid === false ? 'the CRM says it cannot receive email' : 'the CRM could not tell')), source: 'crm' };
     }
   } catch { /* 404: this CRM has no check yet. Anything else: the local check still answers. */ }
   const card = email ? null : await clientCard(crm, id);
   const address = email || card?.email || null;
+  if (placeholder(address)) return placeholder(address, card ? { phone: card.phone || null } : {});
   if (!address) return { email: null, valid: null, reason: 'no email address on the CRM card', source: 'local', ...(card ? { phone: card.phone || null } : {}) };
   const { checkEmail } = await import('./emailcheck.js');
   return { ...(await checkEmail(address, { resolver })), source: 'local', ...(card ? { phone: card.phone || null } : {}) };
@@ -621,6 +682,11 @@ export async function checkClientEmail(crm, crmId, { email, resolver } = {}) {
 
 /** The refusal when an address cannot take mail, offering WhatsApp when the client has a phone in the CRM. */
 export function badEmailMessage(check, phone) {
+  if (check?.social) {
+    return `Not sent: ${check.email} is not an email address: they wrote to us on ${SOCIAL_NAME[check.social]} and left no email. `
+      + `Reply to them there instead (an ${SOCIAL_NAME[check.social]} message from the CRM inbox, within ${DM_WINDOW_HOURS} hours of their last message)`
+      + (phone ? `, or by WhatsApp to ${phone}.` : '.');
+  }
   return `Not sent: ${check.email || 'their email address'} cannot receive email (${check.reason}).`
     + (phone ? ` They have a phone in the CRM (${phone}): send it by WhatsApp from the CRM instead.` : ' Find a working address, or another way to reach them.');
 }
@@ -645,7 +711,20 @@ export async function sendFollowUpViaCrm(crm, { channel, crmId, subject, body })
     await crm.post(`/conversations/${conv.conversationId}/reply`, { content: m });
     return { sent: true, channel, conversationId: conv.conversationId };
   }
-  throw new Error('only an email or a WhatsApp can be sent from the CRM');
+  if (channel === 'instagram' || channel === 'facebook') {
+    // Instagram caps a message at 1,000 characters; Facebook allows 2,000. One limit for both.
+    const m = needText(body, 'message', 1000);
+    const refuse = (msg) => Object.assign(new Error(msg), { httpStatus: 422, dm_refused: true });
+    const thread = await socialThread(crm, id, channel);
+    if (!thread) throw refuse(dmRefusal(channel, null));
+    const conv = await crm.get(`/conversations/${thread.id}`);
+    const lastIn = (conv?.messages || [])
+      .filter((x) => x.direction === 'inbound').map((x) => Date.parse(x.created_at)).filter(Number.isFinite).sort((a, b) => b - a)[0] || null;
+    if (!lastIn || Date.now() - lastIn > DM_WINDOW_HOURS * 3_600_000) throw refuse(dmRefusal(channel, lastIn || Date.parse(thread.last_message_at) || null));
+    await crm.post(`/conversations/${thread.id}/reply`, { content: m });
+    return { sent: true, channel, conversationId: thread.id };
+  }
+  throw new Error('only an email, a WhatsApp or an Instagram or Facebook message can be sent from the CRM');
 }
 
 export const OWNER_ACTIONS = {
@@ -665,7 +744,8 @@ export const OWNER_ACTIONS = {
     const chk = await checkClientEmail(crm, id, { resolver });
     if (chk.valid === false) {
       const phone = chk.phone !== undefined ? chk.phone : (await clientCard(crm, id))?.phone || null;
-      return { sent: false, error: badEmailMessage(chk, phone), email_check: chk, ...(phone ? { try_instead: 'crm_send_whatsapp' } : {}) };
+      const instead = chk.social ? 'crm_send_dm' : phone ? 'crm_send_whatsapp' : null;
+      return { sent: false, error: badEmailMessage(chk, phone), email_check: chk, ...(instead ? { try_instead: instead } : {}) };
     }
     await sendFollowUpViaCrm(crm, { channel: 'email', crmId: id, subject: s, body: b });
     const c = await logContact(db, crm, id, 'email', `Email sent from the CRM at the owner's word: "${s}"`);
@@ -681,9 +761,33 @@ export const OWNER_ACTIONS = {
     await journal(db, `Sent ${c?.name || 'a CRM client'} a WhatsApp from the CRM at the owner's word.`);
     return { sent: true, channel: 'whatsapp', to: c?.name || id, conversationId: conv.conversationId };
   },
+  // An Instagram or Facebook DM, in the conversation they started (Meta: replies only, within 24 hours of their last message).
+  async crm_send_dm(db, crm, { clientId, channel, message }) {
+    const id = needId(clientId, 'clientId');
+    const m = needText(message, 'message', 1000);
+    let ch = ['instagram', 'facebook'].includes(channel) ? channel : null;
+    if (!ch) ch = socialRouteOf((await clientCard(crm, id))?.email) || (await socialThread(crm, id, null))?.channel || null;
+    if (!ch) return { sent: false, error: 'Not sent: there is no Instagram or Facebook conversation with this client in the CRM inbox. A business can only answer someone who wrote there first.' };
+    let out;
+    try { out = await sendFollowUpViaCrm(crm, { channel: ch, crmId: id, body: m }); } catch (err) {
+      if (err.dm_refused) return { sent: false, channel: ch, error: err.message };
+      throw err;
+    }
+    const c = await logContact(db, crm, id, ch, `${SOCIAL_NAME[ch]} message sent from the CRM at the owner's word: ${m.slice(0, 200)}`);
+    await journal(db, `Sent ${c?.name || 'a CRM client'} an ${SOCIAL_NAME[ch]} message from the CRM at the owner's word.`);
+    return { sent: true, channel: ch, to: c?.name || id, conversationId: out.conversationId };
+  },
   async crm_reply(db, crm, { conversationId, message }) {
     const id = needId(conversationId, 'conversationId');
     const m = needText(message, 'message', 4000);
+    // Instagram and Facebook take a reply only inside Meta's 24-hour window; outside it the CRM would queue it and
+    // Meta would refuse it later, out of sight. Say so now instead.
+    const conv = await crm.get(`/conversations/${id}`).catch(() => null);
+    const channel = conv?.conversation?.channel || conv?.channel;
+    if (channel === 'instagram' || channel === 'facebook') {
+      const lastIn = (conv?.messages || []).filter((x) => x.direction === 'inbound').map((x) => Date.parse(x.created_at)).filter(Number.isFinite).sort((a, b) => b - a)[0] || null;
+      if (!lastIn || Date.now() - lastIn > DM_WINDOW_HOURS * 3_600_000) return { sent: false, channel, error: dmRefusal(channel, lastIn) };
+    }
     await crm.post(`/conversations/${id}/reply`, { content: m });
     await journal(db, `Replied in the CRM inbox at the owner's word (conversation ${id.slice(0, 8)}).`);
     return { sent: true, conversationId: id };
@@ -773,6 +877,9 @@ export const CRM_TOOL_DEFS = [
   { name: 'crm_send_whatsapp', description: 'Send a WhatsApp message to a CRM client NOW, through the CRM inbox (opens their thread if they have none). Only when the owner asked for this message and has seen or dictated the words. clientId from crm_clients.',
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'message'], properties: {
       clientId: { type: 'string' }, message: { type: 'string' } } } },
+  { name: 'crm_send_dm', description: "Send an Instagram or Facebook (Messenger) message to a CRM client NOW, in the conversation they started with us. Use it for people who reached us on Instagram or Facebook: their CRM email ends in @instagram.local or @facebook.local, which is a placeholder, never an inbox, so never email them. Meta only allows a reply within 24 hours of their last message and never a first message; outside that it is refused with the reason, and you tell the owner. Only when the owner asked and has seen or dictated the words. channel is optional (taken from their card or conversation).",
+    input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'message'], properties: {
+      clientId: { type: 'string' }, channel: { type: 'string', enum: ['instagram', 'facebook'] }, message: { type: 'string', description: 'At most 1,000 characters.' } } } },
   { name: 'crm_conversations_for', description: "A client's conversations in the CRM inbox (WhatsApp, email, Facebook...), newest first, by CRM client id. Use it to find the thread to read or reply in.",
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId'], properties: { clientId: { type: 'string' } } } },
   { name: 'crm_conversation', description: "Read one CRM inbox conversation in full: every message in order, who wrote it (the client, a named person on the team, Auti, or an automatic message such as a payment reminder), when, and whether it was delivered or read. Read it before writing any reply, so the reply fits what was actually said.",
@@ -833,7 +940,7 @@ export function crmTools(db, { client = () => crmClient(), resolver } = {}) {
       const out = await client().get('/conversations' + qs({ limit: 100 }));
       const mine = (out.conversations || []).filter((c) => String(c.contact_id) === id);
       return { conversations: mine.map((c) => ({ ...pick(c, ['id', 'channel', 'status', 'subject', 'last_message_at', 'unread_count']), last_message: String(c.last_message || '').slice(0, 300) })),
-        note: mine.length ? undefined : 'No conversation with this client among the 100 most recent in the inbox. To start one on WhatsApp, use crm_send_whatsapp.' };
+        note: mine.length ? undefined : 'No conversation with this client among the 100 most recent in the inbox. To start one on WhatsApp, use crm_send_whatsapp. Instagram and Facebook conversations can only be started by them.' };
     },
     crm_conversation: async ({ conversationId, last }) => conversationView(await client().get(`/conversations/${needId(conversationId, 'conversationId')}`), last),
     ...Object.fromEntries(Object.entries(OWNER_ACTIONS).map(([name, fn]) => [name, (input) => fn(db, client(), input, { resolver })])),

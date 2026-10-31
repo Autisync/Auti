@@ -1,7 +1,7 @@
 // The retention agent: drafts follow-up messages for clients who are due or overdue for contact, and the next
 // touch of an outreach sequence for leads the owner chose to track (see OUTREACH below).
 // It only drafts. Every draft waits on the owner, who sends it themselves (or from the CRM) and marks it sent.
-const CHANNELS = ['email', 'whatsapp', 'call'];
+const CHANNELS = ['email', 'whatsapp', 'call', 'instagram', 'facebook'];
 
 export const FOLLOW_UP_TOOL = {
   name: 'write_follow_ups',
@@ -18,7 +18,7 @@ export const FOLLOW_UP_TOOL = {
           required: ['client', 'channel', 'subject', 'message', 'why'],
           properties: {
             client: { type: 'string', description: 'Exact client name from the list.' },
-            channel: { type: 'string', enum: CHANNELS, description: 'The channel that fits how this client was last reached; email if unknown.' },
+            channel: { type: 'string', enum: CHANNELS, description: 'The channel that fits how this client was last reached; email if unknown. instagram or facebook when their email ends in @instagram.local or @facebook.local (they wrote on that network and have no real email).' },
             subject: { type: 'string', description: 'Email subject line, or a one-line purpose for a call or WhatsApp.' },
             message: { type: 'string', description: 'Ready to send as written, in the owner\'s voice. For a call: three to five talking points.' },
             why: { type: 'string', description: 'One sentence: why this client, why now, from the data.' },
@@ -50,6 +50,7 @@ Rules:
 - Write in Portuguese (Portugal for portugal, Angolan usage for angola) for clients in portugal or angola, and English otherwise, unless the notes say otherwise.
 - Write as the company's team ("we"), never as one named person: no "I'm <name>", no person's name anywhere in the message. Sign off as the sign_off standing instruction says, in the message's language; without one, sign as the company's team ("Equipa <company>" in Portuguese, "The <company> team" in English).
 - Clients with an outreach object are businesses that never heard from the owner. Write exactly the touch named in outreach.touch, built on outreach.what_we_saw and outreach.opening; never pretend you have spoken before, never mention research or AI, and keep it shorter: under 80 words for email, under 45 for WhatsApp. Pick the channel from outreach.contact_route: email when it has an email address (these may be sent without the owner reading them first), whatsapp only for a WhatsApp number and no email. End every outreach email with one plain line that lets them say no, such as "If it isn't for you, just reply no and I won't write again."
+- reach says how a client can be reached: instagram or facebook means they only ever wrote to us there and have no real email, so write for that channel (short, like a WhatsApp) and never email them; whatsapp or phone: whatsapp; email: email. Instagram and Facebook only take a reply within 24 hours of the person's last message, so for them write the reply to what they asked.
 - Nothing is sent by you. The owner reviews every draft.
 
 Standing instructions from the owner:
@@ -58,7 +59,7 @@ ${standing}`;
 
 export async function clientsDue(db) {
   return (await db.query(`
-    SELECT c.id, c.name, c.market, c.sector, c.status, c.notes, c.last_contact_at, c.next_contact_due,
+    SELECT c.id, c.name, c.market, c.sector, c.status, c.notes, c.reach, c.last_contact_at, c.next_contact_due,
            extract(day FROM c.contact_interval)::int AS contact_every_days, w.flag,
            c.outreach_step,
            (SELECT json_build_object('what_we_saw', l.signals, 'opening', l.pitch, 'website', l.website, 'services', l.services,
