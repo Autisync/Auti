@@ -15,6 +15,7 @@
     "brief": "node --env-file-if-exists=.env src/show.js",
     "compare": "node --env-file-if-exists=.env src/compare.js",
     "import:leads": "node --env-file-if-exists=.env src/run.js import-leads",
+    "import:docs": "node --env-file-if-exists=.env src/run.js import-docs",
     "check:private": "node scripts/check-private.js",
     "test": "node test/coordinator.test.js && node test/crm.test.js && node test/leads.test.js && node test/models.test.js && node test/voice.test.js && node test/projects.test.js && node test/agents.test.js && node test/daily.test.js && node test/outreach.test.js && node test/acts.test.js && node test/billing.test.js && node test/language.test.js && node test/reliability.test.js && node test/social.test.js"
   },

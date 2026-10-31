@@ -1,4 +1,4 @@
-// Entry point for the scheduler:  node src/run.js nightly|standup|retention|accounts|leads|report|daily|import-leads <file>
+// Entry point for the scheduler:  node src/run.js nightly|standup|retention|accounts|leads|report|daily|import-leads <file>|import-docs <file>
 // In CI (GitHub Actions) logs can be public, so the brief's content is never
 // printed there; only counts. Read the brief with `npm run brief` instead.
 import { connect } from './db.js';
@@ -15,6 +15,7 @@ import { runReport, reportsDue } from './reports.js';
 import { CHEAP } from './models.js';
 import { postDailyReport } from './daily.js';
 import { importLeads, autoSendOutreach, leadsToCrm, officeHours } from './outreach.js';
+import { importPack } from './documents.js';
 import fs from 'node:fs';
 
 const mode = process.argv[2] || 'nightly';
@@ -57,7 +58,9 @@ async function coordinator() {
     try {
       // No function time limit on a scheduled run: the delivery reads may take their time.
       crm = await crmSnapshot(crmClient(), { deliveryBudgetMs: 60000 });
-      console.log(`crm: read, ${crm.unavailable.length} part(s) unavailable`);
+      // The part names (overdue, onboarding, ...) say where to look; the CRM's error text stays out of public logs.
+      const missing = crm.unavailable.map((u) => u.split(':')[0]);
+      console.log(`crm: read, ${missing.length} part(s) unavailable${missing.length ? ` (${missing.join(', ')})` : ''}`);
     } catch (err) {
       console.error(`crm skipped: ${err.message}`);
     }
@@ -176,8 +179,18 @@ async function importLeadsFile() {
   console.log(`import: ${out.seen} in the file, ${out.added} added (${out.tracking} into the outreach sequence, ${out.waiting} waiting on the Leads tab), ${out.skipped} skipped${out.problems.length ? `; ${out.problems.length} rows had problems: ${out.problems.slice(0, 5).join('; ')}` : ''}`);
 }
 
+// The business document pack, kept outside the repository (company text is never published):
+//   npm run import:docs -- ~/Downloads/document-pack.md
+// The same import as the Documents tab's. Counts only in the output, never titles.
+async function importDocsFile() {
+  const file = process.argv[3];
+  if (!file) throw new Error('give the file: npm run import:docs -- path/to/pack.md');
+  const out = await importPack(db, fs.readFileSync(file, 'utf8'));
+  console.log(`documents: ${out.total} in the pack, ${out.added} new, ${out.updated} updated`);
+}
+
 try {
-  const MODES = { retention, leads, accounts, report, daily, 'import-leads': importLeadsFile };
+  const MODES = { retention, leads, accounts, report, daily, 'import-leads': importLeadsFile, 'import-docs': importDocsFile };
   await (MODES[mode] ? MODES[mode]() : coordinator());
 } catch (err) {
   console.error(`[${new Date().toISOString()}] ${mode} run failed: ${err.message}`);
