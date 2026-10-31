@@ -241,7 +241,7 @@ await check('sendFollowUpViaCrm sends an email, or a WhatsApp through the CRM in
     ['/conversations/start', { clientId: ID(31), channel: 'whatsapp' }],
     [`/conversations/${ID(900)}/reply`, { content: 'Olá!' }],
   ]);
-  await assert.rejects(crm.sendFollowUpViaCrm(f, { channel: 'call', crmId: ID(31), body: 'x' }), /only an email or a WhatsApp/);
+  await assert.rejects(crm.sendFollowUpViaCrm(f, { channel: 'call', crmId: ID(31), body: 'x' }), /only an email, a WhatsApp or an Instagram or Facebook message/);
   await assert.rejects(crm.sendFollowUpViaCrm(f, { channel: 'whatsapp', crmId: 'nope', body: 'x' }), /CRM id/);
   await assert.rejects(crm.sendFollowUpViaCrm({ ...f, post: async () => ({}) }, { channel: 'whatsapp', crmId: ID(31), body: 'x' }), /did not open a WhatsApp thread/);
 });
@@ -271,7 +271,7 @@ await check('Approvals: a WhatsApp draft is sent from the CRM and logged as sent
   assert.equal((await db.query(`SELECT status::text FROM follow_up WHERE id = $1`, [em.f])).rows[0].status, 'awaiting_approval');
 
   const call = await mk('Call Lda', ID(43), 'call');
-  await assert.rejects(web.sendFollowUpFromCrm(db, f, { id: call.f }), (err) => err.httpStatus === 400 && /email or a WhatsApp/.test(err.message));
+  await assert.rejects(web.sendFollowUpFromCrm(db, f, { id: call.f }), (err) => err.httpStatus === 400 && /an email, a WhatsApp or an Instagram or Facebook message/.test(err.message));
   const notInCrm = (await db.query(`INSERT INTO clients (name, market, status) VALUES ('Offline Lda', 'portugal', 'active') RETURNING id`)).rows[0].id;
   const nf = (await db.query(`INSERT INTO follow_up (client_id, channel, subject, body) VALUES ($1, 'whatsapp', 'p', 'b') RETURNING id`, [notInCrm])).rows[0].id;
   await assert.rejects(web.sendFollowUpFromCrm(db, f, { id: nf }), (err) => err.httpStatus === 400);
@@ -280,7 +280,7 @@ await check('Approvals: a WhatsApp draft is sent from the CRM and logged as sent
 await check('the Approvals card offers "Send by WhatsApp from the CRM", and no wa.me link for a client in the CRM', async () => {
   const { PAGE } = await import('../src/page.js');
   assert.match(PAGE, /Send by WhatsApp from the CRM/);
-  assert.match(PAGE, /f\.channel === 'email' \|\| f\.channel === 'whatsapp'\) && f\.crm_id && data\.crmOn/);
+  assert.match(PAGE, /\['email', 'whatsapp', 'instagram', 'facebook'\]\.includes\(f\.channel\) && f\.crm_id && data\.crmOn/);
   assert.match(PAGE, /f\.channel === 'whatsapp' && !crmSend/);
   new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);
   const fs = await import('node:fs');

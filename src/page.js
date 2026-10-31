@@ -928,7 +928,7 @@ function followUpCard(f) {
     try {
       await post('/api/follow-up', { id: f.id, decision, body: ta.value, subject: si.value, next_contact_due: decision === 'replied' ? null : ni.value });
       c.querySelector('.pending').remove();
-      const DONE = { sent: '✓ LOGGED AS SENT', send_crm: f.channel === 'whatsapp' ? '✓ SENT BY WHATSAPP FROM THE CRM' : '✓ SENT FROM THE CRM', replied: '✓ REPLY LOGGED · SEQUENCE STOPPED', drop: 'DROPPED' };
+      const DONE = { sent: '✓ LOGGED AS SENT', send_crm: ({ whatsapp: '✓ SENT BY WHATSAPP FROM THE CRM', instagram: '✓ SENT ON INSTAGRAM FROM THE CRM', facebook: '✓ SENT ON FACEBOOK FROM THE CRM' })[f.channel] || '✓ SENT FROM THE CRM', replied: '✓ REPLY LOGGED · SEQUENCE STOPPED', drop: 'DROPPED' };
       actions.replaceWith($('div', 'done ' + (decision === 'drop' ? 'drop' : 'ok'), DONE[decision]));
       data.followUps = data.followUps.filter((x) => x.id !== f.id); drawTabs();
     } catch (e) { [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = false; }); hint.className = 'error'; hint.textContent = e.message; }
@@ -936,10 +936,10 @@ function followUpCard(f) {
   sent.onclick = () => finish('sent');
   let armed = false;
   drop.onclick = () => { if (armed) return finish('drop'); armed = true; drop.textContent = 'Confirm drop'; drop.className = 'act confirm'; };
-  const crmSend = (f.channel === 'email' || f.channel === 'whatsapp') && f.crm_id && data.crmOn;
+  const crmSend = ['email', 'whatsapp', 'instagram', 'facebook'].includes(f.channel) && f.crm_id && data.crmOn;
   if (crmSend) {
     // One tap: emailed to the client's address in the CRM, or sent by WhatsApp through the CRM inbox, and logged here.
-    const viaCrm = $('button', 'act approve', f.channel === 'whatsapp' ? 'Send by WhatsApp from the CRM' : 'Send from the CRM'); viaCrm.onclick = () => finish('send_crm'); actions.append(viaCrm);
+    const viaCrm = $('button', 'act approve', ({ whatsapp: 'Send by WhatsApp from the CRM', instagram: 'Send on Instagram from the CRM', facebook: 'Send on Facebook from the CRM' })[f.channel] || 'Send from the CRM'); viaCrm.onclick = () => finish('send_crm'); actions.append(viaCrm);
     sent.className = 'act'; sent.textContent = 'I sent it myself';
   }
   actions.append(sent, copy);
@@ -1354,7 +1354,7 @@ function milestoneList(p, milestones) {
 }
 
 const MARKETS = [['uk', 'UK'], ['portugal', 'Portugal'], ['angola', 'Angola'], ['namibia', 'Namibia'], ['other', 'Other']];
-const CHANNELS = [['call', 'Call'], ['email', 'Email'], ['meeting', 'Meeting'], ['whatsapp', 'WhatsApp'], ['other', 'Other']];
+const CHANNELS = [['call', 'Call'], ['email', 'Email'], ['meeting', 'Meeting'], ['whatsapp', 'WhatsApp'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['other', 'Other']];
 const isoDay = (d) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
 const inDays = (n) => isoDay(Date.now() + n * 864e5);
 const CLIENT_MOVES = {

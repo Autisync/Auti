@@ -8,7 +8,7 @@
 // from the CRM). The same invoice is not chased again within 7 days, nor the same renewal within 30.
 import { languageFor, writeIn } from './language.js';
 
-const CHANNELS = ['email', 'whatsapp', 'call'];
+const CHANNELS = ['email', 'whatsapp', 'call', 'instagram', 'facebook'];
 const DAY = 864e5;
 
 export const ACCOUNT_TOOL = {

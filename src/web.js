@@ -207,7 +207,7 @@ export async function addTask(db, { title, project_id, owner_id, due_date, detai
 
 const MARKETS = ['portugal', 'uk', 'angola', 'namibia', 'other'];
 const CLIENT_STATUSES = ['lead', 'active', 'paused', 'lost'];
-const CHANNELS = ['call', 'email', 'meeting', 'whatsapp', 'other'];
+const CHANNELS = ['call', 'email', 'meeting', 'whatsapp', 'instagram', 'facebook', 'other'];
 const days = (v) => {
   if (v === '' || v == null) return null;
   const n = Number(v);
@@ -347,7 +347,7 @@ export async function sendFollowUpFromCrm(db, crm, { id, subject, body, next_con
   const f = (await db.query(
     `SELECT f.channel, f.subject, f.body, f.status, c.crm_id FROM follow_up f JOIN clients c ON c.id = f.client_id WHERE f.id = $1`, [id])).rows[0];
   if (!f || f.status !== 'awaiting_approval') return null;
-  if (!['email', 'whatsapp'].includes(f.channel) || !f.crm_id) throw fail('Only an email or a WhatsApp to a client that is in the CRM can be sent from there.');
+  if (!['email', 'whatsapp', 'instagram', 'facebook'].includes(f.channel) || !f.crm_id) throw fail('Only an email, a WhatsApp or an Instagram or Facebook message to a client that is in the CRM can be sent from there.');
   const s = String(subject ?? f.subject ?? '').trim(), b = String(body ?? f.body ?? '').trim();
   if (!b) throw fail('There is no message to send.');
   if (b.length > 8000) throw fail('message is too long');

@@ -184,7 +184,10 @@ export async function importLeads(db, rows, { now = new Date() } = {}) {
     let inDays;
     if (l.touchSent > 0) {
       // Already contacted: the next touch after the usual gap from when they were.
-      const since = l.contactedOn ? Math.floor((now - new Date(`${l.contactedOn}T12:00:00Z`)) / 864e5) : GAP[l.touchSent];
+      // Whole days between the two dates: counted from noon to noon, so it does not depend on the time of the run
+      // (before noon UTC the old count came out a day short and the next touch a day late).
+      const today = new Date(now).toISOString().slice(0, 10);
+      const since = l.contactedOn ? Math.round((Date.parse(`${today}T12:00:00Z`) - Date.parse(`${l.contactedOn}T12:00:00Z`)) / 864e5) : GAP[l.touchSent];
       inDays = Math.max(0, GAP[l.touchSent] - since);
       if (l.contactedOn) {
         await db.query(`INSERT INTO client_touchpoint (client_id, happened_at, channel, summary) VALUES ($1, $2, 'email', $3)`,
