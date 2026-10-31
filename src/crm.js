@@ -629,8 +629,32 @@ export function reachOf(c) {
   if (email && !/\.(invalid|local)$/i.test(email)) return 'email';
   return c?.phone ? 'phone' : null;
 }
-/** Meta lets a business answer a direct message for 24 hours after the person's last message, and never write first. */
+/**
+ * Meta lets a business answer a direct message, never write first. Inside 24 hours of the person's last message any
+ * reply; from 24 hours to 7 days a reply a person wrote, which the CRM sends with the Human Agent tag (the Meta app
+ * needs that permission); after that nothing until they write again. Messages Auti sends at the owner's word are
+ * the owner's replies. The one exception for a first message: a private reply to their comment (crm_comment_dm).
+ */
 export const DM_WINDOW_HOURS = 24;
+export const DM_HUMAN_AGENT_DAYS = 7;
+const lastInbound = (conv) => (conv?.messages || [])
+  .filter((x) => x.direction === 'inbound').map((x) => Date.parse(x.sent_at || x.created_at)).filter(Number.isFinite).sort((a, b) => b - a)[0] || null;
+const dmOpen = (lastIn, now = Date.now()) => !!lastIn && now - lastIn <= DM_HUMAN_AGENT_DAYS * 86_400_000;
+
+// After a reply is queued in the CRM: wait a few seconds for Meta's answer, so a refusal (the Human Agent permission
+// not granted yet, a blocked account) is told now, not discovered later in the inbox. null: sent or still on its way.
+async function deliveryProblem(crm, conversationId, messageId, { tries = 3, waitMs = 2500 } = {}) {
+  if (!messageId) return null;
+  for (let i = 0; i < tries; i++) {
+    await new Promise((r) => setTimeout(r, waitMs));
+    const conv = await crm.get(`/conversations/${conversationId}`).catch(() => null);
+    const m = (conv?.messages || []).find((x) => String(x.id) === String(messageId));
+    if (!m) return null;
+    if (m.status === 'failed') return String(m.dead_letter_reason || m.error_message || 'the CRM could not deliver it');
+    if (['sent', 'delivered', 'read'].includes(m.status)) return null;
+  }
+  return null;
+}
 
 // The client's newest Instagram or Facebook conversation in the CRM inbox (one channel, or either), or null.
 async function socialThread(crm, crmId, channel) {
@@ -640,7 +664,7 @@ async function socialThread(crm, crmId, channel) {
     .sort((a, b) => String(b.last_message_at || '').localeCompare(String(a.last_message_at || '')))[0] || null;
 }
 
-// Why a DM cannot go: no conversation (they never wrote there) or the 24-hour window has closed.
+// Why a DM cannot go: no conversation (they never wrote there) or the 7-day window has closed.
 function dmRefusal(channel, lastInboundMs, now = Date.now()) {
   const name = SOCIAL_NAME[channel] || channel;
   if (!lastInboundMs) {
@@ -648,8 +672,8 @@ function dmRefusal(channel, lastInboundMs, now = Date.now()) {
   }
   const days = Math.floor((now - lastInboundMs) / 86_400_000);
   const ago = days >= 1 ? `${days} day${days === 1 ? '' : 's'} ago` : `${Math.floor((now - lastInboundMs) / 3_600_000)} hours ago`;
-  return `Not sent: ${name} only lets a business reply within ${DM_WINDOW_HOURS} hours of the person's last message, and theirs was ${ago} (${new Date(lastInboundMs).toISOString().slice(0, 10)}). `
-    + `It can go as soon as they write again; until then reach them another way (a call or WhatsApp if they gave a number).`;
+  return `Not sent: ${name} only lets a business reply within ${DM_HUMAN_AGENT_DAYS} days of the person's last message, and theirs was ${ago} (${new Date(lastInboundMs).toISOString().slice(0, 10)}). `
+    + `It can go as soon as they write again, or as a private reply if they comment on one of our posts; until then reach them another way (a call or WhatsApp if they gave a number).`;
 }
 
 /**
@@ -684,7 +708,7 @@ export async function checkClientEmail(crm, crmId, { email, resolver } = {}) {
 export function badEmailMessage(check, phone) {
   if (check?.social) {
     return `Not sent: ${check.email} is not an email address: they wrote to us on ${SOCIAL_NAME[check.social]} and left no email. `
-      + `Reply to them there instead (an ${SOCIAL_NAME[check.social]} message from the CRM inbox, within ${DM_WINDOW_HOURS} hours of their last message)`
+      + `Reply to them there instead (an ${SOCIAL_NAME[check.social]} message from the CRM inbox, within ${DM_HUMAN_AGENT_DAYS} days of their last message)`
       + (phone ? `, or by WhatsApp to ${phone}.` : '.');
   }
   return `Not sent: ${check.email || 'their email address'} cannot receive email (${check.reason}).`
@@ -718,11 +742,12 @@ export async function sendFollowUpViaCrm(crm, { channel, crmId, subject, body })
     const thread = await socialThread(crm, id, channel);
     if (!thread) throw refuse(dmRefusal(channel, null));
     const conv = await crm.get(`/conversations/${thread.id}`);
-    const lastIn = (conv?.messages || [])
-      .filter((x) => x.direction === 'inbound').map((x) => Date.parse(x.created_at)).filter(Number.isFinite).sort((a, b) => b - a)[0] || null;
-    if (!lastIn || Date.now() - lastIn > DM_WINDOW_HOURS * 3_600_000) throw refuse(dmRefusal(channel, lastIn || Date.parse(thread.last_message_at) || null));
-    await crm.post(`/conversations/${thread.id}/reply`, { content: m });
-    return { sent: true, channel, conversationId: thread.id };
+    const lastIn = lastInbound(conv);
+    if (!dmOpen(lastIn)) throw refuse(dmRefusal(channel, lastIn || Date.parse(thread.last_message_at) || null));
+    const posted = await crm.post(`/conversations/${thread.id}/reply`, { content: m });
+    const problem = await deliveryProblem(crm, thread.id, posted?.message?.id);
+    if (problem) throw refuse(`Not delivered: ${problem}`);
+    return { sent: true, channel, conversationId: thread.id, ...(Date.now() - lastIn > DM_WINDOW_HOURS * 3_600_000 ? { human_agent: true } : {}) };
   }
   throw new Error('only an email, a WhatsApp or an Instagram or Facebook message can be sent from the CRM');
 }
@@ -777,18 +802,32 @@ export const OWNER_ACTIONS = {
     await journal(db, `Sent ${c?.name || 'a CRM client'} an ${SOCIAL_NAME[ch]} message from the CRM at the owner's word.`);
     return { sent: true, channel: ch, to: c?.name || id, conversationId: out.conversationId };
   },
+  // The one way to write first on Facebook or Instagram: a private reply to someone's comment (once, within 7 days).
+  async crm_comment_dm(db, crm, { commentId, message }) {
+    const id = needId(commentId, 'commentId');
+    const m = needText(message, 'message', 1000);
+    try {
+      const out = await crm.post(`/social-comments/${id}/dm`, { text: m });
+      await journal(db, `Sent a private ${SOCIAL_NAME[out?.network] || 'Facebook/Instagram'} message to a commenter from the CRM at the owner's word.`);
+      return { sent: true, network: out?.network || null, note: 'Their answer opens a normal conversation in the CRM inbox; until they answer, no other message can go.' };
+    } catch (err) {
+      return { sent: false, error: String(err.message || err).replace(/^the CRM said: /, '') };
+    }
+  },
   async crm_reply(db, crm, { conversationId, message }) {
     const id = needId(conversationId, 'conversationId');
     const m = needText(message, 'message', 4000);
-    // Instagram and Facebook take a reply only inside Meta's 24-hour window; outside it the CRM would queue it and
-    // Meta would refuse it later, out of sight. Say so now instead.
+    // Instagram and Facebook take a reply only within Meta's window (7 days, Human Agent after 24 hours); outside it
+    // say so now, and after sending wait for Meta's answer instead of finding a refusal later in the inbox.
     const conv = await crm.get(`/conversations/${id}`).catch(() => null);
     const channel = conv?.conversation?.channel || conv?.channel;
-    if (channel === 'instagram' || channel === 'facebook') {
-      const lastIn = (conv?.messages || []).filter((x) => x.direction === 'inbound').map((x) => Date.parse(x.created_at)).filter(Number.isFinite).sort((a, b) => b - a)[0] || null;
-      if (!lastIn || Date.now() - lastIn > DM_WINDOW_HOURS * 3_600_000) return { sent: false, channel, error: dmRefusal(channel, lastIn) };
+    const social = channel === 'instagram' || channel === 'facebook';
+    if (social && !dmOpen(lastInbound(conv))) return { sent: false, channel, error: dmRefusal(channel, lastInbound(conv)) };
+    const posted = await crm.post(`/conversations/${id}/reply`, { content: m });
+    if (social) {
+      const problem = await deliveryProblem(crm, id, posted?.message?.id);
+      if (problem) return { sent: false, channel, error: `Not delivered: ${problem}` };
     }
-    await crm.post(`/conversations/${id}/reply`, { content: m });
     await journal(db, `Replied in the CRM inbox at the owner's word (conversation ${id.slice(0, 8)}).`);
     return { sent: true, conversationId: id };
   },
@@ -877,9 +916,14 @@ export const CRM_TOOL_DEFS = [
   { name: 'crm_send_whatsapp', description: 'Send a WhatsApp message to a CRM client NOW, through the CRM inbox (opens their thread if they have none). Only when the owner asked for this message and has seen or dictated the words. clientId from crm_clients.',
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'message'], properties: {
       clientId: { type: 'string' }, message: { type: 'string' } } } },
-  { name: 'crm_send_dm', description: "Send an Instagram or Facebook (Messenger) message to a CRM client NOW, in the conversation they started with us. Use it for people who reached us on Instagram or Facebook: their CRM email ends in @instagram.local or @facebook.local, which is a placeholder, never an inbox, so never email them. Meta only allows a reply within 24 hours of their last message and never a first message; outside that it is refused with the reason, and you tell the owner. Only when the owner asked and has seen or dictated the words. channel is optional (taken from their card or conversation).",
+  { name: 'crm_send_dm', description: "Send an Instagram or Facebook (Messenger) message to a CRM client NOW, in the conversation they started with us. Use it for people who reached us on Instagram or Facebook: their CRM email ends in @instagram.local or @facebook.local, which is a placeholder, never an inbox, so never email them. Meta allows only replies: within 24 hours of their last message, or up to 7 days for a reply the owner approved (the CRM adds the Human Agent tag; refused until Meta grants that permission), never a first message; outside that it is refused with the reason, and you tell the owner. To write first to someone who commented on our posts, use crm_comment_dm. Only when the owner asked and has seen or dictated the words. channel is optional (taken from their card or conversation).",
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'message'], properties: {
       clientId: { type: 'string' }, channel: { type: 'string', enum: ['instagram', 'facebook'] }, message: { type: 'string', description: 'At most 1,000 characters.' } } } },
+  { name: 'crm_comments', description: "Recent comments on our Facebook and Instagram posts, reels and ads (from the CRM), newest first: who, what they wrote, on which post, and whether a private message can still go to them (dm_possible: within 7 days and none sent yet). The people here are the only ones we can message first on Facebook or Instagram, with crm_comment_dm.",
+    input_schema: { type: 'object', additionalProperties: false, properties: { network: { type: 'string', enum: ['facebook', 'instagram'] } } } },
+  { name: 'crm_comment_dm', description: "Send ONE private Facebook or Instagram message to the person who wrote a comment (Meta's private reply), NOW, from the CRM. The only way to write to someone first on those networks: once per comment, within 7 days of it; their answer opens a conversation in the CRM inbox. Only when the owner asked and has seen or dictated the words. commentId from crm_comments.",
+    input_schema: { type: 'object', additionalProperties: false, required: ['commentId', 'message'], properties: {
+      commentId: { type: 'string' }, message: { type: 'string', description: 'At most 1,000 characters.' } } } },
   { name: 'crm_conversations_for', description: "A client's conversations in the CRM inbox (WhatsApp, email, Facebook...), newest first, by CRM client id. Use it to find the thread to read or reply in.",
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId'], properties: { clientId: { type: 'string' } } } },
   { name: 'crm_conversation', description: "Read one CRM inbox conversation in full: every message in order, who wrote it (the client, a named person on the team, Auti, or an automatic message such as a payment reminder), when, and whether it was delivered or read. Read it before writing any reply, so the reply fits what was actually said.",
@@ -941,6 +985,15 @@ export function crmTools(db, { client = () => crmClient(), resolver } = {}) {
       const mine = (out.conversations || []).filter((c) => String(c.contact_id) === id);
       return { conversations: mine.map((c) => ({ ...pick(c, ['id', 'channel', 'status', 'subject', 'last_message_at', 'unread_count']), last_message: String(c.last_message || '').slice(0, 300) })),
         note: mine.length ? undefined : 'No conversation with this client among the 100 most recent in the inbox. To start one on WhatsApp, use crm_send_whatsapp. Instagram and Facebook conversations can only be started by them.' };
+    },
+    crm_comments: async ({ network }) => {
+      const out = await client().get('/social-comments' + qs({ status: 'all', network }));
+      const week = Date.now() - 7 * 86_400_000;
+      return { comments: (out.comments || []).slice(0, 40).map((c) => ({
+        id: c.id, network: c.network, author: c.author, comment: String(c.body || '').slice(0, 300), at: c.at, on_post: c.post || null,
+        answered_publicly: c.status === 'replied', private_message: c.dm?.status || null,
+        dm_possible: c.dm?.status !== 'sent' && Date.parse(c.at) >= week,
+      })) };
     },
     crm_conversation: async ({ conversationId, last }) => conversationView(await client().get(`/conversations/${needId(conversationId, 'conversationId')}`), last),
     ...Object.fromEntries(Object.entries(OWNER_ACTIONS).map(([name, fn]) => [name, (input) => fn(db, client(), input, { resolver })])),

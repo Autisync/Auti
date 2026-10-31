@@ -16,7 +16,7 @@ const ID = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const hoursAgo = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
 
 // cards: CRM id -> card. threads: conversations in the inbox, each with its messages.
-function fakeCrm({ cards = {}, threads = [] } = {}) {
+function fakeCrm({ cards = {}, threads = [], comments = [], replyStatus = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -25,6 +25,7 @@ function fakeCrm({ cards = {}, threads = [] } = {}) {
       const card = path.match(/^\/clients\/([0-9a-f-]{36})$/);
       if (card) return { client: { id: card[1], status: 'prospect', ...(cards[card[1]] || {}) } };
       if (/^\/clients\/[0-9a-f-]{36}\/email-check$/.test(path)) throw new Error('the CRM said: not found');
+      if (path.startsWith('/social-comments')) return { comments };
       if (path.startsWith('/conversations?')) {
         const channel = new URLSearchParams(path.split('?')[1]).get('channel');
         return { conversations: threads.filter((t) => !channel || t.channel === channel).map(({ messages, ...t }) => t) };
@@ -36,7 +37,22 @@ function fakeCrm({ cards = {}, threads = [] } = {}) {
       }
       throw new Error('the CRM said: not found');
     },
-    async post(path, body) { calls.push({ method: 'POST', path, body }); return { ok: true }; },
+    async post(path, body) {
+      calls.push({ method: 'POST', path, body });
+      const dm = path.match(/^\/social-comments\/([0-9a-f-]{36})\/dm$/);
+      if (dm) {
+        const c = comments.find((x) => x.id === dm[1]);
+        if (!c || c.dm?.status === 'sent') throw new Error('the CRM said: A private message already went to this comment, and Instagram allows only one: the next one can go when they answer it.');
+        return { ok: true, network: c.network };
+      }
+      const reply = path.match(/^\/conversations\/([0-9a-f-]{36})\/reply$/);
+      if (reply && replyStatus) {
+        const t = threads.find((x) => x.id === reply[1]);
+        t.messages.push({ id: ID(999), direction: 'outbound', status: replyStatus.status, dead_letter_reason: replyStatus.reason, created_at: new Date().toISOString() });
+        return { message: { id: ID(999), status: 'queued' } };
+      }
+      return { ok: true };
+    },
     async patch(path, body) { calls.push({ method: 'PATCH', path, body }); return { ok: true }; },
   };
 }
@@ -82,14 +98,14 @@ await check('an Instagram message goes as a reply in their conversation when the
   assert.deepEqual(touch.map((t) => t.channel), ['instagram']);
 });
 
-await check('outside the 24-hour window, or with no conversation, nothing is sent and the reason is given', async () => {
+await check('after 7 days, or with no conversation, nothing is sent and the reason is given', async () => {
   const old = { id: ID(51), channel: 'facebook', contact_id: ID(3), last_message_at: hoursAgo(24 * 9),
     messages: [{ direction: 'inbound', created_at: hoursAgo(24 * 9) }, { direction: 'outbound', created_at: hoursAgo(24 * 9 - 1) }] };
   const f = fakeCrm({ cards: { [ID(3)]: { company_name: 'Facebook Contact', email: '9@facebook.local' }, [ID(4)]: { company_name: 'Nobody' } }, threads: [old] });
   const tools = crm.crmTools(db, { client: () => f });
   const late = await tools.call('crm_send_dm', { clientId: ID(3), message: 'Hi! Still keen on a demo?' });
   assert.equal(late.sent, false);
-  assert.match(late.error, /within 24 hours/);
+  assert.match(late.error, /within 7 days/);
   assert.match(late.error, /9 days ago/);
   const none = await tools.call('crm_send_dm', { clientId: ID(4), message: 'Hello' });
   assert.equal(none.sent, false);
@@ -97,7 +113,7 @@ await check('outside the 24-hour window, or with no conversation, nothing is sen
   // A plain reply in that Facebook thread is held back the same way, instead of failing later at Meta.
   const reply = await tools.call('crm_reply', { conversationId: ID(51), message: 'Hello again' });
   assert.equal(reply.sent, false);
-  assert.match(reply.error, /Facebook only lets a business reply within 24 hours/);
+  assert.match(reply.error, /Facebook only lets a business reply within 7 days/);
   assert.equal(sentReplies(f).length, 0);
 });
 
@@ -133,6 +149,41 @@ await check('the CRM sync records how each client can be reached and redoes emai
   const bad = (await db.query(`INSERT INTO follow_up (client_id, channel, subject, body) VALUES ($1, 'email', 's', 'b') RETURNING id`, [insta.id])).rows[0];
   await crm.syncCrmClients(db, f);
   assert.equal((await db.query(`SELECT status FROM follow_up WHERE id = $1`, [bad.id])).rows[0].status, 'dropped');
+});
+
+await check('between 24 hours and 7 days the message goes (the CRM tags it Human Agent); a refusal from Meta is reported', async () => {
+  const mk = () => ({ id: ID(53), channel: 'instagram', contact_id: ID(6), last_message_at: hoursAgo(72),
+    messages: [{ direction: 'inbound', created_at: hoursAgo(72) }] });
+  const ok = fakeCrm({ cards: { [ID(6)]: { company_name: 'Clinica Luz', email: '8@instagram.local' } }, threads: [mk()], replyStatus: { status: 'sent' } });
+  const r = await crm.crmTools(db, { client: () => ok }).call('crm_send_dm', { clientId: ID(6), message: 'Olá! Ainda está interessada na demonstração?' });
+  assert.equal(r.sent, true);
+  const refused = fakeCrm({ cards: { [ID(6)]: { company_name: 'Clinica Luz', email: '8@instagram.local' } }, threads: [mk()],
+    replyStatus: { status: 'failed', reason: 'Instagram refused the reply sent with the Human Agent tag (after 24 hours): (#10) permission' } });
+  const r2 = await crm.crmTools(db, { client: () => refused }).call('crm_send_dm', { clientId: ID(6), message: 'Olá!' });
+  assert.equal(r2.sent, false);
+  assert.match(r2.error, /Not delivered: Instagram refused .*Human Agent/);
+});
+
+await check('the first message on Facebook or Instagram: a private reply to a recent comment, once', async () => {
+  const comments = [
+    { id: ID(70), network: 'instagram', author: 'ana.casas', body: 'Quanto custa um site?', at: hoursAgo(30), status: 'new', post: 'Sites para imobiliárias' },
+    { id: ID(71), network: 'facebook', author: 'Rui', body: 'Interessante', at: hoursAgo(24 * 10), status: 'new' },
+    { id: ID(72), network: 'instagram', author: 'joana', body: 'Info?', at: hoursAgo(5), status: 'new', dm: { status: 'sent' } },
+  ];
+  const f = fakeCrm({ comments });
+  const tools = crm.crmTools(db, { client: () => f });
+  assert.ok(tools.defs.some((d) => d.name === 'crm_comment_dm') && tools.defs.some((d) => d.name === 'crm_comments'));
+  const list = await tools.call('crm_comments', {});
+  assert.deepEqual(list.comments.map((c) => [c.author, c.dm_possible]), [['ana.casas', true], ['Rui', false], ['joana', false]]);
+  const sent = await tools.call('crm_comment_dm', { commentId: ID(70), message: 'Olá Ana! Um site para imobiliária começa em ... Quer que lhe envie exemplos?' });
+  assert.equal(sent.sent, true);
+  assert.equal(sent.network, 'instagram');
+  assert.deepEqual(f.calls.filter((c) => c.method === 'POST').map((c) => c.path), [`/social-comments/${ID(70)}/dm`]);
+  const again = await tools.call('crm_comment_dm', { commentId: ID(72), message: 'Olá!' });
+  assert.equal(again.sent, false);
+  assert.match(again.error, /allows only one/);
+  const chat = await import('../src/chat.js');
+  assert.match(await chat.systemFor('assistant', db), /crm_comment_dm/);
 });
 
 console.log(`\n${passed} passed`);
