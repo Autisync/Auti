@@ -4,6 +4,10 @@
 //   client has a mobile number in the CRM (the owner sends it from the CRM with one tap), an email otherwise.
 //   Renewals: one note per subscription ending in the next 45 days without auto-renew, with the renewal (and an
 //   upgrade only where the data supports one).
+//   How to pay is given, never made up: the bank details for the invoice's currency from the CRM (Settings ›
+//   Financial › Bank accounts; kwanzas to the Angolan account, euros to the European one). A kwanza or Angolan
+//   invoice is never told to pay by card. A client whose WhatsApp number the CRM's phone check finds wrong gets an
+//   email instead, and the draft says what the number should be.
 // Drafts only, like every message Auti writes: each waits on the Approvals tab, and the owner sends it (or taps Send
 // from the CRM). The same invoice is not chased again within 7 days, nor the same renewal within 30.
 import { languageFor, writeIn } from './language.js';
@@ -65,9 +69,34 @@ export function whatsappable(phone) {
 
 const money = (n, cur) => `${Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur || ''}`.trim();
 
+// Currencies a card link is never offered in, and invoices that settle only by transfer (the CRM's own rule).
+const NO_CARD = new Set(['AOA']);
+export const takesCards = (inv) => (inv?.invoice_system ? inv.invoice_system === 'international' : true) && !NO_CARD.has(String(inv?.currency || '').toUpperCase());
+
+/** How the client pays this invoice: the bank lines for its currency (when the CRM has them) and whether a card can. */
+export async function payDetails(inv, payBy) {
+  let lines = [];
+  try { lines = (await payBy?.(String(inv.currency || '').toUpperCase())) || []; } catch { lines = []; }
+  return {
+    bank_transfer: lines.length ? lines : null,
+    reference: inv.invoice_number || null,
+    card: takesCards(inv) ? 'only if the CRM\'s own invoice email or reminder already gave them a card link; never write one' : 'no: this invoice is paid by bank transfer only',
+  };
+}
+
+/** The bank lines for a currency from the CRM's bank accounts (exact currency, then "any"); [] when there are none. */
+export function bankLinesFrom(accounts, currency) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const a = list.find((x) => String(x?.currency || '').toUpperCase() === String(currency || '').toUpperCase()) || list.find((x) => !x?.currency);
+  if (!a) return [];
+  return [a.accountName, a.bankName, a.iban ? `IBAN ${a.iban}` : a.accountNumber, a.swift ? `SWIFT ${a.swift}` : null, a.note]
+    .map((x) => String(x || '').trim()).filter(Boolean);
+}
+
 // What needs a message, matched to Auti's clients by CRM id. crm is a crmSnapshot().
 // phoneOf(crmId): the client's phone in the CRM; by default from the snapshot's client list.
-export async function accountItems(db, crm, now = new Date(), { phoneOf } = {}) {
+// checkPhone(crmId): the CRM's phone check ({ valid, reason, suggestion_display }); payBy(currency): the bank lines.
+export async function accountItems(db, crm, now = new Date(), { phoneOf, checkPhone, payBy } = {}) {
   if (!crm) return [];
   const listed = new Map((crm.clients || []).map((c) => [String(c.id), c.phone || null]));
   const cards = new Map((crm.clients || []).map((c) => [String(c.id), c]));
@@ -101,11 +130,22 @@ export async function accountItems(db, crm, now = new Date(), { phoneOf } = {}) 
     // Partly paid: what came in and what is left, so the reminder thanks them and never asks for the whole again.
     const partial = paid > 0 && paid < total;
     const tel = await phone(i.client_id);
+    let channel = whatsappable(tel) ? 'whatsapp' : 'email';
+    let phoneProblem = null;
+    if (channel === 'whatsapp' && checkPhone) {
+      const chk = await checkPhone(i.client_id).catch(() => null);
+      if (chk?.valid === false) {
+        channel = 'email';
+        phoneProblem = `WhatsApp number on the CRM card is wrong (${chk.reason})${chk.suggestion_display || chk.suggestion ? `: most likely ${chk.suggestion_display || chk.suggestion}` : ''}. Fix it on the card to send reminders by WhatsApp.`;
+      }
+    }
+    const pay = await payDetails(i, payBy);
     items.push({ agent: 'collections', ref, client_id: c.id, client: c.name, market: c.market,
       invoice: i.invoice_number, amount_due: money(owed, i.currency), due_date: i.due_date ? String(i.due_date).slice(0, 10) : null,
       ...(partial ? { partially_paid: true, invoice_total: money(total, i.currency), paid_so_far: money(paid, i.currency) } : {}),
-      channel: whatsappable(tel) ? 'whatsapp' : 'email', ...langOf(i.client_id, tel, c.market),
-      days_late: daysLate, tone: tone(daysLate ?? 0), ...(fee ? { late_fee: fee } : {}) });
+      channel, ...langOf(i.client_id, tel, c.market),
+      days_late: daysLate, tone: tone(daysLate ?? 0), ...(fee ? { late_fee: fee } : {}), pay_by: pay,
+      ...(phoneProblem ? { phone_problem: phoneProblem } : {}) });
     busy.add(c.id);
   }
   for (const s of crm.expiring_subscriptions || []) {
@@ -123,7 +163,15 @@ export async function accountItems(db, crm, now = new Date(), { phoneOf } = {}) 
 // client: the CRM API (optional), to read the phone on a card the snapshot did not list.
 export async function runAccounts({ db, brain, crm, client = null, now = new Date() }) {
   const phoneOf = client ? async (id) => { const r = await client.get(`/clients/${id}`); return (r?.client || r)?.phone || null; } : undefined;
-  const items = await accountItems(db, crm, now, { phoneOf });
+  const { checkClientPhone } = await import('./crm.js');
+  const checkPhone = client ? (id) => checkClientPhone(client, id) : undefined;
+  // The CRM's bank accounts, read once a run (Settings › Financial › Bank accounts). None, or no access: no bank lines.
+  let accountsP = null;
+  const payBy = client ? async (cur) => {
+    accountsP ||= client.get('/account/bank-accounts').then((r) => r?.accounts || []).catch(() => []);
+    return bankLinesFrom(await accountsP, cur);
+  } : undefined;
+  const items = await accountItems(db, crm, now, { phoneOf, checkPhone, payBy });
   if (!items.length) return { considered: 0, drafted: 0 };
   const config = (await db.query(`SELECT key, value FROM coordinator_config WHERE enabled ORDER BY key`)).rows;
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n') || '- (none)';
@@ -135,6 +183,7 @@ Rules:
 - Collections: follow the tone given for each invoice exactly. Always include the invoice number, the amount due and the due date. One clear ask.
 - Collections: write for the channel given (whatsapp or email) and use it. A WhatsApp is short and personal, with the subject as a one-line purpose; the owner sends it from the CRM.
 - When an item is partially_paid: thank them for the payment received (paid_so_far, of invoice_total), then ask only for what is left (amount_due). Never ask for the whole invoice again.
+- How to pay: use only pay_by. When pay_by.bank_transfer is given, copy those lines exactly (never change a digit) and ask them to quote pay_by.reference. When it is null, offer to send the payment details if they reply. Never invent a bank, an IBAN, a payment link or a card option; when pay_by.card says no, do not mention cards at all.
 - When an item has late_fee, say it once, plainly and without threats, in the words given (with the amount only if it is given). Never mention a late fee for an item without late_fee.
 - Renewals: thank them, name the service and the end date, make renewing easy (reply to confirm). Suggest an upgrade only if the standing instructions name one that fits.
 - Short: under 110 words for email, under 50 for WhatsApp. Write each message in its item's write_in language (from the client's CRM card, or worked out from their country and phone), never another.
@@ -144,7 +193,7 @@ Standing instructions from the owner:
 ${standing}`;
   const user = `Today is ${now.toISOString().slice(0, 10)}.
 Items:
-${JSON.stringify(items.map(({ client_id, ...i }) => i), null, 1)}
+${JSON.stringify(items.map(({ client_id, phone_problem, ...i }) => i), null, 1)}
 
 Write one draft per item and call ${ACCOUNT_TOOL.name} once.`;
   const { output, model, usage } = await brain.think({ system, user, tool: ACCOUNT_TOOL });
@@ -160,7 +209,8 @@ Write one draft per item and call ${ACCOUNT_TOOL.name} once.`;
       `INSERT INTO follow_up (client_id, channel, subject, body, rationale, model, created_by_agent, ref)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING RETURNING id`,
       // A reminder goes on the channel picked from the CRM card (WhatsApp when they have a mobile); renewals as written.
-      [it.client_id, it.channel || (CHANNELS.includes(d.channel) ? d.channel : 'email'), d.subject || null, String(d.message).trim(), d.why || null,
+      [it.client_id, it.channel || (CHANNELS.includes(d.channel) ? d.channel : 'email'), d.subject || null, String(d.message).trim(),
+        [d.why, it.phone_problem].filter(Boolean).join(' ') || null,
         model ?? null, it.agent, it.ref]);
     drafted += res.rows.length;
   }
