@@ -345,7 +345,7 @@ await check('a reminder for a partly paid invoice says what came in and what is 
 
 await check('Auti is told what the systems do now', async () => {
   const { SYSTEMS_UPDATED, SYSTEM_NOTES } = await import('../src/system.js');
-  assert.equal(SYSTEMS_UPDATED, '2026-10-29');
+  assert.equal(SYSTEMS_UPDATED, '2026-11-03');
   assert.match(SYSTEM_NOTES, /email-check/); assert.match(SYSTEM_NOTES, /Send by WhatsApp from the CRM/);
   const chat = await import('../src/chat.js');
   assert.match(await chat.systemFor('assistant', db), /check_email/);

@@ -140,7 +140,7 @@ const qs = (o) => {
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o?.[k] !== undefined).map((k) => [k, o[k]]));
 const CLIENT_KEYS = ['id', 'company_name', 'contact_name', 'email', 'phone', 'language', 'country', 'city', 'website', 'status', 'created_at', 'active_subscriptions', 'outstanding_invoices', 'assigned_first_name', 'tags'];
 const SUB_KEYS = ['id', 'client_id', 'client_name', 'service_name', 'service_type', 'tier', 'status', 'start_date', 'end_date', 'monthly_cost', 'billing_cycle', 'auto_renew'];
-const INV_KEYS = ['id', 'invoice_number', 'client_id', 'client_name', 'status', 'issue_date', 'due_date', 'total', 'amount_paid', 'currency'];
+const INV_KEYS = ['id', 'invoice_number', 'client_id', 'client_name', 'status', 'issue_date', 'due_date', 'total', 'amount_paid', 'currency', 'invoice_system'];
 const OPP_KEYS = ['id', 'name', 'value', 'status', 'stage_id', 'pipeline_id', 'contact_id', 'source', 'created_at', 'updated_at'];
 // Invoices live in the CRM's billing module (/billing/invoices); the old /invoices routes were removed there.
 // Its rows name the customer customer_name and link the CRM client as crm_client_id: mapped to the names Auti uses.
@@ -502,6 +502,19 @@ export const CRM_CHANGES = {
     run: (crm, p) => crm.patch(`/clients/${p.clientId}`, { language: p.language }),
     describe: (p) => `Set ${p.clientName || 'the client'}'s language in the CRM to ${p.language}.`,
   },
+  // The phone on the CRM card, with its country code (+244 943 569 799): what WhatsApp and the reminders use.
+  set_client_phone: {
+    label: 'Fix a client\'s phone number',
+    check(p) {
+      if (!/^[0-9a-f-]{36}$/i.test(String(p?.clientId ?? ''))) throw new Error('clientId must be a CRM id');
+      const raw = String(p.phone ?? '').trim();
+      const digits = raw.replace(/[\s().-]/g, '').replace(/^00/, '+');
+      if (!/^\+[1-9]\d{6,14}$/.test(digits)) throw new Error('phone must have its country code, like +244 943 569 799');
+      return { ...pick(p, ['clientId', 'clientName']), phone: digits };
+    },
+    run: (crm, p) => crm.patch(`/clients/${p.clientId}`, { phone: p.phone }),
+    describe: (p) => `Set ${p.clientName || 'the client'}'s phone in the CRM to ${p.phone}.`,
+  },
   // The onboarding form: one private link with what is still missing (logo, photos, domain, mailboxes...).
   // This one reaches the client (an email from the CRM), so it only ever runs on the owner's approval.
   send_onboarding_form: {
@@ -716,6 +729,37 @@ export function badEmailMessage(check, phone) {
 }
 
 /**
+ * Can this CRM client's phone take a WhatsApp, and is its country code right? The CRM's own check
+ * (GET /clients/:id/phone-check): { phone, valid: true | false | null, code, reason, suggestion,
+ * suggestionDisplay, suggestionCountry }. A number with no country code, or one whose digits belong to another
+ * country (an Angolan 9xx typed after +351), is valid: false, with the number it most likely is. When the CRM
+ * has no check (404) or does not answer, valid is null: nothing is refused on a guess.
+ */
+export async function checkClientPhone(crm, crmId) {
+  const id = needId(crmId, 'clientId');
+  try {
+    const r = await crm.get(`/clients/${id}/phone-check`);
+    if (r && [true, false, null].includes(r.valid)) {
+      return {
+        phone: r.phone ?? null, valid: r.valid, code: r.code ?? null,
+        reason: String(r.reason || (r.valid ? 'the CRM says the number is fine' : r.valid === false ? 'the CRM says the number is wrong' : 'the CRM could not tell')),
+        suggestion: r.suggestion ?? null, suggestion_display: r.suggestionDisplay ?? null, suggestion_country: r.suggestionCountry ?? null, source: 'crm',
+      };
+    }
+  } catch { /* 404: this CRM has no phone check yet; anything else: do not block on it */ }
+  return { phone: null, valid: null, reason: 'the CRM could not check the number', source: 'none' };
+}
+
+/** The refusal when a client's number cannot take a WhatsApp, with the fix when the CRM has one. */
+export function badPhoneMessage(check) {
+  const num = check?.phone ? ` (${check.phone})` : '';
+  const fix = check?.suggestion
+    ? ` It is most likely ${check.suggestion_display || check.suggestion}${check.suggestion_country ? ` (${check.suggestion_country})` : ''}: fix it on their CRM card (crm_do set_client_phone) and send again.`
+    : ' Fix the number on their CRM card, or reach them by email.';
+  return `Not sent: their WhatsApp number${num} is wrong: ${check?.reason || 'the CRM refused it'}.${fix}`;
+}
+
+/**
  * Sends a follow-up from the CRM, as Auti's CRM user, so it is filed in the client's inbox there.
  * email: POST /clients/:id/email { subject, body }.
  * whatsapp: POST /conversations/start { clientId, channel: 'whatsapp' } (opens or reuses their thread), then
@@ -730,6 +774,10 @@ export async function sendFollowUpViaCrm(crm, { channel, crmId, subject, body })
   }
   if (channel === 'whatsapp') {
     const m = needText(body, 'message', 4000);
+    // A wrong number (no country code, the wrong one) is refused before anything is sent: WhatsApp would only
+    // bounce it, or worse, reach a stranger. The CRM refuses it too; this says why and what the number should be.
+    const chk = await checkClientPhone(crm, id);
+    if (chk.valid === false) throw Object.assign(new Error(badPhoneMessage(chk)), { httpStatus: 422, phone_refused: true, phone_check: chk });
     const conv = await crm.post('/conversations/start', { clientId: id, channel: 'whatsapp' });
     if (!conv?.conversationId) throw new Error('the CRM did not open a WhatsApp thread for that client');
     await crm.post(`/conversations/${conv.conversationId}/reply`, { content: m });
@@ -781,7 +829,14 @@ export const OWNER_ACTIONS = {
   async crm_send_whatsapp(db, crm, { clientId, message }) {
     const id = needId(clientId, 'clientId');
     const m = needText(message, 'message', 4000);
-    const conv = await sendFollowUpViaCrm(crm, { channel: 'whatsapp', crmId: id, body: m });
+    let conv;
+    try { conv = await sendFollowUpViaCrm(crm, { channel: 'whatsapp', crmId: id, body: m }); } catch (err) {
+      if (err.phone_refused) {
+        return { sent: false, error: err.message, phone_check: err.phone_check,
+          ...(err.phone_check?.suggestion ? { fix: { kind: 'set_client_phone', payload: { clientId: id, phone: err.phone_check.suggestion } } } : {}) };
+      }
+      throw err;
+    }
     const c = await logContact(db, crm, id, 'whatsapp', `WhatsApp sent from the CRM at the owner's word: ${m.slice(0, 200)}`);
     await journal(db, `Sent ${c?.name || 'a CRM client'} a WhatsApp from the CRM at the owner's word.`);
     return { sent: true, channel: 'whatsapp', to: c?.name || id, conversationId: conv.conversationId };
@@ -910,6 +965,8 @@ export const CRM_TOOL_DEFS = [
       kind: { type: 'string', enum: Object.keys(CRM_CHANGES) }, payload: { type: 'object' } } } },
   { name: 'check_email', description: 'Check an email address before sending to it: well formed, not a test or throwaway domain, and its domain takes mail (MX records). valid true, false (do not send; say why) or null (could not tell; sending is fine). Give the address, or a CRM clientId to check the address on their card (the CRM\'s own check when it has one). crm_send_email runs it by itself.',
     input_schema: { type: 'object', additionalProperties: false, properties: { email: { type: 'string' }, clientId: { type: 'string' } } } },
+  { name: 'check_phone', description: "Check a CRM client's phone before a WhatsApp: the CRM says whether it has the right country code and, when it does not, the number it most likely is (an Angolan 9xx number saved as +351..., a UK 07... with no +44). valid false: do not send; tell the owner and offer to fix it on the card (crm_do set_client_phone). crm_send_whatsapp runs it by itself.",
+    input_schema: { type: 'object', additionalProperties: false, required: ['clientId'], properties: { clientId: { type: 'string' } } } },
   { name: 'crm_send_email', description: 'Send an email to a CRM client NOW, from the CRM (it is filed in the inbox). Only when the owner asked for this message in this conversation and has seen or dictated the words. clientId from crm_clients.',
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'subject', 'body'], properties: {
       clientId: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } } } },
@@ -951,6 +1008,7 @@ export function crmTools(db, { client = () => crmClient(), resolver } = {}) {
       const { phone, ...out } = await checkClientEmail(client(), clientId, { resolver });
       return out;
     },
+    check_phone: async ({ clientId }) => checkClientPhone(client(), clientId),
     crm_overview: async () => crmSnapshot(client(), { clients: 20 }),
     crm_clients: async ({ search, status, page }) => {
       const out = await client().get('/clients' + qs({ search, status, page, limit: 25 }));
