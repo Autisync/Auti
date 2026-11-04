@@ -12,7 +12,7 @@ export const AGENTS = [
   {
     id: 'retention',
     name: 'Retention',
-    role: 'Watches clients due or overdue for contact and drafts a follow-up for each. For leads you track it writes a four-touch outreach sequence (opener, value, observation, last note), one touch at a time; a reply stops it. Cold lists in the CRM (prospects tagged outreach-...) and lists you import (npm run import:leads) join the sequence by themselves, a few a day (outreach_per_day). New enquiries in the CRM are due the same day. It never sends anything on its own: every draft waits for you on the Approvals tab.',
+    role: 'First reads what leads answered in the CRM inbox (interested, a question, not now, no, out of office) and moves each one along: a no ends it, not now waits until the date they gave, and an answer they are waiting for is drafted. Then it drafts a follow-up for every client due or overdue for contact. Every message to a lead comes in three styles (what we noticed, a free tip, straight to the point), each ending with a choice of two easy next steps; it recommends the style that has had the most answers and learns from every send. For leads you track it writes a five-touch sequence over three weeks (opener, a useful idea, proof with a free call, a quick 1-2-3 question, last note), then a useful note every two months; a reply stops it. Cold lists in the CRM (prospects tagged outreach-...) and lists you import (npm run import:leads) join the sequence by themselves, a few a day (outreach_per_day). New enquiries in the CRM are due the same day. Drafts wait for you on the Approvals tab; only outreach touches to CRM prospects go out on their own, and only if you switch outreach autosend on.',
     schedule: 'After every coordinator run',
   },
   {
@@ -36,7 +36,7 @@ export const AGENTS = [
   {
     id: 'leads',
     name: 'Leads',
-    role: 'Searches the web for businesses in Angola, the UK, Portugal and Namibia that need a website, CRM, domains, business email, hosting or an answer to missed calls, records the evidence it saw, then checks it on their own site, email and DNS. It never contacts anyone: you track, add to the CRM or dismiss each lead on the Leads tab.',
+    role: 'Searches the web for businesses in Angola, the UK, Portugal and Namibia that need a website, CRM, domains, business email, hosting or an answer to missed calls, records the evidence it saw, then checks it on their own site, email and DNS. Each search follows one angle, and it hears which angles got answers before, so it looks for more businesses like the ones who replied. It never contacts anyone: you track, add to the CRM or dismiss each lead on the Leads tab.',
     schedule: 'Daily, after the overnight run',
   },
   {

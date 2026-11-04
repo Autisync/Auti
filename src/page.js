@@ -1,3 +1,5 @@
+import { STAGE_NAME, STYLE_NAME } from './pipeline.js';
+
 // The dashboard page. One self-contained file: no build step. The only outside request is the brand
 // fonts (Poppins, Roboto) from Google Fonts; everything else is served from here.
 // Everything from the database or the model is inserted with textContent, never as HTML.
@@ -494,6 +496,14 @@ ${FONTS}
   .lead .links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 13px; }
   .lead .links a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
   .lead form.card { margin-top: 10px; }
+  /* the lead playbook: where leads stand, and the three ways to say a message */
+  .pipeline { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+  .pipe-step { border: 1px solid var(--line); border-radius: 12px; padding: 10px; position: relative; }
+  .pipe-step b { display: block; font: 600 20px/1.1 var(--display); color: var(--ink); }
+  .pipe-step span { font: 11px/1.3 var(--display); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .pipe-step.hot { border-color: var(--gold-glow); } .pipe-step.hot b { color: var(--gold); }
+  .follow .styles { margin: 10px 0 2px; }
+  @media (max-width: 760px) { .pipeline { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   @media (max-width: 600px) { .lead > .item-title, .lead > .meta { grid-column: 1 / -1; } .lead > .meta { text-align: left; white-space: normal; } }
 
   /* documents */
@@ -958,16 +968,43 @@ function followUpCard(f) {
   const c = $('div', 'card plan follow');
   c.append($('span', 'pending', 'DRAFT'));
   const h = $('h3', null, f.client); h.append($('span', 'tag', f.channel), $('span', 'tag', human(f.market)));
-  const AGENT_TAG = { outreach: 'Outreach · touch ' + f.step + ' of 4', collections: 'Overdue invoice', renewals: 'Renewal' };
+  const AGENT_TAG = { outreach: 'Outreach · touch ' + f.step + ' of 5', replies: 'Answer to their reply', collections: 'Overdue invoice', renewals: 'Renewal' };
   if (AGENT_TAG[f.agent]) h.append($('span', 'tag ' + (f.agent === 'collections' ? 'warn' : 'ok'), AGENT_TAG[f.agent]));
+  const lead = f.client_status === 'lead';
+  if (lead && f.stage && f.agent !== 'outreach') h.append($('span', 'tag', STAGE_NAME[f.stage] || f.stage));
   c.append(h);
   if (f.rationale) c.append($('div', 'detail', f.rationale));
   const form = $('div', 'form');
   const subj = $('label', 'wide', f.channel === 'email' ? 'Subject' : 'Purpose'); const si = $('input'); si.value = f.subject || ''; si.readOnly = f.channel !== 'email'; subj.append(si);
   const msg = $('label', 'wide', f.channel === 'call' ? 'Talking points' : 'Message (edit before sending)'); const ta = $('textarea'); ta.value = f.body; ta.rows = Math.min(12, f.body.split('\\n').length + 2); msg.append(ta);
-  const OUTREACH_GAP = { 1: 3, 2: 4, 3: 7, 4: 30 };
-  const nx = $('label', null, f.step ? (f.step < 4 ? 'Next touch' : 'Then check in') : 'Next contact'); const ni = $('input'); ni.type = 'date';
-  ni.value = inDays(f.step ? OUTREACH_GAP[f.step] : f.agent === 'collections' ? 7 : (f.contact_every_days || 14)); nx.append(ni);
+  // When the next message is due once this one goes: the playbook's rhythm for a lead (worked out by the server).
+  const OUTREACH_GAP = { 1: 3, 2: 4, 3: 5, 4: 7, 5: 60 };
+  const nx = $('label', null, f.step ? (f.step < 5 ? 'Next touch' : 'Then check in') : 'Next contact'); const ni = $('input'); ni.type = 'date';
+  ni.value = inDays(f.next_in_days != null ? f.next_in_days : f.step ? OUTREACH_GAP[f.step] : f.agent === 'collections' ? 7 : (f.contact_every_days || 14)); nx.append(ni);
+  // A message to a lead comes three ways. The card opens on the one Auti recommends (★); a tap swaps the text, and
+  // what the owner typed in each version is kept while they compare.
+  const opts = (f.variants && f.variants.options) || [];
+  let chosen = f.style || null;
+  if (opts.length > 1) {
+    const edits = {};
+    const bar = $('div', 'filters styles');
+    const paintChips = () => [...bar.children].forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === chosen)));
+    opts.forEach((o) => {
+      const b = $('button', 'chip', (STYLE_NAME[o.style] || o.style) + (o.style === f.style ? ' ★' : '')); b.type = 'button'; b.dataset.k = o.style;
+      b.title = o.style === f.style ? 'Recommended: ' + (f.variants.why || 'the best bet') : 'Use this version';
+      b.onclick = () => {
+        if (chosen) edits[chosen] = { s: si.value, m: ta.value };
+        chosen = o.style;
+        const e = edits[chosen];
+        si.value = e ? e.s : (o.subject || f.subject || ''); ta.value = e ? e.m : o.message;
+        ta.rows = Math.min(12, ta.value.split('\\n').length + 2);
+        paintChips();
+      };
+      bar.append(b);
+    });
+    paintChips();
+    c.append(bar, $('div', 'detail', '★ ' + (STYLE_NAME[f.style] || 'This one') + ': ' + (f.variants.why || 'recommended') + '. Pick the one that sounds most like you; replies are counted per style.'));
+  }
   form.append(subj, msg, nx); c.append(form);
   const actions = $('div', 'actions'); const hint = $('span', 'hint');
   const copy = $('button', 'act', 'Copy');
@@ -977,11 +1014,17 @@ function followUpCard(f) {
   };
   const sent = $('button', 'act approve', f.channel === 'call' ? 'Mark called' : 'Mark sent');
   const drop = $('button', 'act', 'Drop');
-  const finish = async (decision) => {
+  const finish = async (decision, outcome) => {
     [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = true; }); hint.className = 'hint'; hint.textContent = decision === 'send_crm' ? (f.channel === 'whatsapp' ? 'Sending the WhatsApp from the CRM…' : 'Sending from the CRM…') : 'Saving…';
     try {
-      await post('/api/follow-up', { id: f.id, decision, body: ta.value, subject: si.value, next_contact_due: decision === 'replied' ? null : ni.value });
+      await post('/api/follow-up', { id: f.id, decision, body: ta.value, subject: si.value, next_contact_due: decision === 'replied' ? null : ni.value, style: chosen, outcome });
       c.querySelector('.pending').remove();
+      if (decision === 'replied') {
+        const SAID = { interested: '✓ REPLY LOGGED · MOVED TO REPLIED', not_now: '✓ NOT NOW · CHECKING BACK IN TWO MONTHS', not_interested: '✓ NOT INTERESTED · NO MORE MESSAGES' };
+        actions.replaceWith($('div', 'done ok', SAID[outcome] || SAID.interested));
+        data.followUps = data.followUps.filter((x) => x.id !== f.id); drawTabs();
+        return;
+      }
       const DONE = { sent: '✓ LOGGED AS SENT', send_crm: ({ whatsapp: '✓ SENT BY WHATSAPP FROM THE CRM', instagram: '✓ SENT ON INSTAGRAM FROM THE CRM', facebook: '✓ SENT ON FACEBOOK FROM THE CRM' })[f.channel] || '✓ SENT FROM THE CRM', replied: '✓ REPLY LOGGED · SEQUENCE STOPPED', drop: 'DROPPED' };
       actions.replaceWith($('div', 'done ' + (decision === 'drop' ? 'drop' : 'ok'), DONE[decision]));
       data.followUps = data.followUps.filter((x) => x.id !== f.id); drawTabs();
@@ -997,7 +1040,18 @@ function followUpCard(f) {
     sent.className = 'act'; sent.textContent = 'I sent it myself';
   }
   actions.append(sent, copy);
-  if (f.step) { const rep = $('button', 'act', 'They replied'); rep.title = 'Stops the sequence and logs the reply'; rep.onclick = () => finish('replied'); actions.append(rep); }
+  // They answered before this went out: how they answered moves the lead on (replied, nurture or lost).
+  if (f.step || (lead && f.agent !== 'replies')) {
+    const rep = $('button', 'act', 'They replied…'); rep.title = 'Stops the sequence and logs the reply';
+    rep.onclick = () => {
+      const how = $('span', 'hint');
+      [['interested', 'Interested'], ['not_now', 'Not now'], ['not_interested', 'Not interested']].forEach(([k, label]) => {
+        const b = $('button', 'mini' + (k === 'interested' ? ' go' : ''), label); b.onclick = () => finish('replied', k); how.append(b, document.createTextNode(' '));
+      });
+      rep.replaceWith(how);
+    };
+    actions.append(rep);
+  }
   // A client in the CRM is messaged through the CRM (so it is filed there); the WhatsApp app link is only for the rest.
   if (f.channel === 'whatsapp' && !crmSend) { const wa = $('a', 'act', 'Open WhatsApp'); wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); wa.target = '_blank'; wa.rel = 'noopener'; wa.onclick = () => { wa.href = 'https://wa.me/?text=' + encodeURIComponent(ta.value); }; actions.append(wa); }
   actions.append(drop, hint); c.append(actions);
@@ -1445,6 +1499,10 @@ function clientCard(c) {
   const el = $('div', 'card row');
   const t = $('div', 'item-title', c.name);
   t.append($('span', 'tag' + (c.status === 'lost' ? ' bad' : c.status === 'active' ? ' ok' : ''), c.kind || c.status));
+  // A lead on its way to becoming a client shows where it is (src/pipeline.js), and moves from here.
+  const onWay = c.status === 'lead' || (c.status === 'lost' && c.stage === 'lost');
+  if (onWay && c.stage) t.append($('span', 'tag' + (['replied', 'qualified', 'booked', 'proposal'].includes(c.stage) ? ' ok' : c.stage === 'lost' ? ' bad' : ''), STAGE_NAME[c.stage] || c.stage));
+  if (onWay && c.outreach_style) t.append($('span', 'tag', STYLE_NAME[c.outreach_style] || c.outreach_style));
   if (c.flag === 'overdue') t.append($('span', 'tag bad', 'overdue'));
   if (c.flag === 'no_next_contact') t.append($('span', 'tag warn', 'no next contact'));
   const meta = $('div', 'meta', 'last contact ' + ago(c.last_contact_at));
@@ -1459,13 +1517,17 @@ function clientCard(c) {
   const acts = $('div', 'acts');
   const open = (mode) => { clientForm = clientForm?.id === c.id && clientForm.mode === mode ? null : { id: c.id, mode }; draw(); };
   if (c.status !== 'lost') { const b = $('button', 'mini go', 'Log contact'); b.onclick = () => open('contact'); acts.append(b); }
-  (CLIENT_MOVES[c.status] || []).forEach(([status, label]) => {
-    const b = $('button', 'mini', label);
-    b.onclick = async () => { b.disabled = true; try { await post('/api/client', { id: c.id, status }); await load(); } catch (e) { b.disabled = false; acts.append($('span', 'error', e.message)); } };
-    acts.append(b);
-  });
-  if (c.status !== 'lost') { const b = $('button', 'mini', 'Lost…'); b.onclick = () => open('lost'); acts.append(b); }
+  if (onWay) leadStageActs(c, acts);
+  else {
+    (CLIENT_MOVES[c.status] || []).forEach(([status, label]) => {
+      const b = $('button', 'mini', label);
+      b.onclick = async () => { b.disabled = true; try { await post('/api/client', { id: c.id, status }); await load(); } catch (e) { b.disabled = false; acts.append($('span', 'error', e.message)); } };
+      acts.append(b);
+    });
+    if (c.status !== 'lost') { const b = $('button', 'mini', 'Lost…'); b.onclick = () => open('lost'); acts.append(b); }
+  }
   el.append(acts);
+  if (onWay) leadStageForms(c, el, acts);
   const done = async () => { clientForm = null; await load(); };
   const cancel = () => { clientForm = null; draw(); };
   if (clientForm?.id === c.id && clientForm.mode === 'contact') {
@@ -1907,6 +1969,9 @@ function viewCrm(root) {
 // Businesses the leads agent found. Nothing here contacts anyone: tracking adds a lead to Auti's clients
 // (so the retention agent drafts an introduction for the owner to send), and Add to CRM creates the client there.
 const MARKET_NAME = { angola: 'Angola', uk: 'UK', portugal: 'Portugal', namibia: 'Namibia' };
+// The lead playbook's names, from src/pipeline.js.
+const STAGE_NAME = ${JSON.stringify(STAGE_NAME)};
+const STYLE_NAME = ${JSON.stringify(STYLE_NAME)};
 const SERVICE_NAME = { crm: 'CRM', domain: 'Domain', email: 'Business email', hosting: 'Hosting', software: 'Software', website: 'Website', missed_calls: 'Missed calls' };
 let leadForm = {};   // lead id -> 'crm' | 'dismiss'
 function viewLeads(root) {
@@ -1934,6 +1999,7 @@ function viewLeads(root) {
     stat(count((l) => l.status === 'tracking' || l.status === 'in_crm'), 'Taken on (30 days)', false, 'leads'),
   );
   root.append(stats);
+  if (data.pipeline && (data.pipeline.entered || Object.keys(data.pipeline.now || {}).length)) root.append(pipelineSection(data.pipeline));
   // Every client record that is not active (prospects, leads, paused, lost) sits under "In CRM" with the leads already added there.
   // Making one active moves it to the Clients tab.
   const others = (data.clients || []).filter((c) => c.status !== 'active').map((c) => ({ ...c, client: true }));
@@ -1948,6 +2014,82 @@ function viewLeads(root) {
     (l, k) => l.client ? k === 'in_crm' : MARKET_NAME[k] ? l.status === 'new' && l.market === k : l.status === k,
     (l) => l.client ? clientCard(l) : leadCard(l), 'new');
 }
+// The lead playbook at a glance: where every lead stands, how far the last 90 days' leads got, and which way of
+// writing gets answers. The owner can make one style lead every message, or leave it to the replies.
+function pipelineSection(p) {
+  const rate = (a, b) => b ? Math.round(100 * a / b) + '%' : '–';
+  const flow = $('div', 'pipeline');
+  ['new', 'contacted', 'replied', 'qualified', 'booked', 'proposal', 'won'].forEach((k) => {
+    const n = (p.now && p.now[k]) || 0;
+    const st = $('div', 'pipe-step' + (n && ['replied', 'qualified', 'booked', 'proposal'].includes(k) ? ' hot' : ''));
+    st.append($('b', null, String(n)), $('span', null, STAGE_NAME[k]));
+    flow.append(st);
+  });
+  const now = card(flow,
+    $('div', 'detail', 'On the side: ' + ((p.now && p.now.nurture) || 0) + ' in nurture (a useful note every two months) · ' + ((p.now && p.now.lost) || 0) + ' lost.'),
+    $('div', 'detail', 'Last ' + p.days + ' days: ' + p.entered + ' new leads, ' + p.contacted + ' contacted, ' + p.replied + ' in conversation (' + rate(p.replied, p.contacted) + '), '
+      + p.booked + ' calls booked, ' + p.won + ' won.'));
+  const styles = $('div', 'usage');
+  ['observation', 'helpful', 'direct'].forEach((k) => {
+    const x = (p.styles && p.styles[k]) || { sent: 0, replied: 0 };
+    const box = $('div', 'use');
+    box.append($('div', 'w', STYLE_NAME[k]), $('div', 't', x.sent ? rate(x.replied, x.sent) : '–'),
+      $('div', 'c', x.replied + ' answered of ' + x.sent + ' sent' + (x.said_no ? ' · ' + x.said_no + ' said no' : '')));
+    styles.append(box);
+  });
+  const pick = $('div', 'filters');
+  [['auto', 'Auto: most replies'], ['observation', STYLE_NAME.observation], ['helpful', STYLE_NAME.helpful], ['direct', STYLE_NAME.direct]].forEach(([k, label]) => {
+    const b = $('button', 'chip', label); b.setAttribute('aria-pressed', String((data.outreachStyle || 'auto') === k));
+    b.onclick = async () => { b.disabled = true; try { await post('/api/leads', { style: k }); await load(); } catch (e) { b.disabled = false; b.textContent = e.message; } };
+    pick.append(b);
+  });
+  const works = card($('span', 'kicker', 'What gets answers'), styles,
+    $('div', 'detail', 'Last 120 days. A no is counted apart, so a style only wins on answers that keep the door open.'),
+    $('div', 'detail', 'Messages to leads lead with:'), pick);
+  if (p.touches && p.touches.length) works.append($('div', 'detail', 'Answers per touch of the cold sequence: ' + p.touches.map((t) => t.step + ': ' + rate(t.replied, t.sent)).join(' · ') + '.'));
+  const best = (p.angles || []).filter((a) => a.replied).slice(0, 3);
+  if (best.length) works.append($('div', 'detail', 'Angles that got answers: ' + best.map((a) => (MARKET_NAME[a.market] || a.market) + ', ' + a.angle.split(':')[0] + ' (' + a.replied + ' of ' + a.contacted + ')').join(' · ') + '.'));
+  return section('Pipeline', now, works);
+}
+
+// Where a lead can go from its card. Not now and Lost ask for a date or a reason.
+const STAGE_MOVES = {
+  new: [['booked', 'Call booked'], ['proposal', 'Proposal sent'], ['won', 'Won']],
+  contacted: [['booked', 'Call booked'], ['proposal', 'Proposal sent'], ['won', 'Won']],
+  replied: [['booked', 'Call booked'], ['proposal', 'Proposal sent'], ['won', 'Won']],
+  qualified: [['booked', 'Call booked'], ['proposal', 'Proposal sent'], ['won', 'Won']],
+  booked: [['proposal', 'Proposal sent'], ['won', 'Won']],
+  proposal: [['won', 'Won']],
+  nurture: [['replied', 'They are interested'], ['booked', 'Call booked'], ['won', 'Won']],
+  lost: [['replied', 'They came back']],
+};
+const leadMove = (c, acts, body, b) => async () => {
+  if (b) b.disabled = true;
+  try {
+    const out = await post('/api/leads', { client_id: c.id, ...body }); clientForm = null;
+    if (out.crm_error) { acts.append($('span', 'error', out.crm_error)); setTimeout(load, 4000); } else await load();
+  } catch (e) { if (b) b.disabled = false; acts.append($('span', 'error', e.message)); }
+};
+function leadStageActs(c, acts) {
+  const stage = c.stage || 'new';
+  (STAGE_MOVES[stage] || []).forEach(([to, label]) => { const b = $('button', 'mini' + (to === 'won' ? ' go' : ''), label); b.onclick = leadMove(c, acts, { stage: to }, b); acts.append(b); });
+  const open = (mode) => { clientForm = clientForm?.id === c.id && clientForm.mode === mode ? null : { id: c.id, mode }; draw(); };
+  if (!['nurture', 'lost', 'won'].includes(stage)) { const b = $('button', 'mini', 'Not now…'); b.onclick = () => open('nurture'); acts.append(b); }
+  if (stage !== 'lost' && stage !== 'won') { const b = $('button', 'mini', 'Lost…'); b.onclick = () => open('lead-lost'); acts.append(b); }
+}
+function leadStageForms(c, el, acts) {
+  const move = (body) => leadMove(c, acts, body);
+  const cancel = () => { clientForm = null; draw(); };
+  if (clientForm?.id === c.id && clientForm.mode === 'nurture') {
+    el.append(formCard([['until', 'Check back on', 'date', null, { value: inDays(60) }], ['reason', 'What they said (optional)', 'text', null, { wide: true }]],
+      'Not now', (v) => move({ stage: 'nurture', until: v.until || undefined, reason: v.reason || undefined })(), cancel));
+  }
+  if (clientForm?.id === c.id && clientForm.mode === 'lead-lost') {
+    el.append(formCard([['reason', 'Why not? (Auti stops writing to them)', 'text', null, { wide: true, required: true, placeholder: 'e.g. went with someone else, too expensive, no budget this year' }]],
+      'Mark lost', (v) => move({ stage: 'lost', reason: v.reason })(), cancel));
+  }
+}
+
 function leadCard(l) {
   const el = $('div', 'card row lead');
   const t = $('div', 'item-title', l.company);

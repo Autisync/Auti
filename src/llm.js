@@ -23,13 +23,15 @@ export function claudeBrain({
 
   return {
     model,
-    async think({ system, user, tool }) {
+    // maxTokens: room for a long answer (the retention agent's three styles per lead); never less than the default.
+    async think({ system, user, tool, maxTokens }) {
       const usage = { input: 0, output: 0 };
       let messages = [{ role: 'user', content: forcesTools(model) ? user : `${user}\n\nAnswer only by calling ${tool.name}.` }];
       for (let attempt = 0; attempt < 2; attempt++) {
         const res = await client.messages.create({
           model,
-          max_tokens: forcesTools(model) ? 4096 : 16000,      // thinking can't be switched off on these, so leave it room
+          // Thinking can't be switched off on the models that refuse a forced tool call, so leave them room.
+          max_tokens: Math.max(forcesTools(model) ? 4096 : 16000, Number(maxTokens) || 0),
           system,
           tools: [tool],
           tool_choice: toolChoice(model, tool.name),

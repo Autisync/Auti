@@ -4,6 +4,7 @@
 // lead, adds it to the CRM, or dismisses it (the reason teaches the next run).
 import { adjustedFit, checkAll, domainOf } from './verify.js';
 import { AUTI_LEADS } from './crm.js';
+import { pipelineStats } from './pipeline.js';
 
 export const LEAD_MARKETS = ['angola', 'uk', 'portugal', 'namibia'];
 export const LEAD_SERVICES = ['crm', 'domain', 'email', 'hosting', 'software', 'website', 'missed_calls'];
@@ -115,6 +116,9 @@ export async function leadsRequest(db, { now = new Date(), focus = null } = {}) 
     SELECT company, dismiss_reason FROM lead WHERE status = 'dismissed' AND dismiss_reason IS NOT NULL
      ORDER BY decided_at DESC LIMIT 15`)).rows;
   const lastNote = (await db.query(`SELECT notes FROM lead_run WHERE market = $1 AND notes IS NOT NULL ORDER BY created_at DESC LIMIT 1`, [focus.market])).rows[0]?.notes;
+  // Which angles in this market turned into conversations: search more like the ones that get answers.
+  const worked = (await pipelineStats(db)).angles.filter((a) => a.market === focus.market)
+    .map(({ angle, contacted, replied, won }) => ({ angle, contacted, replied, won }));
 
   const user = `Today is ${now.toISOString().slice(0, 10)}.
 This run: ${focus.market === 'uk' ? 'the United Kingdom' : focus.market[0].toUpperCase() + focus.market.slice(1)}. Angle: ${focus.angle}.
@@ -123,7 +127,7 @@ Find up to ${PER_RUN} businesses.
 Already known (skip these): ${JSON.stringify(known)}
 Websites already known (skip these too, under any name): ${JSON.stringify(knownSites)}
 Leads the owner turned down, and why (learn from these): ${JSON.stringify(dismissed)}
-${lastNote ? `Your note from last time: ${lastNote}\n` : ''}
+${worked.length ? `What happened to the leads found in this market before, per angle (contacted, replied, won): ${JSON.stringify(worked)}. Look for more businesses like the ones who answered.\n` : ''}${lastNote ? `Your note from last time: ${lastNote}\n` : ''}
 Research, then call ${LEADS_TOOL.name} once.`;
   return { system: systemPrompt(config), user };
 }
@@ -153,12 +157,12 @@ export async function runLeads({ db, researcher, now = new Date(), focus = null,
     if (c && c.contradicted.length && !c.confirmed.length && fit <= 2) { dropped++; continue; }
     const domain = c?.domain ?? domainOf(l.website);
     const res = await db.query(`
-      INSERT INTO lead (company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources, model, domain, checks, checked_at)
-      SELECT $1, $2::market, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, CASE WHEN $14::jsonb IS NULL THEN NULL ELSE now() END
+      INSERT INTO lead (company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources, model, domain, checks, checked_at, angle)
+      SELECT $1, $2::market, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, CASE WHEN $14::jsonb IS NULL THEN NULL ELSE now() END, $15
        WHERE NOT EXISTS (SELECT 1 FROM clients WHERE lower(name) = lower($1) AND market = $2::market)
       ON CONFLICT DO NOTHING RETURNING id`,
       [l.company, l.market, l.city, l.sector, l.website, l.services, fit, l.signals, l.pitch, l.contact_route, l.sources, model ?? null,
-        domain, c ? JSON.stringify(c) : null]);
+        domain, c ? JSON.stringify(c) : null, focus.angle ?? null]);
     saved += res.rows.length;
   }
   await db.query(`INSERT INTO lead_run (market, angle, found, saved, searches, notes) VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -197,7 +201,7 @@ export async function listLeads(db) {
 }
 
 // The owner's decision on a lead. 'track' adds it to Auti's clients as a lead and starts the outreach sequence
-// (four touches, the first due today, so the next scheduled run drafts it). 'crm' is recorded after the CRM accepted it.
+// (five touches, the first due today, so the next scheduled run drafts it). 'crm' is recorded after the CRM accepted it.
 // With proposeCrm (the CRM connected) and a business email in the lead's public contact, tracking also proposes adding
 // it to the CRM as a prospect; that waits on the Approvals tab like every CRM change.
 export async function decideLead(db, { id, action, reason, crm_id, proposeCrm = null } = {}) {

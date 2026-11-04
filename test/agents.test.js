@@ -15,7 +15,7 @@ const { runRetention, clientsDue } = await import('../src/retention.js');
 const web = await import('../src/web.js');
 
 let clientId, leadId;
-await check('tracking a lead starts a four-touch sequence; each touch is drafted on its day, with what was seen', async () => {
+await check('tracking a lead starts a five-touch sequence; each touch is drafted on its day, with what was seen', async () => {
   leadId = (await db.query(`INSERT INTO lead (company, market, fit, signals, pitch, services, website, contact_route, sources)
     VALUES ('Clinica Sol', 'portugal', 4, 'Books by phone only; contact is clinicasol@gmail.com.', 'Online booking with deposits.', '{website,email}',
             'https://clinicasol.example', 'clinicasol@gmail.com', '{https://clinicasol.example}') RETURNING id`)).rows[0].id;
@@ -28,7 +28,7 @@ await check('tracking a lead starts a four-touch sequence; each touch is drafted
   const seen = [];
   const r = await runRetention({ db, brain: brain({ drafts: [{ client: 'Clinica Sol', channel: 'email', subject: 'Marcações online', message: 'Olá...', why: 'Touch 1' }] }, seen) });
   assert.equal(r.drafted, 1);
-  assert.match(seen[0].user, /"touch": "1 of 4: Opener/);
+  assert.match(seen[0].user, /"touch": "1 of 5: Opener/);
   assert.match(seen[0].user, /Books by phone only/);
   assert.match(seen[0].system, /never pretend you have spoken before/);
   const f = (await db.query(`SELECT id, created_by_agent, step FROM follow_up WHERE client_id = $1`, [clientId])).rows[0];
@@ -43,26 +43,26 @@ await check('tracking a lead starts a four-touch sequence; each touch is drafted
   await db.query(`UPDATE clients SET next_contact_due = current_date WHERE id = $1`, [clientId]);
   const seen2 = [];
   await runRetention({ db, brain: brain({ drafts: [{ client: 'Clinica Sol', channel: 'email', subject: 's', message: 'Touch two', why: 'w' }] }, seen2) });
-  assert.match(seen2[0].user, /"touch": "2 of 4: Value/);
+  assert.match(seen2[0].user, /"touch": "2 of 5: Value/);
   const f2 = (await db.query(`SELECT id, step FROM follow_up WHERE client_id = $1 AND status = 'awaiting_approval'`, [clientId])).rows[0];
   assert.equal(f2.step, 2);
 
   // They answered before touch 2 went out: the reply is logged, the draft dropped and the sequence ends.
-  assert.deepEqual(await web.decideFollowUp(db, { id: f2.id, decision: 'replied' }), { id: f2.id, status: 'dropped', replied: true });
+  assert.deepEqual(await web.decideFollowUp(db, { id: f2.id, decision: 'replied' }), { id: f2.id, status: 'dropped', replied: true, stage: 'replied' });
   const after = (await db.query(`SELECT outreach_step, outreach_ended FROM clients WHERE id = $1`, [clientId])).rows[0];
   assert.deepEqual(after, { outreach_step: null, outreach_ended: 'replied' });
   assert.equal((await db.query(`SELECT summary FROM client_touchpoint WHERE client_id = $1 ORDER BY happened_at DESC LIMIT 1`, [clientId])).rows[0].summary, 'They replied.');
 });
 
-await check('the fourth touch ends the sequence, and a draft sent from the CRM is recorded as such', async () => {
-  await db.query(`UPDATE clients SET outreach_step = 4, next_contact_due = current_date WHERE id = $1`, [clientId]);
+await check('the fifth touch ends the sequence and starts nurture, and a draft sent from the CRM is recorded as such', async () => {
+  await db.query(`UPDATE clients SET outreach_step = 5, outreach_ended = NULL, stage = 'contacted', next_contact_due = current_date WHERE id = $1`, [clientId]);
   await runRetention({ db, brain: brain({ drafts: [{ client: 'Clinica Sol', channel: 'email', subject: 'Last note', message: 'Bye for now', why: 'w' }] }) });
   const f = (await db.query(`SELECT id FROM follow_up WHERE client_id = $1 AND status = 'awaiting_approval'`, [clientId])).rows[0];
   await web.decideFollowUp(db, { id: f.id, decision: 'sent', sent_via: 'crm', subject: 'Edited subject' });
   const row = (await db.query(`SELECT sent_via, subject FROM follow_up WHERE id = $1`, [f.id])).rows[0];
   assert.deepEqual(row, { sent_via: 'crm', subject: 'Edited subject' });
-  const c = (await db.query(`SELECT outreach_step, outreach_ended, next_contact_due - current_date AS in_days FROM clients WHERE id = $1`, [clientId])).rows[0];
-  assert.deepEqual(c, { outreach_step: null, outreach_ended: 'finished', in_days: 30 });
+  const c = (await db.query(`SELECT outreach_step, outreach_ended, stage, next_contact_due - current_date AS in_days FROM clients WHERE id = $1`, [clientId])).rows[0];
+  assert.deepEqual(c, { outreach_step: null, outreach_ended: 'finished', stage: 'nurture', in_days: 60 });
   await assert.rejects(web.decideFollowUp(db, { id: f.id, decision: 'sent', sent_via: 'robot' }), /sent_via/);
 });
 

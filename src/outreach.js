@@ -1,9 +1,10 @@
 // Cold outreach from the company's own lists: the CRM's prospects tagged outreach-... and lead lists the owner
-// imports (npm run import:leads). Each business becomes a tracked lead with the four-touch sequence of the
-// retention agent (src/retention.js): every touch is a draft the owner reviews and sends; a reply stops it.
+// imports (npm run import:leads). Each business becomes a tracked lead with the five-touch sequence of the
+// retention agent (src/retention.js, src/pipeline.js): every touch is a draft the owner reviews and sends; a reply
+// stops it.
 // Sequences start a few a day (outreach_per_day), strongest first, so the Approvals tab never floods.
 // A business already contacted (tag outreach-sent-N, or touch_sent in an imported list) carries on from the next touch.
-import { GAP } from './retention.js';
+import { GAP, TOUCHES } from './pipeline.js';
 import { LEAD_SERVICES, decideLead, leadNotes, COUNTRY } from './leads.js';
 
 const DEFAULT_PER_DAY = 5;
@@ -43,7 +44,7 @@ export function servicesFromTags(tags = [], notes = '') {
 /** Which touch they already had, from tags like outreach-sent-2 (0 when none). */
 export function touchSentFromTags(tags = []) {
   const n = Math.max(0, ...tags.map((x) => Number(String(x).match(/^outreach-sent-(\d)$/i)?.[1] || 0)));
-  return Math.min(n, 4);
+  return Math.min(n, TOUCHES);
 }
 
 /**
@@ -51,7 +52,7 @@ export function touchSentFromTags(tags = []) {
  * touch, due on `due` (days from today). Returns false when it cannot or should not start.
  */
 async function startOne(db, { clientId, lead, touchSent, inDays }) {
-  if (touchSent >= 4) {
+  if (touchSent >= TOUCHES) {
     await db.query(`UPDATE clients SET outreach_ended = 'finished' WHERE id = $1 AND outreach_ended IS NULL`, [clientId]);
     return false;
   }
@@ -133,7 +134,7 @@ export async function startCrmOutreach(db, crmRows, { marketOf } = {}) {
  * An imported lead list (npm run import:leads -- file.json). Each row:
  *   { company, market, city?, sector?, website?, services?, fit?, signals, pitch?, contact_route?, sources?,
  *     track?: true (default) starts the sequence | false waits on the Leads tab,
- *     touch_sent?: 0-3 (already contacted), contacted_on?: 'YYYY-MM-DD' }
+ *     touch_sent?: 0-4 (already contacted), contacted_on?: 'YYYY-MM-DD' }
  * Businesses already known (a lead, or a client of the same name in the same market) are skipped.
  */
 export async function importLeads(db, rows, { now = new Date() } = {}) {
@@ -153,7 +154,7 @@ export async function importLeads(db, rows, { now = new Date() } = {}) {
     clean.push({
       company, market, city: text(r.city, 80), sector: text(r.sector, 80), website, services: services.length ? services : ['website'],
       fit, signals, pitch: text(r.pitch, 1200), contact_route: text(r.contact_route, 300), sources,
-      track: r.track !== false, touchSent: Math.min(3, Math.max(0, Number(r.touch_sent) || 0)),
+      track: r.track !== false, touchSent: Math.min(TOUCHES - 1, Math.max(0, Number(r.touch_sent) || 0)),
       contactedOn: /^\d{4}-\d{2}-\d{2}$/.test(String(r.contacted_on || '')) ? String(r.contacted_on) : null,
     });
   }

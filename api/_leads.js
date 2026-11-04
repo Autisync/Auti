@@ -1,9 +1,14 @@
 // POST /api/leads {id, action: track|dismiss|reopen, reason?} : the owner's decision on a lead.
 // POST /api/leads {id, action: 'crm', email, contactName?, phone?} : add the lead to the CRM as a client, then track it.
 // POST /api/leads {enabled}                                      : switch the leads agent on or off.
+// POST /api/leads {client_id, stage, reason?, until?}            : the owner moves a lead along (booked, proposal,
+//                                                                  won, nurture until a date, lost with the reason).
+// POST /api/leads {style: auto|observation|helpful|direct}       : the style messages to leads lead with.
 import { guard, getDb } from './_shared.js';
 import { decideLead, setLeadsAgent, leadNotes, COUNTRY } from '../src/leads.js';
 import { applyCrmChange, crmClient, crmConfigured, proposeCrmChange, AUTI_LEADS } from '../src/crm.js';
+import { setLeadStage } from '../src/web.js';
+import { setFixedStyle } from '../src/pipeline.js';
 
 // Served through api/ops.js (60 s); kept in step for clarity.
 export const config = { maxDuration: 60 };
@@ -17,6 +22,17 @@ export default async function handler(req, res) {
   const db = getDb();
   try {
     if (body.enabled !== undefined) return res.status(200).json(await setLeadsAgent(db, body.enabled));
+    if (body.style !== undefined) return res.status(200).json(await setFixedStyle(db, body.style));
+    if (body.stage !== undefined) {
+      const out = await setLeadStage(db, { client_id: body.client_id, stage: body.stage, reason: body.reason, until: body.until });
+      if (!out) return res.status(404).json({ error: 'No such lead.' });
+      // Won: a client in the CRM too, now (the owner's tap). If the CRM refuses, the stage here still stands.
+      if (out.stage === 'won' && out.crm_id && crmConfigured()) {
+        try { await applyCrmChange(crmClient(), 'update_client_status', { clientId: out.crm_id, status: 'active', clientName: out.name }); out.crm = 'active'; }
+        catch (err) { out.crm_error = `Marked won here, but the CRM said: ${String(err.message).replace(/^the CRM said: /, '')}`; }
+      }
+      return res.status(200).json(out);
+    }
     let crmId = null;
     if (body.action === 'crm') {
       if (!crmConfigured()) return res.status(400).json({ error: 'The CRM is not connected yet.' });
@@ -35,7 +51,7 @@ export default async function handler(req, res) {
     if (!out) return res.status(404).json({ error: 'No such lead.' });
     res.status(200).json(out);
   } catch (err) {
-    if (/bad lead id|action must be|must be true or false|not ready yet|is required|is not valid/.test(err.message)) return res.status(400).json({ error: err.message });
+    if (/bad lead id|bad client id|action must be|stage must be|style must be|until must be|say why|must be true or false|not ready yet|is required|is not valid/.test(err.message)) return res.status(400).json({ error: err.message });
     if (/CRM/.test(err.message)) return res.status(502).json({ error: err.message });
     console.error('leads failed:', err.message);
     res.status(500).json({ error: 'Could not save.' });
