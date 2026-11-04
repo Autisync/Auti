@@ -149,5 +149,15 @@ await check('provider errors come back in plain words without the key', async ()
   assert.match(busy.message, /allowance/);
 });
 
+await check('the page script parses, and the reply animation reads the voice without routing playback through Web Audio', async () => {
+  const { PAGE } = await import('../src/page.js');
+  const js = PAGE.slice(PAGE.indexOf('<script>') + 8, PAGE.lastIndexOf('</script>'));
+  assert.doesNotThrow(() => new Function(js));
+  for (const name of ['function thinkingTurn', 'function writeIn', 'async function loudness', 'function levelLoop']) assert.ok(js.includes(name), name);
+  // playback must never depend on an AudioContext being unlocked (iOS): decode off to the side only
+  assert.ok(!/createMediaElementSource|new (window\.)?AudioContext/.test(js));
+  assert.match(js, /prefers-reduced-motion/);
+});
+
 await db0.close();
 console.log(`\n${passed} passed`);

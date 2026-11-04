@@ -309,7 +309,48 @@ ${FONTS}
   .msg.user { align-self: flex-end; background: rgba(185,139,47,0.16); border: 1px solid rgba(185,139,47,0.35); border-bottom-right-radius: 4px; }
   .msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
   .msg.err { align-self: center; color: var(--red); font-size: 13px; background: none; }
-  .msg.typing { color: var(--muted); font-family: var(--display); font-size: 13px; }
+  /* Auti's presence: a living mark beside every reply. It thinks (orbiting sparks, a turning gold halo), then speaks
+     (the halo swells with the voice: --lvl is 0..1, set every frame from the audio while a reply is read aloud). */
+  .turn { display: flex; align-items: flex-end; gap: 8px; align-self: flex-start; max-width: 94%; }
+  .turn .msg { max-width: none; min-width: 0; }
+  .aura { --tone: var(--gold); --tone-glow: var(--gold-glow); --lvl: 0; position: relative; flex: none; width: 34px; height: 34px; border-radius: 50%;
+          display: grid; place-items: center; margin-bottom: 2px; }
+  .aura.companion { --tone: var(--silver); --tone-glow: rgba(230,230,230,0.38); }
+  .aura-core { position: relative; z-index: 1; width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center;
+               background: radial-gradient(circle at 50% 32%, #3a3a3a, #1C1C1C 72%); border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent);
+               transform: scale(calc(1 + var(--lvl) * 0.12)); box-shadow: 0 0 calc(var(--lvl) * 22px) calc(var(--lvl) * 2px) var(--tone-glow); }
+  .aura-core .mark { width: 62%; height: auto; color: #FFFFFF; }
+  .aura-halo { position: absolute; inset: -4px; border-radius: 50%; opacity: 0; transition: opacity .35s;
+               background: conic-gradient(from 0deg, transparent 0 55%, var(--tone) 78%, transparent 100%);
+               -webkit-mask: radial-gradient(circle, transparent 62%, #000 64%); mask: radial-gradient(circle, transparent 62%, #000 64%); }
+  .aura-spark { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: var(--tone);
+                box-shadow: 0 0 8px 1px var(--tone-glow); opacity: 0; }
+  .aura.thinking .aura-halo { opacity: 1; animation: spin 1.6s linear infinite; }
+  .aura.thinking .aura-core { animation: breathe 2.4s ease-in-out infinite; }
+  .aura.thinking .aura-spark { opacity: 1; animation: orbit 2.2s cubic-bezier(.5,.1,.5,.9) infinite; }
+  .aura.thinking .aura-spark:nth-of-type(2) { animation-delay: -.73s; width: 3px; height: 3px; }
+  .aura.thinking .aura-spark:nth-of-type(3) { animation-delay: -1.46s; width: 2px; height: 2px; }
+  .aura.speaking .aura-halo { opacity: calc(0.35 + var(--lvl)); animation: spin 3.2s linear infinite; transform: scale(calc(1 + var(--lvl) * 0.25)); }
+  .aura.arrive .aura-core { animation: arrive .6s cubic-bezier(.2,1.6,.4,1); }
+  @keyframes orbit { from { transform: rotate(0deg) translateX(22px) scale(1); } 50% { transform: rotate(180deg) translateX(25px) scale(1.4); } to { transform: rotate(360deg) translateX(22px) scale(1); } }
+  @keyframes arrive { 0% { transform: scale(.86); box-shadow: 0 0 0 0 var(--tone-glow); } 60% { box-shadow: 0 0 0 10px transparent; } 100% { transform: scale(1); } }
+  /* while Auti works on an answer: a line that says what it is doing, with a gold sheen passing over it */
+  .msg.thinking { display: flex; align-items: center; gap: 10px; padding: 10px 14px; min-height: 42px; }
+  .think-line { font: 500 13px/1.3 var(--display); letter-spacing: 0.02em; transition: opacity .3s, transform .3s;
+                background: linear-gradient(100deg, var(--muted) 0 40%, #FFFFFF 50%, var(--muted) 60% 100%); background-size: 250% 100%;
+                -webkit-background-clip: text; background-clip: text; color: transparent; animation: sheen 2.2s linear infinite; }
+  .think-line.out { opacity: 0; transform: translateY(-4px); }
+  .think-wave { display: inline-flex; gap: 3px; align-items: center; height: 14px; flex: none; }
+  .think-wave i { width: 3px; height: 100%; border-radius: 2px; background: var(--gold); animation: wave 1s ease-in-out infinite; transform-origin: center; }
+  .companion-turn .think-wave i { background: var(--silver); }
+  .think-wave i:nth-child(2) { animation-delay: -.8s; } .think-wave i:nth-child(3) { animation-delay: -.6s; } .think-wave i:nth-child(4) { animation-delay: -.4s; }
+  @keyframes wave { 0%, 100% { transform: scaleY(.25); opacity: .5; } 50% { transform: scaleY(1); opacity: 1; } }
+  @keyframes sheen { from { background-position: 125% 0; } to { background-position: -125% 0; } }
+  /* a new reply writes itself in, word by word, behind a gold caret */
+  .msg .w { opacity: 0; filter: blur(3px); animation: word .38s ease forwards; }
+  .msg.writing::after { content: ""; display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -2px; background: var(--gold); animation: blink .9s steps(2) infinite; }
+  @keyframes word { to { opacity: 1; filter: none; } }
+  @keyframes blink { 50% { opacity: 0; } }
   .intro { color: var(--muted); font-size: 14px; text-align: center; margin: auto 10px; }
   .intro b { display: block; color: var(--ink); font-size: 16px; margin-bottom: 6px; }
   .compose { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); align-items: flex-end; }
@@ -322,17 +363,30 @@ ${FONTS}
   .drive-toggle { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 12px 12px; }
   .drive-toggle button { flex: 1; border: 1px dashed var(--line); background: none; color: var(--muted); border-radius: 12px; padding: 10px; cursor: pointer; font: 600 12px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; }
   .drive-toggle button:hover { color: var(--gold); border-color: var(--gold-glow); }
-  .drive { position: absolute; inset: 0; background: radial-gradient(420px 360px at 50% 46%, rgba(185,139,47,0.10), transparent 70%), #1C1C1C;
+  .drive { position: absolute; inset: 0; z-index: 5; background: radial-gradient(420px 360px at 50% 46%, rgba(185,139,47,0.10), transparent 70%), #1C1C1C;
            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; padding: 24px; text-align: center; }
   .drive[hidden] { display: none; }
-  .big-orb { position: relative; width: 170px; height: 170px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; padding: 0;
-             background: radial-gradient(circle at 50% 32%, #333333, #1C1C1C 70%); border: 1px solid rgba(185,139,47,0.55);
-             box-shadow: 0 0 0 10px rgba(185,139,47,0.05), 0 0 60px -14px var(--gold-glow); transition: transform .2s, box-shadow .3s; }
-  .big-orb .mark { width: 96px; height: 56px; color: #FFFFFF; }
-  .big-orb::before { content: ""; position: absolute; inset: -12px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--gold); opacity: 0; transition: opacity .2s; }
-  .big-orb.listening { animation: breathe 1.4s ease-in-out infinite; border-color: var(--gold); box-shadow: 0 0 0 12px rgba(185,139,47,0.12), 0 0 80px -6px var(--gold-glow); }
-  .big-orb.thinking::before { opacity: 1; animation: spin 1.2s linear infinite; }
-  .big-orb.speaking { animation: breathe .8s ease-in-out infinite; border-color: var(--gold); box-shadow: 0 0 0 8px rgba(185,139,47,0.10), 0 0 70px -8px var(--gold-glow); }
+  .big-orb { --size: 170px; --lvl: 0; position: relative; margin: 34px 0; width: var(--size); height: var(--size); border-radius: 50%; cursor: pointer; display: grid; place-items: center; padding: 0;
+             background: radial-gradient(circle at 50% 32%, #3a3a3a, #1C1C1C 70%); border: 1px solid rgba(185,139,47,0.55);
+             box-shadow: 0 0 0 10px rgba(185,139,47,0.05), 0 0 calc(60px + var(--lvl) * 70px) calc(-14px + var(--lvl) * 16px) var(--gold-glow);
+             transform: scale(calc(1 + var(--lvl) * 0.06)); transition: box-shadow .3s, border-color .3s; }
+  .big-orb .mark { position: relative; z-index: 1; width: 56%; height: auto; color: #FFFFFF; filter: drop-shadow(0 0 calc(var(--lvl) * 14px) rgba(185,139,47,0.8)); }
+  /* the turning halo (thinking) and the ring of voice bars around the orb */
+  .big-orb::before { content: ""; position: absolute; inset: -14px; border-radius: 50%; opacity: 0; transition: opacity .3s;
+                     background: conic-gradient(from 0deg, transparent 0 60%, rgba(185,139,47,0.25) 75%, var(--gold) 98%, transparent 100%);
+                     -webkit-mask: radial-gradient(circle, transparent 66%, #000 67.5%); mask: radial-gradient(circle, transparent 66%, #000 67.5%); }
+  .big-orb::after { content: ""; position: absolute; inset: 14%; border-radius: 50%; pointer-events: none;
+                    background: radial-gradient(circle, rgba(185,139,47,calc(0.06 + var(--lvl) * 0.3)), transparent 70%); }
+  .orb-bars { position: absolute; inset: 0; pointer-events: none; }
+  .orb-bars i { position: absolute; left: 50%; bottom: 50%; width: 3px; height: 26px; margin-left: -1.5px; border-radius: 3px; transform-origin: 50% 100%;
+                background: linear-gradient(to top, rgba(185,139,47,0.35), var(--gold)); opacity: .55;
+                transform: rotate(var(--a)) translateY(calc(var(--size) / -2 - 12px)) scaleY(var(--s, 0.12)); }
+  .big-orb.listening { border-color: var(--gold); box-shadow: 0 0 0 12px rgba(185,139,47,0.10), 0 0 80px -6px var(--gold-glow); }
+  .big-orb.listening .orb-bars i { opacity: .8; }
+  .big-orb.thinking::before { opacity: 1; animation: spin 1.4s linear infinite; }
+  .big-orb.thinking .mark { animation: breathe 2.4s ease-in-out infinite; }
+  .big-orb.speaking { border-color: var(--gold); }
+  .big-orb.speaking .orb-bars i { opacity: 1; }
   .drive-state { font: 500 13px/1 var(--display); letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold); }
   .drive-heard { color: var(--ink); font-size: 18px; min-height: 2.8em; max-width: 320px; }
   /* voice choice for spoken replies */
@@ -492,7 +546,7 @@ ${FONTS}
     .chat { inset: 0; width: auto; height: auto; border-radius: 0; border: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
     .fab { padding: 0 8px; } .fab-text { display: none; }
     .msg { max-width: 92%; }
-    .big-orb { width: 150px; height: 150px; }
+    .big-orb { --size: 150px; }
   }
 </style>
 </head>
@@ -2026,6 +2080,140 @@ function setMood(k, spoken) {
   if (spoken && drive.on) speak(label + ' mode.');
 }
 
+/* ---------- Auti's presence: the living mark beside replies ---------- */
+const CALM = matchMedia('(prefers-reduced-motion: reduce)');
+function aura(who, state) {
+  const a = $('div', 'aura ' + who + (state ? ' ' + state : ''));
+  a.setAttribute('aria-hidden', 'true');
+  const core = $('span', 'aura-core');
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'mark'); svg.setAttribute('viewBox', '50 18 742 430');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', '#auti-mark'); svg.append(use); core.append(svg);
+  a.append($('span', 'aura-halo'), core, $('i', 'aura-spark'), $('i', 'aura-spark'), $('i', 'aura-spark'));
+  return a;
+}
+function assistantTurn(who, bubble, state) {
+  const row = $('div', 'turn ' + who + '-turn'); row.append(aura(who, state), bubble); return row;
+}
+// What Auti says it is doing while it works, picked from the question so it feels like it is on your problem.
+const THINK_TOPICS = [
+  [/lead|prospect|outreach/i, ['Going through your leads', 'Checking who is worth a call', 'Lining up the warmest prospects']],
+  [/client|customer|retention|churn/i, ['Looking over your clients', 'Checking who needs a nudge', 'Reading the last conversations']],
+  [/invoice|pay|money|cash|revenue|price|bill/i, ['Checking the numbers', 'Looking at invoices and payments', 'Adding it up']],
+  [/project|milestone|deadline|deliver/i, ['Reviewing your projects', 'Checking milestones', 'Seeing what is at risk']],
+  [/task|todo|today|focus|priorit|plan|week/i, ['Weighing what matters today', 'Sorting priorities', 'Shaping a plan']],
+  [/github|repo|code|commit|pull request|deploy/i, ['Reading the repositories', 'Checking recent commits', 'Looking at the code']],
+  [/email|whatsapp|message|reply|write|draft/i, ['Finding the right words', 'Drafting it in your voice', 'Polishing the wording']],
+];
+const MOOD_LINES = {
+  witty: ['Sharpening a comeback', 'Choosing the cheekiest angle'], unhinged: ['Losing the plot on purpose', 'Unhinging carefully'],
+  storyteller: ['Finding the right story', 'Setting the scene'], genius: ['Connecting the dots', 'Thinking three moves ahead'],
+  debate: ['Building the counter-argument', 'Picking a fight, politely'], motivation: ['Warming up the pep talk', 'Finding your fire'],
+  therapist: ['Listening between the lines', 'Considering how that made you feel'], conspiracy: ['Following the red string', 'Checking the files'],
+  quiz: ['Picking a good question', 'Shuffling the cards'], saint: ['Reflecting quietly', 'Finding a gentle thought'], calm: ['Slowing down', 'Taking a breath with you'],
+};
+function thinkLines(who, text) {
+  if (who === 'companion') return (MOOD_LINES[mood] || []).concat(['Thinking it over', 'Almost there']);
+  const hit = THINK_TOPICS.find(([re]) => re.test(text));
+  return (hit ? hit[1] : ['Reading the company picture', 'Thinking it through', 'Weighing what matters']).concat(['Putting it together', 'Almost there']);
+}
+function thinkingTurn(who, text) {
+  const lines = thinkLines(who, text);
+  const bubble = $('div', 'msg assistant thinking');
+  const wave = $('span', 'think-wave'); for (let i = 0; i < 4; i++) wave.append($('i'));
+  const line = $('span', 'think-line', lines[0] + '…');
+  bubble.append(wave, line); bubble.setAttribute('aria-label', 'Auti is thinking');
+  const row = assistantTurn(who, bubble, 'thinking');
+  let n = 0;
+  row.timer = setInterval(() => {
+    n++; const next = lines[Math.min(n, lines.length - 1)] + '…';
+    if (drive.on) document.getElementById('drive-state').textContent = next.replace('…', '');
+    if (n >= lines.length) return;
+    line.classList.add('out');
+    setTimeout(() => { line.textContent = next; line.classList.remove('out'); }, 300);
+  }, 2400);
+  return row;
+}
+// The reply writes itself in, word by word, in under two seconds however long it is. It is fully there for screen readers at once.
+function writeIn(bubble, text) {
+  bubble.textContent = '';
+  if (CALM.matches) { bubble.textContent = text; return; }
+  const parts = text.split(/(\\s+)/);
+  const words = parts.filter((p) => p.trim()).length || 1;
+  const step = Math.max(8, Math.min(45, 1600 / words));
+  let w = 0;
+  bubble.classList.add('writing');
+  for (const p of parts) {
+    if (!p.trim()) { bubble.append(document.createTextNode(p)); continue; }
+    const s = $('span', 'w', p); s.style.animationDelay = Math.round(w++ * step) + 'ms'; bubble.append(s);
+  }
+  setTimeout(() => { bubble.classList.remove('writing'); bubble.textContent = text; }, w * step + 400);
+}
+
+/* Voice level: how loud Auti is right now, 0..1, so the mark moves with the voice.
+   Natural voice: each MP3 is decoded off to the side (never routed through Web Audio, so playback is untouched)
+   into a loudness curve, read against the audio's playing position. Device voice: word boundaries give a pulse,
+   with a syllable rhythm when the browser sends none. */
+const level = { env: null, step: 0.04, kick: 0, lastKick: 0, value: 0, raf: 0, since: 0 };
+async function loudness(blob) {
+  const Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!Off) return null;
+  const ctx = new Off(1, 44100, 44100);
+  const raw = await blob.arrayBuffer();
+  const buf = await new Promise((ok, bad) => { const p = ctx.decodeAudioData(raw, ok, bad); if (p && p.catch) p.catch(bad); });
+  const data = buf.getChannelData(0), win = Math.round(buf.sampleRate * level.step), out = new Float32Array(Math.ceil(data.length / win));
+  for (let i = 0; i < out.length; i++) {
+    let sum = 0; const end = Math.min(data.length, (i + 1) * win);
+    for (let j = i * win; j < end; j += 4) sum += data[j] * data[j];
+    out[i] = Math.sqrt(sum / ((end - i * win) / 4 || 1));
+  }
+  const peak = [...out].sort((a, b) => a - b)[Math.floor(out.length * 0.95)] || 1;
+  for (let i = 0; i < out.length; i++) out[i] = Math.min(1, out[i] / peak);
+  return out;
+}
+const voiceKick = () => { level.kick = 1; level.lastKick = performance.now(); };
+let orbBars = [];
+function voiceTarget() { const t = msgs.querySelectorAll('.turn'); return t.length ? t[t.length - 1].querySelector('.aura') : null; }
+function levelLoop(t) {
+  let target = 0;
+  const speaking = isSpeaking() || t - level.since < 700;
+  if (speaking) {
+    if (cloudPlaying && level.env && !player.paused) target = level.env[Math.floor(player.currentTime / level.step)] || 0;
+    else if (cloudPlaying) target = 0.25 + 0.2 * Math.sin(t / 90);
+    else {
+      level.kick *= 0.9;
+      const rhythm = t - level.lastKick > 450 ? 0.3 + 0.3 * Math.abs(Math.sin(t / 110) * Math.sin(t / 47)) : 0;
+      target = Math.max(level.kick * 0.9, rhythm);
+    }
+  }
+  level.value += (target - level.value) * (target > level.value ? 0.45 : 0.18);
+  const v = level.value.toFixed(3);
+  const av = !drive.on && voiceTarget();
+  if (av) { av.classList.toggle('speaking', speaking); av.style.setProperty('--lvl', v); }
+  const orb = document.getElementById('big-orb');
+  if (drive.on) {
+    orb.style.setProperty('--lvl', orb.classList.contains('speaking') ? v : 0);
+    const state = orb.classList.contains('speaking') ? 's' : orb.classList.contains('thinking') ? 't' : orb.classList.contains('listening') ? 'l' : '';
+    orbBars.forEach((b, i) => {
+      let s = 0.12;
+      if (state === 's') s = 0.15 + level.value * (0.45 + 0.55 * Math.abs(Math.sin(t / (140 + i * 7) + i * 1.7)));
+      else if (state === 't') { const d = ((t / 900 * orbBars.length) - i) % orbBars.length; s = 0.12 + 0.6 * Math.max(0, 1 - (d < 0 ? d + orbBars.length : d) / 5); }
+      else if (state === 'l') s = 0.18 + 0.16 * (0.5 + 0.5 * Math.sin(t / 380 + i * 0.6));
+      b.style.setProperty('--s', s.toFixed(3));
+    });
+  }
+  if (drive.on || speaking || level.value > 0.01) level.raf = requestAnimationFrame(levelLoop);
+  else { level.raf = 0; if (av) { av.classList.remove('speaking'); av.style.removeProperty('--lvl'); } }
+}
+function wakeLevel() {
+  level.since = performance.now();
+  if (!level.raf && !CALM.matches) level.raf = requestAnimationFrame(levelLoop);
+}
+(() => {
+  const ring = $('span', 'orb-bars');
+  for (let i = 0; i < 36; i++) { const b = $('i'); b.style.setProperty('--a', (i * 10) + 'deg'); ring.append(b); orbBars.push(b); }
+  document.getElementById('big-orb').prepend(ring);
+})();
+
 function paintChat() {
   [...document.querySelectorAll('#seg button')].forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.agent === agent)));
   input.placeholder = AGENT_INFO[agent].placeholder;
@@ -2033,7 +2221,7 @@ function paintChat() {
   paintMoods();
   msgs.replaceChildren();
   if (!convos[agent].length) { const i = $('div', 'intro'); i.append($('b', null, AGENT_INFO[agent].name), document.createTextNode(AGENT_INFO[agent].intro)); msgs.append(i); }
-  convos[agent].forEach((m) => msgs.append($('div', 'msg ' + m.role, m.content)));
+  convos[agent].forEach((m) => { const b = $('div', 'msg ' + m.role, m.content); msgs.append(m.role === 'assistant' ? assistantTurn(agent, b) : b); });
   msgs.scrollTop = msgs.scrollHeight;
 }
 function openChat(which, draft) {
@@ -2057,15 +2245,20 @@ async function ask(text) {
   busy = true;
   const who = agent;
   convos[who].push({ role: 'user', content: text }); store.set('auti.convos', convos); paintChat();
-  const typing = $('div', 'msg assistant typing', '…'); msgs.append(typing); msgs.scrollTop = msgs.scrollHeight;
-  let tick = 0; const t = setInterval(() => { typing.textContent = ['·', '··', '···'][tick++ % 3]; }, 350);
+  const thinking = thinkingTurn(who, text); msgs.append(thinking); msgs.scrollTop = msgs.scrollHeight;
   try {
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent: who, messages: convos[who], voice: voiceTurn || drive.on, mood }) });
     const out = await r.json();
     if (!r.ok) throw new Error(out.error || 'Something went wrong');
     convos[who].push({ role: 'assistant', content: out.reply }); store.set('auti.convos', convos);
-    if (agent === who) paintChat();
+    if (agent === who) {
+      // the thinking row becomes the reply: the mark lands, and the words write themselves in
+      paintChat();
+      const turns = msgs.querySelectorAll('.turn'), last = turns[turns.length - 1];
+      if (last) { last.querySelector('.aura').classList.add('arrive'); writeIn(last.querySelector('.msg'), out.reply); }
+      msgs.scrollTop = msgs.scrollHeight;
+    }
     moodVoice = out.voice || { rate: 0.96, pitch: 0.98 };
     if (voiceTurn || drive.on || speakerOn(who)) speak(out.reply);
     else afterSpeak();
@@ -2073,7 +2266,7 @@ async function ask(text) {
     convos[who].pop(); store.set('auti.convos', convos); input.value = text;
     if (agent === who) { paintChat(); msgs.append($('div', 'msg err', e.message)); }
     if (drive.on) { setDrive('error', e.message); speak(e.message); }
-  } finally { clearInterval(t); busy = false; voiceTurn = false; }
+  } finally { clearInterval(thinking.timer); thinking.remove(); busy = false; voiceTurn = false; }
 }
 document.getElementById('compose').onsubmit = (e) => { e.preventDefault(); unlockSpeech(); const v = input.value; input.value = ''; ask(v); };
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('compose').requestSubmit(); } });
@@ -2289,10 +2482,15 @@ async function speakCloud(text, voice, opts, run) {
   for (let i = 0; i < pieces.length; i++) {
     let url;
     try {
-      url = URL.createObjectURL(await audio[i]);
+      const blob = await audio[i];
+      url = URL.createObjectURL(blob);
       if (run !== speakRun) return;
+      level.env = null;
+      const mine = url;
+      loudness(blob).then((env) => { if (player.src === mine) level.env = env; }).catch(() => {});
       player.src = url;
       await player.play();
+      wakeLevel();
       await new Promise((done, failed) => { player.onended = done; player.onerror = failed; player.onpause = () => { if (!player.ended) done(); }; });
     } catch (err) {
       if (run !== speakRun) return;
@@ -2324,6 +2522,8 @@ function speak(text, opts = {}) {
     const last = i === parts.length - 1;
     u.rate = clamp(wobble(moodVoice.rate, 0.025) * (last && parts.length > 1 ? 0.97 : 1), 0.5, 2);
     u.pitch = clamp(wobble(moodVoice.pitch, 0.02), 0, 2);
+    u.onstart = () => { voiceKick(); wakeLevel(); };
+    u.onboundary = voiceKick;
     if (last) u.onend = () => { if (run === speakRun && !opts.test) afterSpeak(); };
     u.onerror = (e) => { if (e.error !== 'interrupted' && e.error !== 'canceled' && run === speakRun && !opts.test) afterSpeak(); };
     synth.speak(u);
@@ -2394,6 +2594,7 @@ document.getElementById('mic').onclick = () => {
 function setDrive(state, text) {
   const orb = document.getElementById('big-orb'); orb.className = 'big-orb ' + (['listening', 'thinking', 'speaking'].includes(state) ? state : '');
   document.getElementById('drive-state').textContent = { idle: 'Tap to talk', listening: 'Listening', thinking: 'Thinking', speaking: AGENT_INFO[agent].name + ' speaking · tap to interrupt', error: 'Tap to try again' }[state];
+  wakeLevel();
   document.getElementById('drive-heard').textContent = text || (state === 'idle' ? (agent === 'companion' ? 'Pick a mood up top, or say "unhinged mode". Say "stop" to end.' : 'Say "stop" any time to end.') : '');
 }
 function startDrive() {
