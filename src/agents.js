@@ -34,6 +34,12 @@ export const AGENTS = [
     schedule: 'Mondays and the 1st, after the overnight run',
   },
   {
+    id: 'learning',
+    name: 'Learning',
+    role: 'Each night, before the coordinator, studies what happened to every agent\'s work: drafts you sent as written, edited or dropped (and why), answers from clients and leads, invoices paid after a reminder, plans you approved or dropped, steps you undid, leads you kept or dismissed. It keeps up to eight short lessons per agent, which each agent follows after your rules and standing instructions. See, pin or remove them under What Auti has learned, and teach your own rules there or in the chat ("from now on...").',
+    schedule: 'Daily 04:17 UTC, before the coordinator',
+  },
+  {
     id: 'leads',
     name: 'Leads',
     role: 'Searches the web for businesses in Angola, the UK, Portugal and Namibia that need a website, CRM, domains, business email, hosting or an answer to missed calls, records the evidence it saw, then checks it on their own site, email and DNS. Each search follows one angle, and it hears which angles got answers before, so it looks for more businesses like the ones who replied. It never contacts anyone: you track, add to the CRM or dismiss each lead on the Leads tab.',

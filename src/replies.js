@@ -2,7 +2,10 @@
 // wrote to. Each answer stops the lead's sequence, moves its stage (src/pipeline.js), marks the message that got
 // it (so replies are counted per style), and, when they are waiting for us, gets our answer drafted in the three
 // styles. Nothing is sent from here: an answer to a person always waits for the owner on the Approvals tab.
+// Clients who are not leads are read too, but only to learn: when one answers a message of ours, that message is
+// marked answered (src/learning.js counts it), and nothing else changes.
 import { STYLES, STYLE_GUIDE, cleanVariants, ensureStages, fixedStyle, markReplied, moveStage, pickStyle, styleStats } from './pipeline.js';
+import { examplesBlock, examplesFor, lessonsBlock, lessonsFor } from './learning.js';
 
 export const INTENTS = ['interested', 'question', 'not_now', 'not_interested', 'unsubscribe', 'wrong_person', 'auto_reply', 'other'];
 export const INTENT_WORDS = {
@@ -44,7 +47,7 @@ export const REPLIES_TOOL = {
   },
 };
 
-function systemPrompt(config) {
+function systemPrompt(config, learned = '') {
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n') || '- (none)';
   const styles = STYLES.map((s) => `  - ${s}: ${STYLE_GUIDE[s]}`).join('\n');
   return `You read the answers businesses sent to a small technology company's outreach, and draft the reply for the owner to send.
@@ -63,7 +66,7 @@ ${styles}
 Nothing is sent by you. The owner reviews every draft.
 
 Standing instructions from the owner:
-${standing}`;
+${standing}${learned ? `\n\n${learned}` : ''}`;
 }
 
 /** Leads Auti wrote to and has not closed, with a CRM card. A lead who said no is still read: they may write again. */
@@ -81,6 +84,44 @@ async function waitingLeads(db) {
 const when = (m) => Date.parse(m?.sent_at || m?.created_at || '') || 0;
 const textOf = (m) => String(m?.content || '').trim().slice(0, 1500);
 
+/** Clients (not leads) with a message of ours from the last 21 days that has no answer recorded yet. */
+async function answersAwaited(db) {
+  return (await db.query(`
+    SELECT c.id AS client_id, c.crm_id, min(f.decided_at) AS since
+      FROM follow_up f JOIN clients c ON c.id = f.client_id
+     WHERE f.status = 'sent' AND f.replied_at IS NULL AND c.crm_id IS NOT NULL AND c.status <> 'lead'
+       AND NOT (c.status = 'lost' AND c.stage IS NOT DISTINCT FROM 'lost')
+       AND f.decided_at > now() - interval '21 days'
+     GROUP BY c.id, c.crm_id`)).rows;
+}
+
+/**
+ * A client who wrote to us after our message answered it: the message is marked answered ('answered'), for learning
+ * only. No draft, no stage, no journal line: the owner answers clients in the CRM inbox. At most MAX reads a run.
+ */
+async function recordClientAnswers(db, crm, list, awaited) {
+  if (!awaited.length) return 0;
+  const byCrm = new Map(awaited.map((a) => [String(a.crm_id), a]));
+  let reads = 0, answered = 0;
+  for (const conv of list?.conversations || []) {
+    const a = byCrm.get(String(conv.contact_id));
+    if (!a) continue;
+    const since = new Date(a.since).getTime();
+    if (conv.last_message_at && Date.parse(conv.last_message_at) <= since) continue;
+    if (reads >= MAX) break;
+    reads++;
+    try {
+      const one = await crm.get(`/conversations/${conv.id}`);
+      const first = (one?.messages || []).filter((m) => m.direction === 'inbound' && when(m) > since && textOf(m)).sort((x, y) => when(x) - when(y))[0];
+      if (!first) continue;
+      await markReplied(db, a.client_id, new Date(when(first)), 'answered');
+      byCrm.delete(String(conv.contact_id));
+      answered++;
+    } catch { /* read again next run */ }
+  }
+  return answered;
+}
+
 /**
  * Reads the CRM inbox for new answers from leads (one list call, then only the conversations with news), records
  * each, and drafts our answer when they are waiting for one. brain: the retention agent's (claudeBrain); it is only
@@ -89,10 +130,13 @@ const textOf = (m) => String(m?.content || '').trim().slice(0, 1500);
 export async function readReplies({ db, crm, brain, now = new Date(), bookingLink = null }) {
   await ensureStages(db);
   const leads = await waitingLeads(db);
-  const out = { checked: leads.length, replies: 0, drafted: 0, auto: 0 };
+  const awaited = await answersAwaited(db);
+  const out = { checked: leads.length, replies: 0, drafted: 0, auto: 0, answered: 0 };
+  if (!leads.length && !awaited.length) return out;
+  const list = await crm.get('/conversations?limit=100');
+  out.answered = await recordClientAnswers(db, crm, list, awaited);
   if (!leads.length) return out;
   const byCrm = new Map(leads.map((l) => [String(l.crm_id), l]));
-  const list = await crm.get('/conversations?limit=100');
   const found = new Map();                                    // lead id -> its newest answer
   // How far each lead's conversations were read, by the CRM's own clock, so nothing is read twice or missed. A lead
   // held over (more answers than one run takes, or one the model left out) keeps its old mark and is read next run.
@@ -126,6 +170,8 @@ export async function readReplies({ db, crm, brain, now = new Date(), bookingLin
   if (!found.size) { await advance(); return out; }
 
   const config = (await db.query(`SELECT key, value FROM coordinator_config WHERE enabled ORDER BY key`)).rows;
+  const learned = lessonsBlock(await lessonsFor(db, 'messages'));
+  const examples = examplesBlock(await examplesFor(db, 'messages'));
   const items = [...found.values()].map((f) => ({
     client: f.lead.name, market: f.lead.market, stage: f.lead.stage || 'contacted', channel: f.channel,
     our_last_message: f.lead.last ? { subject: f.lead.last.subject, body: f.lead.last.body } : null,
@@ -136,9 +182,9 @@ Booking link for the free 15-minute call: ${bookingLink || 'none; offer to ring 
 
 Leads who wrote back:
 ${JSON.stringify(items, null, 1)}
-
+${examples ? `\n${examples}\n` : ''}
 Call ${REPLIES_TOOL.name} once, with one entry per lead.`;
-  const { output, model, usage } = await brain.think({ system: systemPrompt(config), user, tool: REPLIES_TOOL, maxTokens: 12000 });
+  const { output, model, usage } = await brain.think({ system: systemPrompt(config, learned), user, tool: REPLIES_TOOL, maxTokens: 12000 });
   await db.query(`INSERT INTO agent_usage (agent, model, input_tokens, output_tokens) VALUES ('retention', $1, $2, $3)`,
     [model ?? null, usage?.input ?? 0, usage?.output ?? 0]);
 

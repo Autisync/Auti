@@ -81,6 +81,17 @@ jobs:
           fi
       - name: Apply any new migrations
         run: node src/migrate.js
+      # Each night, first: what happened to Auti's work (your edits and drops and why, answers from clients and leads,
+      # invoices paid after a reminder, steps you undid, leads you kept or dismissed) becomes a few short lessons per
+      # agent, which every agent reads (src/learning.js). The cheaper model, one call per agent with something new.
+      # Counts only in the log. A failure never fails the run. Switch it off on the Agents tab.
+      - name: Learning
+        if: steps.mode.outputs.mode == 'nightly'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          AUTI_LEARNING_MODEL: ${{ vars.AUTI_LEARNING_MODEL }}
+        run: node src/run.js learn
       - name: Run coordinator
         run: node src/run.js "${{ steps.mode.outputs.mode }}"
       # Then draft follow-ups for clients due for contact. No call to Claude when nobody is due,

@@ -1,4 +1,4 @@
-// Entry point for the scheduler:  node src/run.js nightly|standup|retention|accounts|leads|report|daily|import-leads <file>|import-docs <file>
+// Entry point for the scheduler:  node src/run.js nightly|standup|learn|retention|accounts|leads|report|daily|import-leads <file>|import-docs <file>
 // In CI (GitHub Actions) logs can be public, so the brief's content is never
 // printed there; only counts. Read the brief with `npm run brief` instead.
 import { connect } from './db.js';
@@ -18,6 +18,7 @@ import { importLeads, autoSendOutreach, leadsToCrm, officeHours } from './outrea
 import { importPack } from './documents.js';
 import { readReplies } from './replies.js';
 import { bookingLinkFrom } from './pipeline.js';
+import { recordPayments, runLearning } from './learning.js';
 import fs from 'node:fs';
 
 const mode = process.argv[2] || 'nightly';
@@ -105,7 +106,7 @@ async function retention() {
   if (crm) {
     try {
       const r = await withModel('retention', (model) => claudeBrain({ model }), (brain) => readReplies({ db, crm, brain, bookingLink }));
-      console.log(`replies: leads_checked=${r.checked} answers=${r.replies} drafted=${r.drafted}${r.auto ? ` automatic=${r.auto}` : ''}`);
+      console.log(`replies: leads_checked=${r.checked} answers=${r.replies} drafted=${r.drafted}${r.auto ? ` automatic=${r.auto}` : ''}${r.answered ? ` client_answers=${r.answered}` : ''}`);
     } catch (err) { console.error(`reply check skipped: ${err.message}`); }
   }
   const out = await withModel('retention', (model) => claudeBrain({ model }), (brain) => runRetention({ db, brain, bookingLink }));
@@ -131,6 +132,20 @@ async function accounts() {
   // client: to read the phone on a card the snapshot did not list (a reminder goes by WhatsApp when there is one).
   const out = await runAccounts({ db, brain: claudeBrain({ model: process.env.AUTI_ACCOUNTS_MODEL || CHEAP }), crm, client });
   console.log(`[${new Date().toISOString()}] accounts done. items=${out.considered} drafts=${out.drafted}`);
+  // Which reminders were followed by a payment: Auti learns from it (src/learning.js). Counts only.
+  try {
+    const p = await recordPayments(db, client);
+    if (p.checked) console.log(`payments: reminders_checked=${p.checked} paid=${p.paid}`);
+  } catch (err) { console.error(`payment check skipped: ${err.message}`); }
+}
+
+// Each night, before the coordinator: what happened to Auti's work (the owner's edits and drops and why, answers,
+// payments, steps undone, leads kept or dismissed) becomes a few short lessons per agent (src/learning.js), which every
+// agent reads. The cheaper model, one call per agent with something new. Counts only.
+async function learn() {
+  const out = await runLearning({ db, brain: claudeBrain({ model: process.env.AUTI_LEARNING_MODEL || CHEAP }) });
+  console.log(`[${new Date().toISOString()}] learning ` + (out.skipped ? `skipped: ${out.skipped}`
+    : `studied=${out.studied} signals=${out.signals} added=${out.added} revised=${out.revised} retired=${out.retired}${out.failed ? ` failed=${out.failed}` : ''}${out.waiting ? ` signals_waiting=${out.waiting}` : ''}`));
 }
 
 // Mondays the weekly report, the 1st the monthly one (REPORT=week|month forces one). Saved in the database only.
@@ -201,7 +216,7 @@ async function importDocsFile() {
 }
 
 try {
-  const MODES = { retention, leads, accounts, report, daily, 'import-leads': importLeadsFile, 'import-docs': importDocsFile };
+  const MODES = { learn, retention, leads, accounts, report, daily, 'import-leads': importLeadsFile, 'import-docs': importDocsFile };
   await (MODES[mode] ? MODES[mode]() : coordinator());
 } catch (err) {
   console.error(`[${new Date().toISOString()}] ${mode} run failed: ${err.message}`);

@@ -9,6 +9,7 @@ import { gatherContext } from './context.js';
 import { githubTools } from './github.js';
 import { documentTools, combineTools } from './documents.js';
 import { crmTools, crmConfigured } from './crm.js';
+import { learningTools, lessonsBlock, lessonsFor } from './learning.js';
 import { SYSTEM_NOTES } from './system.js';
 
 const MAX_TURNS = 30;
@@ -65,11 +66,14 @@ export async function systemFor(agent, db, { voice = false, mood = 'witty', time
     const context = await gatherContext(db, { timezone, now });
     const brief = (await db.query(`SELECT finished_at, brief FROM v_latest_brief`)).rows[0] || null;
     const standing = context.config.map((c) => `- ${c.key}: ${c.value}`).join('\n');
+    // What Auti learned about writing to clients and leads, for the messages written here (the coordinator's own
+    // lessons are in the company state, as lessons).
+    const writing = lessonsBlock(await lessonsFor(db, 'messages'));
     return `You are Auti, the owner's coordinator and strategic partner, now talking with the owner directly. It is ${today}.
 
 Standing instructions (set by the owner):
 ${standing}
-
+${writing ? `\nWhen you write to a client or a lead:\n${writing}\n` : ''}
 How to talk:
 - Answer the question first, then the reason, grounded in the company state below. If the data doesn't say, say so; never invent clients, numbers or dates.
 - Be direct and disagree when the evidence says so. Small, doable next steps beat big plans.
@@ -86,6 +90,7 @@ How to talk:
 - Cold messages to businesses: one short message, a reason to reply, and an easy way to say no thanks; never to a private person's own number or address.
 - You can look at the owner's GitHub repositories with the github_ tools (read-only): list repos, see recent commits, open pull requests and issues, and read files. Use them when a question is about code, a project's progress or what the team shipped, and say which repo you looked at. If a tool says a repo is not visible, tell the owner a read-only GITHUB_TOKEN in Vercel would let you see it.
 - The company CRM is in the crm_ tools when connected: clients, subscriptions (hosting, email, domains), invoices, the dashboard and the pipeline. Look there before answering anything about clients, revenue, renewals or what someone owes, and name the numbers. When the owner asks for a change, make it (crm_do). When the change is your own idea, propose it instead with crm_propose_change: it waits on the owner's Approvals tab, so say that it is waiting rather than that it is done. If the crm_ tools are missing, the CRM is not connected yet.
+- Auti learns: each night it turns what happened to its work (the owner's edits and drops, answers, payments, steps undone, leads kept or dismissed) into short lessons per agent, and every agent follows them, the owner's own rules first. When the owner tells you how Auti should work from now on ("always", "never", "from now on", "remember that"), or corrects a draft in a way that should hold next time, save it with auti_remember and say it is on the Agents tab. auti_lessons shows what Auti has learned and why; auti_forget removes a rule or lesson when the owner asks.
 - The company's business documents (contracts, service schedules, policies, checklists, proposal and change forms) are in the documents_ tools. Open the right one before answering a question about terms, prices, obligations or process, and quote it. When asked to prepare one for a client, fill in the [PLACEHOLDERS] you can from the company state, list the ones only the owner can fill, and remind them it is a template a lawyer should review before first use. You draft; the owner sends.
 
 ${SYSTEM_NOTES}
@@ -181,7 +186,7 @@ export async function chat(db, brain, { agent, messages, voice = false, mood = '
   const system = await systemFor(agent, db, { voice, mood, now });
   // Only the assistant gets the owner's tools; the companion never sees company data or repos.
   const clientTools = agent === 'assistant'
-    ? (tools ?? combineTools(githubTools(), documentTools(db), crmConfigured() ? crmTools(db) : null))
+    ? (tools ?? combineTools(githubTools(), documentTools(db), learningTools(db), crmConfigured() ? crmTools(db) : null))
     : undefined;
   const out = await brain.reply({ agent, system, messages: history, clientTools });
   await db.query(
