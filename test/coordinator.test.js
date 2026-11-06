@@ -440,7 +440,7 @@ await check('the dashboard tabs get projects, clients, the journal and every age
   assert.ok(d.projects.every((p) => typeof p.going_cold === 'boolean' && Number.isInteger(p.open_tasks)));
   assert.ok(d.clients.some((c) => c.name === 'Example Client'));
   assert.ok(d.journal.length > 0);
-  assert.deepEqual(d.agents.map((a) => a.id), ['coordinator', 'retention', 'accounts', 'projects', 'reports', 'leads', 'assistant', 'companion']);
+  assert.deepEqual(d.agents.map((a) => a.id), ['coordinator', 'retention', 'accounts', 'projects', 'reports', 'learning', 'leads', 'assistant', 'companion']);
   const coord = d.agents[0];
   assert.ok(coord.usage.month.calls >= 1);
   assert.ok(coord.usage.month.input >= 1200);               // the run the real-client test recorded
@@ -473,7 +473,7 @@ await check('consulting Synaut sends the company state, uses no forced tool, and
   assert.equal(out.reply, 'Brief the organisation project first.');
   assert.equal(sent.body.model, 'claude-sonnet-5-5');
   assert.equal(sent.body.tool_choice, undefined);
-  assert.deepEqual(sent.body.tools.map((t) => t.name), ['github_list_repos', 'github_repo_activity', 'github_read_file', 'documents_list', 'documents_read']);
+  assert.deepEqual(sent.body.tools.map((t) => t.name), ['github_list_repos', 'github_repo_activity', 'github_read_file', 'documents_list', 'documents_read', 'auti_lessons', 'auti_remember', 'auti_forget']);
   assert.match(sent.body.system[0].text, /Example Client/);
   assert.match(sent.body.system[0].text, /cannot approve your own plans/);
   const u = (await db.query(`SELECT * FROM agent_usage WHERE agent = 'assistant'`)).rows;

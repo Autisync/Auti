@@ -347,7 +347,7 @@ export async function autoSendOutreach(db, crm, { resolver } = {}) {
       if (!String(f.subject || '').trim() || !String(f.body || '').trim()) { out.failed++; continue; }
       const chk = await checkClientEmail(crm, f.crm_id, { resolver });
       if (chk.valid === false) {
-        await decideFollowUp(db, { id: f.id, decision: 'drop' });
+        await decideFollowUp(db, { id: f.id, decision: 'drop', by: 'auti', reason: 'the address cannot take mail' });
         const why = `${chk.email || 'their email address'} cannot receive email (${chk.reason})`;
         await db.query(
           `UPDATE clients SET outreach_step = NULL, outreach_ended = 'bad_email', next_contact_due = current_date + 30,

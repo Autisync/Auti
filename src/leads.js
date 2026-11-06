@@ -5,6 +5,7 @@
 import { adjustedFit, checkAll, domainOf } from './verify.js';
 import { AUTI_LEADS } from './crm.js';
 import { pipelineStats } from './pipeline.js';
+import { lessonsBlock, lessonsFor } from './learning.js';
 
 export const LEAD_MARKETS = ['angola', 'uk', 'portugal', 'namibia'];
 export const LEAD_SERVICES = ['crm', 'domain', 'email', 'hosting', 'software', 'website', 'missed_calls'];
@@ -80,7 +81,7 @@ export const LEADS_TOOL = {
   },
 };
 
-function systemPrompt(config) {
+function systemPrompt(config, learned = '') {
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n') || '- (none)';
   return `You are Auti's leads agent for a small technology company that sells websites, CRM, domains, business email, web hosting, a missed-call text-back and AI receptionist for trades, and software development.
 Your job: find real businesses that clearly need those services, and record the evidence so the owner can decide in seconds.
@@ -96,7 +97,7 @@ How to work:
 - Quality over quantity: three strong leads beat six weak ones. Record none if nothing fits.
 
 Standing instructions from the owner:
-${standing}`;
+${standing}${learned ? `\n\n${learned}` : ''}`;
 }
 
 export async function waitingLeads(db) {
@@ -129,7 +130,8 @@ Websites already known (skip these too, under any name): ${JSON.stringify(knownS
 Leads the owner turned down, and why (learn from these): ${JSON.stringify(dismissed)}
 ${worked.length ? `What happened to the leads found in this market before, per angle (contacted, replied, won): ${JSON.stringify(worked)}. Look for more businesses like the ones who answered.\n` : ''}${lastNote ? `Your note from last time: ${lastNote}\n` : ''}
 Research, then call ${LEADS_TOOL.name} once.`;
-  return { system: systemPrompt(config), user };
+  // The owner's rules and what Auti learned from the leads kept, dismissed and answered (src/learning.js).
+  return { system: systemPrompt(config, lessonsBlock(await lessonsFor(db, 'leads'))), user };
 }
 
 // The researcher is a brain with web search (claudeResearcher in llm.js); tests pass a fake.

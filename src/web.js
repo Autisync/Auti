@@ -10,6 +10,7 @@ import { CADENCE, ENTRY, GAP, STAGES, STAGE_NAME, STYLES, TOUCHES, markReplied, 
 import { outreachPerDay } from './outreach.js';
 import { milestonesByProject, openCheckins, projectHealth, ymd } from './projects.js';
 import { listLeads, leadsAgentOn } from './leads.js';
+import { learningReady } from './learning.js';
 
 // Two ways in, both checked against DASHBOARD_PASSWORD:
 //   - a session cookie set by the login page (what the browser and the installed app use)
@@ -150,18 +151,22 @@ export async function getDashboard(db) {
 }
 
 // The owner's decision on one plan. Only plans still awaiting approval can change.
-// Approving stamps approved_at, which the CHECK constraint on initiatives requires.
-export async function decide(db, id, decision) {
+// Approving stamps approved_at, which the CHECK constraint on initiatives requires. reason: why the owner dropped it
+// (optional), which the coordinator learns from (src/learning.js).
+export async function decide(db, id, decision, reason) {
   if (!['approve', 'drop'].includes(decision)) throw new Error('decision must be approve or drop');
   if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw new Error('bad initiative id');
+  const why = String(reason ?? '').replace(/\s+/g, ' ').trim();
+  if (why.length > 200) throw new Error('reason is too long');
+  const learn = await learningReady(db);
   return db.transaction(async (tx) => {
     const row = (await tx.query(
       decision === 'approve'
-        ? `UPDATE initiatives SET status = 'approved', approved_at = now()
+        ? `UPDATE initiatives SET status = 'approved', approved_at = now()${learn ? ', decided_at = now()' : ''}
             WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, title, project_id, plan`
-        : `UPDATE initiatives SET status = 'dropped'
+        : `UPDATE initiatives SET status = 'dropped'${learn ? ', decided_at = now(), drop_reason = $2' : ''}
             WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, title, project_id, plan`,
-      [id])).rows[0];
+      decision === 'approve' || !learn ? [id] : [id, why || null])).rows[0];
     if (!row) return null;
     // An approved plan becomes tasks, one per step, matched to people by name where possible.
     let tasks = 0;
@@ -178,7 +183,7 @@ export async function decide(db, id, decision) {
     }
     await tx.query(
       `INSERT INTO journal (kind, body, author, project_id, initiative_id) VALUES ('decision', $1, 'owner', $2, $3)`,
-      [`${decision === 'approve' ? 'Approved' : 'Dropped'} the plan "${row.title}" from the dashboard.`, row.project_id, row.id]);
+      [`${decision === 'approve' ? 'Approved' : 'Dropped'} the plan "${row.title}" from the dashboard${decision === 'drop' && why ? ` (${why})` : ''}.`, row.project_id, row.id]);
     return { id: row.id, status: decision === 'approve' ? 'approved' : 'dropped', tasks };
   });
 }
@@ -338,24 +343,35 @@ export async function setProjectRepo(db, { id, github_repo } = {}) {
 // out: the reply is logged, the draft dropped and the sequence stops; outcome says how they answered
 // (interested, not_now or not_interested), and moves the lead to replied, nurture or lost.
 const OUTCOMES = { interested: 'replied', not_now: 'nurture', not_interested: 'lost' };
-export async function decideFollowUp(db, { id, decision, body, next_contact_due, sent_via = 'owner', subject, style, outcome = 'interested' } = {}) {
+// reason: why the owner dropped it (the chips on the Approvals card), which Auti learns from (src/learning.js).
+// by: who dropped it, the owner (the dashboard) or Auti (an address that cannot take mail); a draft dropped because
+// they replied has neither, since it says nothing about the draft. What Auti wrote is kept (draft_subject, draft_body,
+// draft_style) whatever the owner changes before sending, so their edits can be learned from.
+export async function decideFollowUp(db, { id, decision, body, next_contact_due, sent_via = 'owner', subject, style, outcome = 'interested', reason, by = 'owner' } = {}) {
   if (!['sent', 'drop', 'replied'].includes(decision)) throw new Error('decision must be sent, drop or replied');
   if (!['owner', 'crm', 'auto'].includes(sent_via)) throw new Error('sent_via must be owner, crm or auto');
+  if (!['owner', 'auti'].includes(by)) throw new Error('by must be owner or auti');
+  const why = String(reason ?? '').replace(/\s+/g, ' ').trim();
+  if (why.length > 200) throw new Error('reason is too long');
   if (!UUID.test(String(id))) throw new Error('bad follow-up id');
   if (next_contact_due && !DAY.test(String(next_contact_due))) throw new Error('next contact must be YYYY-MM-DD');
   if (style != null && style !== '' && !STYLES.includes(style)) throw new Error('style must be one of ' + STYLES.join(', '));
   if (!OUTCOMES[outcome || 'interested']) throw new Error('outcome must be interested, not_now or not_interested');
   const text = String(body ?? '').trim();
   if (text.length > 8000) throw new Error('message is too long');
+  const learn = await learningReady(db);
   return db.transaction(async (tx) => {
     const f = (await tx.query(
       `UPDATE follow_up SET status = $2::follow_up_status, decided_at = now(), body = COALESCE(NULLIF($3, ''), body),
               subject = COALESCE(NULLIF($5, ''), subject),
               sent_via = CASE WHEN $2 = 'sent' THEN $4 ELSE sent_via END,
-              style = CASE WHEN $2 = 'sent' THEN COALESCE(NULLIF($6, ''), style) ELSE style END
+              style = CASE WHEN $2 = 'sent' THEN COALESCE(NULLIF($6, ''), style) ELSE style END${learn ? `,
+              draft_subject = COALESCE(draft_subject, subject), draft_body = COALESCE(draft_body, body), draft_style = COALESCE(draft_style, style),
+              dropped_by = $7, drop_reason = $8` : ''}
         WHERE id = $1 AND status = 'awaiting_approval' RETURNING id, client_id, channel, subject, body, step, style`,
       [id, decision === 'sent' ? 'sent' : 'dropped', decision === 'sent' ? text : '', sent_via, String(subject ?? '').trim().slice(0, 300),
-        style || null])).rows[0];
+        style || null, ...(learn ? [decision === 'drop' ? by : null,
+          decision === 'drop' ? why || null : decision === 'replied' ? 'they replied' : null] : [])])).rows[0];
     if (!f) return null;
     const dueIn = async (date, days) => {
       if (date) await tx.query(`UPDATE clients SET next_contact_due = $2::date WHERE id = $1`, [f.client_id, date]);

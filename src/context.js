@@ -4,6 +4,7 @@ import { leadsForContext } from './leads.js';
 import { outreachForContext } from './outreach.js';
 import { pipelineStats } from './pipeline.js';
 import { projectsForContext } from './projects.js';
+import { lessonsFor } from './learning.js';
 
 // Reads everything the coordinator needs to think, in one snapshot.
 // Kept as plain data so it can be logged, tested and sent to the model as JSON.
@@ -67,6 +68,8 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
   const { angles, touches, ...pipeline } = await pipelineStats(db);
   // The projects the owner follows: goals, status, and health worked out in code (time used vs milestones done, budget, quiet days).
   const projectFollow = await projectsForContext(db, now);
+  // The owner's rules, and what the coordinator learned from their decisions on its work (src/learning.js).
+  const lessons = (await lessonsFor(db, 'coordinator')).map((l) => ({ lesson: l.body, from: l.source === 'owner' ? 'the owner' : 'learned' }));
 
   const today = new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -77,6 +80,7 @@ export async function gatherContext(db, { timezone = 'Europe/Lisbon', now = new 
     // Auti's own notes from its last run; journal and recentContacts start after it when since is set.
     ...(last ? { memory: { written_at: last.finished_at, since: since ? 'journal and recentContacts only hold what happened after this' : null, working_summary: last.summary } } : {}),
     config,
+    lessons,                             // the owner's rules and what was learned from their decisions: follow them
     projects,
     goingCold,
     initiatives,

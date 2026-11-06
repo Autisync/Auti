@@ -7,6 +7,7 @@
 // (per request, 25 s by default). Nothing is logged.
 
 import { languageFor, writeIn, LANGUAGES } from './language.js';
+import { learningReady } from './learning.js';
 const TIMEOUT_MS = 25000;                  // a cold CRM behind Cloudflare, under ~10 parallel calls, can take 10 s and more
 const TOKEN_TTL_MS = 20 * 3600e3;          // the CRM issues 24 h tokens; renew a little early
 const GET_BACKOFF_MS = [300, 1000];        // a read is tried up to three times on a network failure
@@ -578,14 +579,16 @@ export async function proposeCrmChange(db, { kind, payload, reason, proposed_by 
 }
 
 // The owner's call on a proposed change. Approving runs it against the CRM, and records the outcome either way.
-export async function decideCrmRequest(db, crm, { id, decision }) {
+export async function decideCrmRequest(db, crm, { id, decision, reason }) {
   if (!['approve', 'drop'].includes(decision)) throw new Error('decision must be approve or drop');
   if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw new Error('bad request id');
+  const why = String(reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) || null;     // why it was dropped: Auti learns from it
   const r = (await db.query(
     `UPDATE crm_request SET status = 'running' WHERE id = $1 AND status = 'awaiting_approval' RETURNING kind, payload, summary`, [id])).rows[0];
   if (!r) return null;
   if (decision === 'drop') {
-    await db.query(`UPDATE crm_request SET status = 'dropped', decided_at = now() WHERE id = $1`, [id]);
+    if (await learningReady(db)) await db.query(`UPDATE crm_request SET status = 'dropped', decided_at = now(), drop_reason = $2 WHERE id = $1`, [id, why]);
+    else await db.query(`UPDATE crm_request SET status = 'dropped', decided_at = now() WHERE id = $1`, [id]);
     return { id, status: 'dropped' };
   }
   try {

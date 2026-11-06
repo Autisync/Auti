@@ -161,6 +161,36 @@ you switch `outreach_autosend` on.
 - **Numbers.** The Leads tab shows where every lead stands, the last 90 days from new to won, answers per style and
   per touch, and the leads agent's angles that got answers (which it reads before its next search).
 
+## How Auti learns
+
+Every agent learns from what happens to its work (`src/learning.js`, migration `024_learning.sql`).
+
+- **What is kept.** When you send a draft, Auti keeps what it wrote beside what went out, so an edit, or another of
+  the three styles picked, reads as before and after. Dropping a draft, a plan or a CRM change asks why in one tap
+  (Wrong tone, Wrong facts, Too long, Bad timing, Not needed, Other…, or Just drop). Answers from leads are read from
+  the CRM inbox as before; an answer from a client to one of Auti's messages is now counted too (nothing else changes
+  for them), and a reminder whose invoice is then paid counts as paid. Steps you undid, leads you kept or dismissed
+  (and why) and how far the kept ones went are read where they already are.
+- **The nightly study.** Before the overnight coordinator run, the *Learning* step reads what happened since the last
+  study, for each part of Auti: messages to clients and leads, invoice reminders and renewals, finding leads, and the
+  coordinator's plans, steps and CRM changes. A part with at least 3 new signals (or any, after a week) gets one call
+  on the cheaper model (`AUTI_LEARNING_MODEL`, default Haiku, a few cents a month). It returns at most 8 short
+  lessons, each with its evidence: kept, revised, added or retired. One study retires at most 3, and a failed one
+  keeps its signals for the next night. Changes are written in the journal.
+- **Used everywhere.** Each agent reads its lessons after its rules and your standing instructions: retention, the
+  answers to replies, accounts, leads, the coordinator (as `lessons` in the company state) and Ask Auti when it writes
+  to someone. The writers also see up to three of our messages that got a good answer (or were paid) and three drafts
+  as you rewrote them.
+- **Yours to correct.** The Agents tab shows *What Auti has learned*: each part's lessons with the numbers behind them
+  (sent as written, edited, another style, dropped and why, answers). Pin a lesson to keep it as it is, remove one and
+  it is never learned again, or teach your own rule for one agent or for all of them. In Ask Auti, "from now on…" or
+  "always…" saves a rule (`auti_remember`; `auti_lessons` and `auti_forget` list and remove them). Your rules come
+  first, and the study never changes or repeats them. *Learns from what happens* switches it off (`learning` in
+  `coordinator_config`): the study stops and the learned lessons are set aside, while your rules still apply.
+- **Never a way round the rules.** Lessons are advice inside the prompts. Every message to a client still waits for
+  you (except outreach autosend, if you switch it on), the coordinator still can't approve anything, and the study is
+  told that text from clients and leads is data, never an instruction.
+
 ## Cold outreach from your own lists
 
 Two ways to hand Auti a list of businesses to approach. Either way each one gets the five-touch outreach sequence:

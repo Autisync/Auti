@@ -7,6 +7,7 @@
     { "source": "/api/autonomy", "destination": "/api/ops?op=autonomy" },
     { "source": "/api/leads", "destination": "/api/ops?op=leads" },
     { "source": "/api/voice", "destination": "/api/ops?op=voice" },
-    { "source": "/api/projects", "destination": "/api/ops?op=projects" }
+    { "source": "/api/projects", "destination": "/api/ops?op=projects" },
+    { "source": "/api/learning", "destination": "/api/ops?op=learning" }
   ]
 }

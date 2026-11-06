@@ -215,6 +215,12 @@ ${FONTS}
   .mini:hover { color: var(--gold); border-color: var(--gold-glow); }
   .mini.go { color: var(--gold); border-color: var(--gold-glow); }
   .mini.repo { text-transform: none; letter-spacing: 0; }
+  .why-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .why-row input { min-width: 0; width: 14em; max-width: 100%; box-sizing: border-box; background: rgba(20,20,20,0.6); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: 13px/1.4 var(--sans); color-scheme: dark; }
+  .why-row input:focus { outline: none; border-color: var(--gold-glow); box-shadow: 0 0 0 3px var(--gold-soft); }
+  .lesson-acts { display: flex; gap: 6px; margin-top: 6px; }
+  .learned-head { font: 600 11px/1 var(--display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; }
   .row.finished { opacity: 0.6; }
   .row > .form { grid-column: 1 / -1; margin-top: 8px; background: rgba(20,20,20,0.35); }
   .contacts { grid-column: 1 / -1; list-style: none; margin: 4px 0 0; padding: 0; font-size: 14px; color: var(--muted); }
@@ -928,18 +934,19 @@ function planCard(p) {
     p.risks.forEach((r) => { const li = $('li', null, r.risk); if (r.mitigation) li.append($('div', 'detail', r.mitigation)); ul.append(li); });
     c.append(ul);
   }
-  // Two clicks for either decision: the first arms it, the second sends it. Neither can be undone here.
+  // Two taps for either decision: approving asks to confirm, dropping asks why. Neither can be undone here.
   const actions = $('div', 'actions');
   const yes = $('button', 'act approve', 'Approve plan');
   const no = $('button', 'act', 'Drop');
   const discuss = $('button', 'act', 'Discuss with Auti');
   const hint = $('span', 'hint');
-  let armed = null;
-  const reset = () => { armed = null; yes.textContent = 'Approve plan'; no.textContent = 'Drop'; yes.className = 'act approve'; no.className = 'act'; hint.className = 'hint'; hint.textContent = ''; };
-  const send = async (decision) => {
-    yes.disabled = no.disabled = true; hint.textContent = 'Saving…';
+  let armed = false;
+  const reset = () => { armed = false; yes.textContent = 'Approve plan'; yes.className = 'act approve'; hint.className = 'hint'; hint.textContent = ''; };
+  const buttons = (on) => [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = !on; });
+  const send = async (decision, reason) => {
+    buttons(false); hint.className = 'hint'; hint.textContent = 'Saving…';
     try {
-      const r = await fetch('/api/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, decision }) });
+      const r = await fetch('/api/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, decision, reason }) });
       const out = await r.json();
       if (!r.ok) throw new Error(out.error || r.statusText);
       const ok = decision === 'approve';
@@ -947,17 +954,15 @@ function planCard(p) {
       actions.replaceWith($('div', 'done ' + (ok ? 'ok' : 'drop'), ok ? '✓ APPROVED' : 'DROPPED'));
       data.approvals = data.approvals.filter((a) => a.id !== p.id); drawTabs();
     } catch (e) {
-      yes.disabled = no.disabled = false; reset(); hint.className = 'error'; hint.textContent = e.message;
+      buttons(true); reset(); hint.className = 'error'; hint.textContent = e.message;
     }
   };
-  const press = (decision, btn) => {
-    if (armed === decision) return send(decision);
-    reset(); armed = decision;
-    btn.textContent = decision === 'approve' ? 'Confirm approve' : 'Confirm drop';
-    btn.className = 'act confirm'; hint.textContent = 'Click again to confirm.';
+  yes.onclick = () => {
+    if (armed) return send('approve');
+    reset(); armed = true; yes.textContent = 'Confirm approve'; yes.className = 'act confirm'; hint.textContent = 'Click again to confirm.';
   };
-  yes.onclick = () => press('approve', yes);
-  no.onclick = () => press('drop', no);
+  // Dropping asks why first (one tap on a reason drops it).
+  no.onclick = () => { reset(); no.replaceWith(dropReasons('plan', (why) => send('drop', why))); };
   discuss.onclick = () => openChat('assistant', 'Should I approve the plan "' + p.title + '"? What would you change?');
   actions.append(yes, no, discuss, hint);
   c.append(actions);
@@ -1014,10 +1019,10 @@ function followUpCard(f) {
   };
   const sent = $('button', 'act approve', f.channel === 'call' ? 'Mark called' : 'Mark sent');
   const drop = $('button', 'act', 'Drop');
-  const finish = async (decision, outcome) => {
+  const finish = async (decision, outcome, reason) => {
     [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = true; }); hint.className = 'hint'; hint.textContent = decision === 'send_crm' ? (f.channel === 'whatsapp' ? 'Sending the WhatsApp from the CRM…' : 'Sending from the CRM…') : 'Saving…';
     try {
-      await post('/api/follow-up', { id: f.id, decision, body: ta.value, subject: si.value, next_contact_due: decision === 'replied' ? null : ni.value, style: chosen, outcome });
+      await post('/api/follow-up', { id: f.id, decision, body: ta.value, subject: si.value, next_contact_due: decision === 'replied' ? null : ni.value, style: chosen, outcome, reason });
       c.querySelector('.pending').remove();
       if (decision === 'replied') {
         const SAID = { interested: '✓ REPLY LOGGED · MOVED TO REPLIED', not_now: '✓ NOT NOW · CHECKING BACK IN TWO MONTHS', not_interested: '✓ NOT INTERESTED · NO MORE MESSAGES' };
@@ -1031,8 +1036,8 @@ function followUpCard(f) {
     } catch (e) { [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = false; }); hint.className = 'error'; hint.textContent = e.message; }
   };
   sent.onclick = () => finish('sent');
-  let armed = false;
-  drop.onclick = () => { if (armed) return finish('drop'); armed = true; drop.textContent = 'Confirm drop'; drop.className = 'act confirm'; };
+  // Dropping asks why first (one tap on a reason drops it); Auti learns from the reason.
+  drop.onclick = () => drop.replaceWith(dropReasons('draft', (why) => finish('drop', undefined, why)));
   const crmSend = ['email', 'whatsapp', 'instagram', 'facebook'].includes(f.channel) && f.crm_id && data.crmOn;
   if (crmSend) {
     // One tap: emailed to the client's address in the CRM, or sent by WhatsApp through the CRM inbox, and logged here.
@@ -1086,6 +1091,29 @@ async function post(url, body) {
   if (r.status === 401) { location.reload(); throw new Error('Signed out'); }
   if (!r.ok) throw new Error(out.error || r.statusText);
   return out;
+}
+
+// Dropping asks why, in one tap: Auti learns from the reason (src/learning.js). "Just drop" gives none; "Other…"
+// takes a few words. The buttons sit in the card's actions, so the card disables and re-enables them with the rest.
+const DROP_WHY = {
+  draft: ['Wrong tone', 'Wrong facts', 'Too long', 'Bad timing', 'Not needed'],
+  plan: ['Not a priority', 'Wrong idea', 'Already handled', 'Too big'],
+  crm: ['Not needed', 'Wrong details', 'Already done'],
+};
+function dropReasons(kind, onPick) {
+  const row = $('span', 'why-row'); row.append($('span', 'hint', 'Why drop it?'));
+  DROP_WHY[kind].forEach((r) => { const b = $('button', 'mini', r); b.type = 'button'; b.onclick = () => onPick(r); row.append(b); });
+  const other = $('button', 'mini', 'Other…'); other.type = 'button';
+  other.onclick = () => {
+    const i = $('input'); i.placeholder = 'Why, in a few words'; i.maxLength = 200;
+    const go = $('button', 'mini go', 'Drop'); go.type = 'button';
+    go.onclick = () => { if (!i.value.trim()) return i.focus(); onPick(i.value.trim()); };
+    i.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); go.click(); } };
+    other.replaceWith(i, go); i.focus();
+  };
+  const plain = $('button', 'mini', 'Just drop'); plain.type = 'button'; plain.onclick = () => onPick('');
+  row.append(other, plain);
+  return row;
 }
 
 // A small form. fields: [name, label, kind ('text' | 'date' | 'textarea' | 'select'), options?, extra?]
@@ -1544,6 +1572,96 @@ function clientCard(c) {
   return el;
 }
 
+/* ---------- What Auti has learned ---------- */
+// Read when the Agents tab opens (GET /api/learning): each agent's lessons from your decisions on its work and from the
+// answers it got (src/learning.js), your own rules first, with the numbers behind them.
+let learnData = null, learnLoading = false, learnNotice = '';
+async function loadLearning() {
+  if (learnLoading) return; learnLoading = true;
+  try {
+    const r = await fetch('/api/learning', { cache: 'no-store' });
+    if (r.status === 401) return location.reload();
+    const out = await r.json().catch(() => ({}));
+    learnData = r.ok ? out : { error: out.error || 'Could not load what Auti has learned (' + r.status + ')' };
+  } catch (e) { learnData = { error: e.message }; }
+  finally { learnLoading = false; }
+  if (current === 'agents') draw();
+}
+const LEARN_SCOPES = [['all', 'Every agent'], ['messages', 'Messages to clients and leads'], ['accounts', 'Invoice reminders and renewals'], ['leads', 'Finding leads'], ['coordinator', 'Plans, steps and CRM changes']];
+function learnNumbers(scope, n) {
+  if (!n) return '';
+  const pc = (a, b) => (b ? Math.round(100 * a / b) + '%' : '–');
+  if (scope === 'messages' || scope === 'accounts') {
+    const parts = [];
+    if (n.decided) parts.push(n.decided + ' drafts decided: ' + n.as_written + ' sent as written, ' + n.edited + ' edited, ' + n.other_style + ' another style, ' + n.dropped + ' dropped');
+    if (n.auto_sent) parts.push(n.auto_sent + ' sent by themselves');
+    if (n.sent) parts.push((scope === 'accounts' ? n.paid + ' paid after the reminder, ' : '') + n.answered + ' answered of ' + n.sent + ' sent (' + pc(n.answered, n.sent) + ')' + (n.said_no ? ', ' + n.said_no + ' said no' : ''));
+    const why = Object.entries(n.drop_reasons || {}).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([r, k]) => r.toLowerCase() + ' (' + k + ')');
+    if (why.length) parts.push('dropped for: ' + why.join(', '));
+    return parts.join(' · ');
+  }
+  if (scope === 'leads') return n.kept + ' kept, ' + n.dismissed + ' dismissed · ' + n.answered + ' answered, ' + n.won + ' became clients';
+  return n.plans_approved + ' plans approved, ' + n.plans_dropped + ' dropped · ' + n.steps_kept + ' steps kept, ' + n.steps_undone + ' undone · ' + n.crm_approved + ' CRM changes approved, ' + n.crm_dropped + ' dropped';
+}
+function lessonRow(l) {
+  const li = $('li'); const body = $('div'); const title = $('div', 'item-title', l.body);
+  title.append($('span', 'tag' + (l.source === 'owner' || l.status === 'pinned' ? ' ok' : ''), l.source === 'owner' ? 'your rule' : l.status === 'pinned' ? 'pinned' : 'learned ' + day(l.updated_at)));
+  body.append(title);
+  if (l.because) body.append($('div', 'detail', l.because));
+  const acts = $('div', 'lesson-acts');
+  const act = (label, payload, tip) => {
+    const b = $('button', 'mini', label); b.type = 'button'; b.title = tip;
+    b.onclick = async () => { b.disabled = true; try { await post('/api/learning', payload); learnData = null; draw(); } catch (e) { b.disabled = false; b.textContent = e.message; } };
+    return b;
+  };
+  if (l.source !== 'owner') acts.append(l.status === 'pinned'
+    ? act('Unpin', { lesson: l.id, action: 'unpin' }, 'The nightly study may revise or retire it again')
+    : act('Pin', { lesson: l.id, action: 'pin' }, 'Keep it as it is: the nightly study never changes a pinned lesson'));
+  acts.append(act('Remove', { lesson: l.id, action: 'remove' }, l.source === 'owner' ? 'Stop following this rule' : 'Stop following it; it is never learned again'));
+  body.append(acts);
+  li.append($('span', 'bullet'), body);
+  return li;
+}
+function learningSection() {
+  const title = 'What Auti has learned';
+  if (learnData === null) { loadLearning(); return section(title, $('div', 'skeleton')); }
+  if (learnData.error) return section(title, $('p', 'empty small', learnData.error));
+  if (learnData.ready === false) return section(title, $('p', 'empty small', 'Starts after the next scheduled run.'));
+  const d = learnData;
+  const intro = $('div', 'card');
+  intro.append($('div', 'detail', 'Each night Auti studies what happened to its work: drafts you sent as written, edited or dropped (and why), answers from clients and leads, invoices paid after a reminder, plans you approved or dropped, steps you undid, leads you kept or dismissed. It keeps a few short lessons per agent, and every agent follows them, your own rules first. Pin a lesson to keep it as it is; remove one and it is never learned again.'));
+  const tog = $('button', 'more', 'Learns from what happens: ' + (d.on ? 'on' : 'off')); tog.setAttribute('aria-pressed', String(!!d.on));
+  tog.title = d.on ? 'Tap to stop the nightly study and set the learned lessons aside; your own rules still apply' : 'Tap to let Auti learn again';
+  tog.onclick = async () => { tog.disabled = true; try { await post('/api/learning', { enabled: !d.on }); learnData = null; draw(); } catch (e) { tog.disabled = false; tog.textContent = e.message; } };
+  intro.append(tog);
+  const teach = formCard([
+    ['scope', 'For', 'select', LEARN_SCOPES],
+    ['body', 'Teach Auti a rule', 'text', null, { wide: true, required: true, placeholder: 'e.g. Never mention prices in a first message' }],
+  ], 'Add rule', async (v) => {
+    const r = await post('/api/learning', { rule: { scope: v.scope, body: v.body } });
+    learnNotice = r.already ? 'Auti already had that rule.' : 'Saved: from now on ' + (v.scope === 'all' ? 'every agent follows it.' : 'that agent follows it.');
+    learnData = null; draw();
+  });
+  if (learnNotice) { teach.append($('div', 'detail', learnNotice)); learnNotice = ''; }
+  const cards = [intro, teach];
+  if (d.rules.length) { const ul = $('ul', 'list'); d.rules.forEach((l) => ul.append(lessonRow(l))); cards.push(card($('div', 'learned-head', 'Every agent'), ul)); }
+  Object.entries(d.scopes).forEach(([scope, s]) => {
+    const c = $('div', 'card');
+    c.append($('div', 'learned-head', s.name));
+    const nums = learnNumbers(scope, s.numbers);
+    if (nums) c.append($('div', 'detail', 'Last 90 days: ' + nums));
+    const L = s.last;
+    c.append($('div', 'detail', L
+      ? 'Last studied ' + ago(L.created_at) + ', from ' + L.signals + ' new signal' + (L.signals === 1 ? '' : 's') + ([L.added && L.added + ' new', L.revised && L.revised + ' revised', L.retired && L.retired + ' retired'].filter(Boolean).length ? ': ' + [L.added && L.added + ' new', L.revised && L.revised + ' revised', L.retired && L.retired + ' retired'].filter(Boolean).join(', ') : '') + '.'
+      : 'Not studied yet: the first study comes with an overnight run, once there is something to learn from.'));
+    if (s.lessons.length) { const ul = $('ul', 'list'); s.lessons.forEach((l) => ul.append(lessonRow(l))); c.append(ul); }
+    else c.append($('p', 'empty small', 'No lessons yet.'));
+    cards.push(c);
+  });
+  if (d.removed) cards.push($('p', 'empty small', d.removed + ' lesson' + (d.removed === 1 ? '' : 's') + ' you removed will not be learned again.'));
+  return section(title, ...cards);
+}
+
 function viewAgents(root) {
   const month = data.agents.reduce((s, a) => s + (a.usage.month.cost || 0), 0);
   const tokens = data.agents.reduce((s, a) => s + a.usage.month.input + a.usage.month.output, 0);
@@ -1562,6 +1680,7 @@ function viewAgents(root) {
     });
     root.append(section('Connected tools', card(ul)));
   }
+  root.append(learningSection());
   root.append(section('Agents', ...data.agents.map((a) => {
     const c = $('div', 'card agent');
     const head = $('div', 'agent-head');
@@ -1594,7 +1713,9 @@ function viewAgents(root) {
       c.append(mem);
     }
     if (a.id === 'companion') { const vb = voiceUseBox(data.voice, 'detail'); if (vb) c.append(vb); }
-    if (a.id !== 'coordinator') { const t = $('button', 'more', 'Talk to ' + a.name + ' →'); t.onclick = () => openChat(a.id); c.append(t); }
+    // Only the two chat agents can be talked to; for the others, Auti answers questions about their work.
+    if (AGENT_INFO[a.id]) { const t = $('button', 'more', 'Talk to ' + a.name + ' →'); t.onclick = () => openChat(a.id); c.append(t); }
+    else if (a.id !== 'coordinator') { const t = $('button', 'more', 'Ask Auti about ' + a.name + ' →'); t.onclick = () => openChat('assistant', 'What has the ' + a.name + ' agent done lately, and what has it learned?'); c.append(t); }
     if (a.id === 'coordinator') {
       const on = data.autonomy === true;
       const t = $('button', 'more', data.autonomy == null ? 'Acts on its own: after the next run' : 'Acts on its own: ' + (on ? 'on' : 'off'));
@@ -2163,12 +2284,15 @@ function crmRequestCard(r) {
   c.append($('div', 'detail', 'Proposed by ' + (r.proposed_by === 'assistant' ? 'Auti chat' : r.proposed_by) + ' · ' + ago(r.created_at)));
   if (r.error) c.append($('div', 'error', 'Last try failed: ' + r.error));
   const actions = $('div', 'actions'); const yes = $('button', 'act approve', 'Approve and do it'); const no = $('button', 'act', 'Drop'); const hint = $('span', 'hint');
-  const go = async (decision, btn) => {
-    yes.disabled = no.disabled = true; hint.className = 'hint'; hint.textContent = decision === 'approve' ? 'Doing it in the CRM…' : 'Dropping…';
-    try { await post('/api/crm', { request: r.id, decision }); crmData = null; await load(); }
-    catch (e) { hint.className = 'error'; hint.textContent = e.message; yes.disabled = no.disabled = false; }
+  const buttons = (on) => [...actions.querySelectorAll('button')].forEach((b) => { b.disabled = !on; });
+  const go = async (decision, reason) => {
+    buttons(false); hint.className = 'hint'; hint.textContent = decision === 'approve' ? 'Doing it in the CRM…' : 'Dropping…';
+    try { await post('/api/crm', { request: r.id, decision, reason }); crmData = null; await load(); }
+    catch (e) { hint.className = 'error'; hint.textContent = e.message; buttons(true); }
   };
-  yes.onclick = () => go('approve', yes); no.onclick = () => go('drop', no);
+  yes.onclick = () => go('approve');
+  // Dropping asks why first (one tap on a reason drops it); Auti learns from the reason.
+  no.onclick = () => no.replaceWith(dropReasons('crm', (why) => go('drop', why)));
   actions.append(yes, no, hint); c.append(actions); return c;
 }
 
@@ -2195,7 +2319,7 @@ async function load() {
   } catch (e) { status.className = 'status bad'; statusText.textContent = e.message; }
   finally { btn.disabled = false; }
 }
-document.getElementById('refresh').onclick = () => { if (current === 'documents' && !docEdit) docs = null; if (current === 'crm' || current === 'overview') crmData = null; load(); };
+document.getElementById('refresh').onclick = () => { if (current === 'documents' && !docEdit) docs = null; if (current === 'crm' || current === 'overview') crmData = null; if (current === 'agents') learnData = null; load(); };
 setInterval(() => { if (!document.hidden && !document.querySelector('button.confirm, form.form')) load(); }, 5 * 60 * 1000);
 
 /* ---------- chat ---------- */

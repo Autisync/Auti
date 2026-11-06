@@ -1,7 +1,7 @@
 // GET  /api/crm                          : a live picture of the company CRM (or how to connect it).
 // GET  /api/crm?health=1                 : is the CRM answering, and how fast ({ ok, ms, error? }).
 // POST /api/crm {change, payload}        : the owner changes something in the CRM now (add client, opportunity, status).
-// POST /api/crm {request, decision}      : the owner approves or drops a change Auti proposed.
+// POST /api/crm {request, decision, reason?} : the owner approves or drops a change Auti proposed (reason: why dropped).
 import { guard, getDb } from './_shared.js';
 import { crmClient, crmConfigured, crmSnapshot, crmHealth, applyCrmChange, decideCrmRequest } from '../src/crm.js';
 
@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     if (!String(req.headers['content-type'] || '').startsWith('application/json')) return res.status(415).json({ error: 'Send JSON' });
     const body = req.body || {};
     if (body.request != null) {
-      const out = await decideCrmRequest(getDb(), () => crmClient(), { id: body.request, decision: body.decision });
+      const out = await decideCrmRequest(getDb(), () => crmClient(), { id: body.request, decision: body.decision, reason: body.reason });
       if (!out) return res.status(404).json({ error: 'Already decided, or no such change.' });
       return res.status(200).json(out);
     }

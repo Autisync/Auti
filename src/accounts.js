@@ -11,6 +11,7 @@
 // Drafts only, like every message Auti writes: each waits on the Approvals tab, and the owner sends it (or taps Send
 // from the CRM). The same invoice is not chased again within 7 days, nor the same renewal within 30.
 import { languageFor, writeIn } from './language.js';
+import { examplesBlock, examplesFor, lessonsBlock, lessonsFor } from './learning.js';
 
 const CHANNELS = ['email', 'whatsapp', 'call', 'instagram', 'facebook'];
 const DAY = 864e5;
@@ -175,6 +176,9 @@ export async function runAccounts({ db, brain, crm, client = null, now = new Dat
   if (!items.length) return { considered: 0, drafted: 0 };
   const config = (await db.query(`SELECT key, value FROM coordinator_config WHERE enabled ORDER BY key`)).rows;
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n') || '- (none)';
+  // What Auti learned from the owner's edits and drops of these drafts, and from the invoices paid after one (src/learning.js).
+  const learned = lessonsBlock(await lessonsFor(db, 'accounts'));
+  const examples = examplesBlock(await examplesFor(db, 'accounts'));
   const system = `You are Auti's accounts agent for a small company. You draft short messages the owner sends about money:
 overdue invoices (collections) and services about to end (renewals).
 Rules:
@@ -190,11 +194,11 @@ Rules:
 - Nothing is sent by you; the owner reviews every draft.
 
 Standing instructions from the owner:
-${standing}`;
+${standing}${learned ? `\n\n${learned}` : ''}`;
   const user = `Today is ${now.toISOString().slice(0, 10)}.
 Items:
 ${JSON.stringify(items.map(({ client_id, phone_problem, ...i }) => i), null, 1)}
-
+${examples ? `\n${examples}\n` : ''}
 Write one draft per item and call ${ACCOUNT_TOOL.name} once.`;
   const { output, model, usage } = await brain.think({ system, user, tool: ACCOUNT_TOOL });
   await db.query(`INSERT INTO agent_usage (agent, model, input_tokens, output_tokens) VALUES ('accounts', $1, $2, $3)`,

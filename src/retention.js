@@ -4,6 +4,7 @@
 // styles (observation, helpful, direct); the card leads with the one that gets the most replies and the owner picks.
 // It only drafts. Every draft waits on the owner, who sends it themselves (or from the CRM) and marks it sent.
 import { STYLES, STYLE_GUIDE, TOUCHES, cleanVariants, ensureStages, fixedStyle, pickStyle, styleStats } from './pipeline.js';
+import { examplesBlock, examplesFor, lessonsBlock, lessonsFor } from './learning.js';
 
 export { GAP } from './pipeline.js';
 const CHANNELS = ['email', 'whatsapp', 'call', 'instagram', 'facebook'];
@@ -68,7 +69,8 @@ export const STAGE_GUIDE = {
   nurture: 'They did not answer before, or said not now. A check-in every two months: one genuinely useful idea or piece of news for their kind of business, no pressure, and one line inviting them to reply if it is worth a chat now.',
 };
 
-function systemPrompt(config) {
+// learned: the owner's rules and what Auti learned about writing to clients and leads (src/learning.js).
+function systemPrompt(config, learned = '') {
   const standing = config.map((c) => `- ${c.key}: ${c.value}`).join('\n') || '- (none)';
   const styles = STYLES.map((s) => `  - ${s}: ${STYLE_GUIDE[s]}`).join('\n');
   return `You are Auti's retention agent for a small company. Your one job: keep clients and leads from going quiet.
@@ -95,7 +97,7 @@ Leads (status lead): the aim of every message is the next small yes, on the way 
 ${styles}
 
 Standing instructions from the owner:
-${standing}`;
+${standing}${learned ? `\n\n${learned}` : ''}`;
 }
 
 export async function clientsDue(db) {
@@ -128,6 +130,9 @@ export async function runRetention({ db, brain, now = new Date(), bookingLink = 
   if (!due.length) return { considered: 0, drafted: 0 };
   const config = (await db.query(`SELECT key, value FROM coordinator_config WHERE enabled ORDER BY key`)).rows;
   const lessons = (await db.query(`SELECT body FROM journal WHERE kind = 'lesson' ORDER BY created_at DESC LIMIT 10`)).rows.map((r) => r.body);
+  // What Auti learned from the owner's edits and drops and from the answers (src/learning.js), and real examples.
+  const learned = lessonsBlock(await lessonsFor(db, 'messages'));
+  const examples = examplesBlock(await examplesFor(db, 'messages'));
   const shown = due.map(({ id, outreach_step, lead, stage, outreach_style, ...c }) => {
     if (outreach_step) return { ...c, stage: stage || 'new', outreach: { touch: `${outreach_step} of ${TOUCHES}: ${OUTREACH[outreach_step]}`, ...(lead || {}) } };
     if (c.status === 'lead') return { ...c, stage: stage || 'new', next_step: STAGE_GUIDE[stage || 'new'] || STAGE_GUIDE.contacted, ...(lead ? { what_we_saw: lead.what_we_saw } : {}) };
@@ -140,11 +145,11 @@ ${JSON.stringify(shown, null, 1)}
 
 Lessons from clients lost before:
 ${JSON.stringify(lessons)}
-${leadsDue.length ? `\nBooking link for the free 15-minute call: ${bookingLink || 'none; offer to ring them at a time that suits them instead'}\n` : ''}
+${leadsDue.length ? `\nBooking link for the free 15-minute call: ${bookingLink || 'none; offer to ring them at a time that suits them instead'}\n` : ''}${examples ? `\n${examples}\n` : ''}
 Draft one follow-up for each client above.`;
 
   // Three versions of each lead's message take room: 10 drafts x 3 styles.
-  const { output, model, usage } = await brain.think({ system: systemPrompt(config), user, tool: FOLLOW_UP_TOOL, maxTokens: leadsDue.length ? 12000 : undefined });
+  const { output, model, usage } = await brain.think({ system: systemPrompt(config, learned), user, tool: FOLLOW_UP_TOOL, maxTokens: leadsDue.length ? 12000 : undefined });
   await db.query(`INSERT INTO agent_usage (agent, model, input_tokens, output_tokens) VALUES ('retention', $1, $2, $3)`,
     [model ?? null, usage?.input ?? 0, usage?.output ?? 0]);
 
