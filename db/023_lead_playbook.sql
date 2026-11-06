@@ -56,6 +56,13 @@ SELECT id, 'contacted', 'backfill', 'Contacted before the playbook started.', no
 INSERT INTO lead_stage_event (client_id, stage, source, note)
 SELECT id, stage, 'backfill', 'Where the lead stood when the playbook started.' FROM clients WHERE stage IS NOT NULL;
 
+-- Outreach that sends itself keeps up with the sequences: up to five emails a day per new business (outreach_per_day,
+-- now set on the Agents tab). Only the original wording is replaced, so an owner's own edit stays.
+UPDATE coordinator_config SET value = 'On: the cold-outreach emails to prospects in the CRM go out from the CRM by themselves on working days in office hours, up to five a day for each new business a day (outreach_per_day), each with an easy way to say no thanks; a reply stops them. Answers to replies are always drafts. Off: every touch waits for the owner.'
+ WHERE key = 'outreach_autosend' AND value LIKE 'On: outreach touches to prospects in the CRM are sent by email from the CRM without waiting, at most outreach_per_day a run%';
+UPDATE coordinator_config SET value = replace(value, 'Change the number to go faster or slower.', 'Set it on the Agents tab (New businesses a day); each one gets up to five emails over three weeks.')
+ WHERE key = 'outreach_per_day';
+
 -- How the messages to leads are written. The first word is what the code reads.
 INSERT INTO coordinator_config (key, value) VALUES ('outreach_style',
   'auto: every message to a lead is drafted in three styles (observation, helpful, direct) and Auti recommends the one that gets the most replies. Set the first word to observation, helpful or direct to always lead with that style.')

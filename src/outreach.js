@@ -9,6 +9,8 @@ import { LEAD_SERVICES, decideLead, leadNotes, COUNTRY } from './leads.js';
 
 const DEFAULT_PER_DAY = 5;
 const MARKETS = ['angola', 'uk', 'portugal', 'namibia'];
+// Cold emails that send themselves never go past this in a day, whatever the pace.
+export const AUTOSEND_MAX = 50;
 
 export async function outreachPerDay(db) {
   const v = (await db.query(`SELECT value FROM coordinator_config WHERE key = 'outreach_per_day' AND enabled`)).rows[0]?.value;
@@ -16,13 +18,24 @@ export async function outreachPerDay(db) {
   return n >= 1 && n <= 50 ? n : DEFAULT_PER_DAY;
 }
 
-// The first free day: sequences already queued from today on take their days first.
+// The first free day for a new sequence: outreach_per_day new businesses start each day, and the ones still waiting
+// for their first touch take their days first. Sequences already under way don't count: their later touches belong
+// to the businesses of earlier days, so the pace stays what the owner set.
 export async function nextSlot(db, perDay, already = 0) {
   const queued = Number((await db.query(`
-    SELECT count(*)::int AS n FROM clients
-     WHERE outreach_step IS NOT NULL AND outreach_ended IS NULL AND next_contact_due >= current_date
-       AND NOT EXISTS (SELECT 1 FROM follow_up f WHERE f.client_id = clients.id AND f.status = 'awaiting_approval')`)).rows[0].n);
+    SELECT count(*)::int AS n FROM clients WHERE status = 'lead' AND outreach_step = 1 AND outreach_ended IS NULL`)).rows[0].n);
   return Math.floor((queued + already) / perDay);
+}
+
+/** The owner's pace from the Agents tab: new businesses a day, 1 to 10. The rest of the instruction's text stays. */
+export async function setOutreachPerDay(db, n) {
+  const v = Number(n);
+  if (!Number.isInteger(v) || v < 1 || v > 10) throw new Error('new businesses a day must be a whole number from 1 to 10');
+  const r = (await db.query(
+    `UPDATE coordinator_config SET value = $1 || CASE WHEN position(':' in value) > 0 THEN substr(value, position(':' in value)) ELSE '' END,
+            updated_by = 'owner' WHERE key = 'outreach_per_day' RETURNING value`, [String(v)])).rows[0];
+  if (!r) throw new Error('not ready yet: the next scheduled run sets this up');
+  return { outreach_per_day: v };
 }
 
 const text = (v, max) => { const s = String(v ?? '').trim(); return s ? s.slice(0, max) : null; };
@@ -300,8 +313,9 @@ export async function repliedSince(crm, crmId, since) {
 }
 
 /**
- * The outreach touches drafted for prospects in the CRM go out by email from the CRM, at most outreach_per_day a
- * run, when the owner switched outreach_autosend on. Never a follow-up to an existing client, never WhatsApp (a first
+ * The outreach touches drafted for prospects in the CRM go out by email from the CRM when the owner switched
+ * outreach_autosend on: in a day, at most five per new business a day (outreach_per_day x TOUCHES, so every touch
+ * of the sequences under way keeps its day), never more than AUTOSEND_MAX. Never a follow-up to an existing client, never WhatsApp (a first
  * WhatsApp to a business needs an approved template), and never to someone who wrote back: that ends their sequence.
  * Nor to an address that cannot take mail (the CRM's check, or src/emailcheck.js): that touch is dropped and the
  * sequence ends as bad_email, with a line in the journal. An address that could not be checked is sent to.
@@ -310,10 +324,10 @@ export async function autoSendOutreach(db, crm, { resolver } = {}) {
   if (!(await settingOn(db, 'outreach_autosend'))) return { skipped: 'switched off', sent: 0 };
   const { decideFollowUp } = await import('./web.js');
   const { checkClientEmail, sendFollowUpViaCrm } = await import('./crm.js');
-  // outreach_per_day is a day's total, not a run's: the scheduled runs come several times a day.
+  // A day's total, not a run's: the scheduled runs come several times a day.
   const sentToday = Number((await db.query(
     `SELECT count(*)::int AS n FROM follow_up WHERE sent_via = 'auto' AND decided_at >= date_trunc('day', now())`)).rows[0].n);
-  const limit = Math.max(0, (await outreachPerDay(db)) - sentToday);
+  const limit = Math.max(0, Math.min(AUTOSEND_MAX, (await outreachPerDay(db)) * TOUCHES) - sentToday);
   if (!limit) return { skipped: 'today\'s outreach already sent', sent: 0 };
   const rows = (await db.query(
     `SELECT f.id, f.subject, f.body, f.step, c.id AS client_id, c.crm_id, c.name,

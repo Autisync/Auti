@@ -1605,7 +1605,7 @@ function viewAgents(root) {
       c.append(t);
       // The two outreach switches: leads straight into the CRM, and outreach emails that send themselves.
       [['leads_to_crm', data.leadsToCrm, 'New leads go into the CRM', 'Leads with a business email become CRM prospects and join the outreach queue', 'Leads wait on the Leads tab for you'],
-       ['outreach_autosend', data.outreachAutosend, 'Outreach emails send themselves', 'Outreach emails to CRM prospects go out without waiting for you, a few a day; a reply stops them', 'Every outreach touch waits for you to send it']].forEach(([key, val, label, onTip, offTip]) => {
+       ['outreach_autosend', data.outreachAutosend, 'Outreach emails send themselves', 'Cold emails to CRM prospects go out by themselves on working days in office hours, up to five a day per new business; a reply stops them, and answers always wait for you', 'Every outreach touch waits for you to send it']].forEach(([key, val, label, onTip, offTip]) => {
         const b = $('button', 'more', val == null ? label + ': after the next run' : label + ': ' + (val ? 'on' : 'off'));
         b.setAttribute('aria-pressed', String(val === true));
         b.title = val ? onTip + '. Tap to turn off.' : offTip + '. Tap to turn on.';
@@ -1613,6 +1613,21 @@ function viewAgents(root) {
         b.onclick = async () => { b.disabled = true; try { await post('/api/autonomy', { setting: key, enabled: !val }); await load(); } catch (e) { b.disabled = false; b.textContent = e.message; } };
         c.append(b);
       });
+      // The pace of cold outreach: new businesses a day, each with up to five emails over three weeks.
+      if (data.outreachPerDay != null) {
+        const pace = $('div', 'filters');
+        pace.append($('span', 'detail', 'New businesses a day:'));
+        const steps = [1, 2, 3, 5, 8, 10];
+        if (!steps.includes(data.outreachPerDay)) { steps.push(data.outreachPerDay); steps.sort((x, y) => x - y); }
+        steps.forEach((n) => {
+          const b = $('button', 'chip', String(n));
+          b.setAttribute('aria-pressed', String(data.outreachPerDay === n));
+          b.title = 'Up to ' + (5 * n) + ' cold emails a day once their sequences overlap';
+          b.onclick = async () => { b.disabled = true; try { await post('/api/autonomy', { setting: 'outreach_per_day', value: n }); await load(); } catch (e) { b.disabled = false; b.textContent = e.message; } };
+          pace.append(b);
+        });
+        c.append(pace);
+      }
     }
     return c;
   })));

@@ -206,21 +206,29 @@ await check('Auti reads a whole conversation before replying: who said what, in 
   assert.match(await chat.systemFor('assistant', db), /read the conversation first \(crm_conversation\)/);
 });
 
-await check('cold emails go out in office hours only, and outreach_per_day is a day\'s total', async () => {
+await check('cold emails go out in office hours only, at most five a day per new business a day', async () => {
   // 29 Oct 2026 is a Thursday; Lisbon is on UTC in winter.
   assert.equal(outreach.officeHours(new Date('2026-10-29T04:17:00Z')), false);
   assert.equal(outreach.officeHours(new Date('2026-10-29T12:23:00Z')), true);
   assert.equal(outreach.officeHours(new Date('2026-10-29T17:59:00Z')), true);
   assert.equal(outreach.officeHours(new Date('2026-10-29T18:00:00Z')), false);
   assert.equal(outreach.officeHours(new Date('2026-10-31T12:00:00Z')), false);   // Saturday
+  // One new business a day means up to five emails a day: the touches of the sequences under way keep their days.
   await db.query(`UPDATE coordinator_config SET value = '1 a day', enabled = true WHERE key = 'outreach_per_day'`);
   await db.query(`UPDATE coordinator_config SET enabled = true WHERE key = 'outreach_autosend'`);
-  const c = (await db.query(`INSERT INTO clients (name, market, status, crm_id, outreach_step, next_contact_due) VALUES ('Capped Ltd', 'uk', 'lead', $1, 1, current_date) RETURNING id`, [ID(888)])).rows[0].id;
-  await db.query(`INSERT INTO follow_up (client_id, channel, subject, body, created_by_agent, step) VALUES ($1, 'email', 'Hello', 'Hi. If it isn''t for you, just reply no.', 'outreach', 1)`, [c]);
+  for (let i = 0; i < 6; i++) {
+    const c = (await db.query(`INSERT INTO clients (name, market, status, crm_id, outreach_step, next_contact_due) VALUES ($1, 'uk', 'lead', $2, 1, current_date) RETURNING id`,
+      [`Capped ${i} Ltd`, ID(880 + i)])).rows[0].id;
+    await db.query(`INSERT INTO follow_up (client_id, channel, subject, body, created_by_agent, step) VALUES ($1, 'email', 'Hello', 'Hi. If it isn''t for you, just reply no.', 'outreach', 1)`, [c]);
+  }
   const sentAlready = Number((await db.query(`SELECT count(*)::int AS n FROM follow_up WHERE sent_via = 'auto' AND decided_at >= date_trunc('day', now())`)).rows[0].n);
+  assert.ok(sentAlready < 5, 'the test starts under the cap');
   const out = await outreach.autoSendOutreach(db, fakeCrm());
-  if (sentAlready >= 1) assert.match(out.skipped, /already sent/);
-  else assert.equal(out.sent, 1);
+  assert.equal(out.sent, 5 - sentAlready);
+  assert.match((await outreach.autoSendOutreach(db, fakeCrm())).skipped, /already sent/);
+  const waiting = (await db.query(`SELECT count(*)::int AS n FROM follow_up f JOIN clients c ON c.id = f.client_id WHERE c.name LIKE 'Capped %' AND f.status = 'awaiting_approval'`)).rows[0].n;
+  assert.equal(waiting, 6 - (5 - sentAlready));                 // the rest wait for tomorrow, or for the owner
+  assert.equal(outreach.AUTOSEND_MAX, 50);
   await db.query(`UPDATE coordinator_config SET enabled = false WHERE key = 'outreach_autosend'`);
 });
 

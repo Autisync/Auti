@@ -7,6 +7,7 @@ import { normaliseRepo, githubToken } from './github.js';
 import { repairWeakestLink } from './coordinator.js';
 import { crmConfigured, sendFollowUpViaCrm, checkClientEmail, badEmailMessage } from './crm.js';
 import { CADENCE, ENTRY, GAP, STAGES, STAGE_NAME, STYLES, TOUCHES, markReplied, moveStage, nextDays, pipelineStats, fixedStyle } from './pipeline.js';
+import { outreachPerDay } from './outreach.js';
 import { milestonesByProject, openCheckins, projectHealth, ymd } from './projects.js';
 import { listLeads, leadsAgentOn } from './leads.js';
 
@@ -144,6 +145,7 @@ export async function getDashboard(db) {
     actions, autonomy: autonomy ? autonomy.enabled : null,   // null: not set up yet
     crmRequests, crmOn: crmConfigured(), leads, leadsOn, voice, checkins, pipeline, outreachStyle,
     leadsToCrm: sw.leads_to_crm ?? null, outreachAutosend: sw.outreach_autosend ?? null,
+    outreachPerDay: await outreachPerDay(db).catch(() => null),
   };
 }
 

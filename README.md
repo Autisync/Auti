@@ -164,8 +164,11 @@ you switch `outreach_autosend` on.
 ## Cold outreach from your own lists
 
 Two ways to hand Auti a list of businesses to approach. Either way each one gets the five-touch outreach sequence:
-every touch is a draft on the Approvals tab that you send yourself, and a reply stops it. New sequences start a few
-a day (the `outreach_per_day` standing instruction, 5 to begin with), strongest first.
+every touch is a draft on the Approvals tab that you send yourself, and a reply stops it. New sequences start at the
+pace you set on the Agents tab (*New businesses a day*, the `outreach_per_day` standing instruction, 5 to begin
+with), strongest first; only sequences still waiting for their first touch count against it. With *Outreach emails
+send themselves* on, the touches to CRM prospects go out by themselves on working days in office hours, up to five a
+day per new business (never more than 50), and answers to replies still wait for you.
 
 - **In the CRM:** import or add them as prospects with a tag starting `outreach-` (for example `outreach-oct26`).
   The next run picks them up. Tag one `outreach-sent-1` (or 2, 3) if you already sent that touch, or `no-outreach`

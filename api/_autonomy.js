@@ -1,8 +1,10 @@
 // POST /api/autonomy {enabled}  : switch Auti's automatic steps on or off.
 // POST /api/autonomy {undo: id} : undo one step Auti took on its own.
 // POST /api/autonomy {setting: 'leads_to_crm'|'outreach_autosend', enabled} : the owner's two outreach switches.
+// POST /api/autonomy {setting: 'outreach_per_day', value: 1-10} : new businesses a day for cold outreach.
 import { guard, getDb } from './_shared.js';
 import { setAutonomy, undoAction } from '../src/autonomy.js';
+import { setOutreachPerDay } from '../src/outreach.js';
 
 export default async function handler(req, res) {
   if (!guard(req, res)) return;
@@ -15,6 +17,7 @@ export default async function handler(req, res) {
       if (!out) return res.status(404).json({ error: 'Already undone, or no such step.' });
       return res.status(200).json(out);
     }
+    if (body.setting === 'outreach_per_day') return res.status(200).json(await setOutreachPerDay(getDb(), body.value));
     if (body.setting !== undefined) {
       if (!['leads_to_crm', 'outreach_autosend'].includes(body.setting)) return res.status(400).json({ error: 'unknown setting' });
       if (typeof body.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false' });
@@ -24,7 +27,7 @@ export default async function handler(req, res) {
     }
     res.status(200).json(await setAutonomy(getDb(), body.enabled));
   } catch (err) {
-    if (/bad action id|must be true or false|not ready yet/.test(err.message)) return res.status(400).json({ error: err.message });
+    if (/bad action id|must be true or false|not ready yet|must be a whole number/.test(err.message)) return res.status(400).json({ error: err.message });
     console.error('autonomy failed:', err.message);
     res.status(500).json({ error: 'Could not save.' });
   }
