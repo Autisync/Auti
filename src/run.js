@@ -16,6 +16,8 @@ import { CHEAP } from './models.js';
 import { postDailyReport } from './daily.js';
 import { importLeads, autoSendOutreach, leadsToCrm, officeHours } from './outreach.js';
 import { importPack } from './documents.js';
+import { readReplies } from './replies.js';
+import { bookingLinkFrom } from './pipeline.js';
 import fs from 'node:fs';
 
 const mode = process.argv[2] || 'nightly';
@@ -67,7 +69,7 @@ async function coordinator() {
     // Then copy the CRM's clients into Auti's own list, so the Clients tab and the retention agent see them.
     try {
       const sync = await syncCrmClients(db, crmClient());
-      console.log(`crm clients: seen=${sync.seen} added=${sync.added} updated=${sync.updated} linked=${sync.linked}${sync.inbound ? ` new_enquiries=${sync.inbound}` : ''}${sync.outreach ? ` outreach_started=${sync.outreach}` : ''}${sync.outreach_error ? ` outreach_skipped=(${sync.outreach_error})` : ''}`);
+      console.log(`crm clients: seen=${sync.seen} added=${sync.added} updated=${sync.updated} linked=${sync.linked}${sync.inbound ? ` new_enquiries=${sync.inbound}` : ''}${sync.outreach ? ` outreach_started=${sync.outreach}` : ''}${sync.stages ? ` stages_moved=${sync.stages}` : ''}${sync.outreach_error ? ` outreach_skipped=(${sync.outreach_error})` : ''}`);
     } catch (err) {
       console.error(`crm client sync skipped: ${err.message}`);
     }
@@ -96,8 +98,17 @@ async function coordinator() {
 }
 
 async function retention() {
-  // Drafts only; the owner sends. Counts only, never client names.
-  const out = await withModel('retention', (model) => claudeBrain({ model }), (brain) => runRetention({ db, brain }));
+  // First the answers: leads who wrote back in the CRM inbox stop their sequence, move on, and get our answer
+  // drafted. Then the follow-ups due. Drafts only; the owner sends. Counts only, never client names.
+  const crm = crmConfigured() ? crmClient() : null;
+  const bookingLink = crm ? await bookingLinkFrom(crm) : null;     // the free 15-minute call, from the CRM
+  if (crm) {
+    try {
+      const r = await withModel('retention', (model) => claudeBrain({ model }), (brain) => readReplies({ db, crm, brain, bookingLink }));
+      console.log(`replies: leads_checked=${r.checked} answers=${r.replies} drafted=${r.drafted}${r.auto ? ` automatic=${r.auto}` : ''}`);
+    } catch (err) { console.error(`reply check skipped: ${err.message}`); }
+  }
+  const out = await withModel('retention', (model) => claudeBrain({ model }), (brain) => runRetention({ db, brain, bookingLink }));
   console.log(`[${new Date().toISOString()}] retention done. clients_due=${out.considered} drafts=${out.drafted}`);
   // Outreach touches to CRM prospects send themselves when the owner switched outreach_autosend on. Counts only.
   if (crmConfigured()) {

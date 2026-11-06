@@ -218,7 +218,9 @@ await check('CRM clients are copied into Auti: added, linked by name, updated, a
   } };
   const first = await crm.syncCrmClients(sdb, fake, { pageSize: 2 });
   assert.deepEqual(pages, [1, 2]);
-  assert.deepEqual({ ...first }, { seen: 3, added: 2, updated: 1, linked: 1 });
+  // The hand-added lead is an active client in the CRM: it was won (src/pipeline.js), counted in stages.
+  assert.deepEqual({ ...first }, { seen: 3, added: 2, updated: 1, linked: 1, stages: 1 });
+  assert.equal((await sdb.query(`SELECT stage FROM clients WHERE crm_id = '12'`)).rows[0].stage, 'won');
   const rows = (await sdb.query('SELECT name, market, status, notes, crm_id FROM clients ORDER BY crm_id')).rows;
   assert.deepEqual(rows.map((r) => [r.name, r.market, r.status, r.crm_id]),
     [['Acme', 'angola', 'active', '11'], ['beta lda', 'portugal', 'active', '12'], ['Gamma', 'uk', 'lead', '13']]);

@@ -376,12 +376,12 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
     const status = statusOf(c.status);
     const market = marketOf(c.country);
     const reach = reachOf(c);
-    let cur = (await db.query('SELECT id FROM clients WHERE crm_id = $1', [crmId])).rows[0];
+    let cur = (await db.query('SELECT id, status::text AS status FROM clients WHERE crm_id = $1', [crmId])).rows[0];
     if (!cur) {
       cur = (await db.query(
         `UPDATE clients SET crm_id = $1 WHERE id = (
            SELECT id FROM clients WHERE crm_id IS NULL AND lower(trim(name)) = lower($2) ORDER BY created_at LIMIT 1)
-         RETURNING id`, [crmId, name])).rows[0];
+         RETURNING id, status::text AS status`, [crmId, name])).rows[0];
       if (cur) out.linked++;
     }
     if (!cur) {
@@ -405,16 +405,33 @@ export async function syncCrmClients(db, crm, { pageSize = 100, maxPages = 20 } 
       if (fresh) out.inbound = (out.inbound || 0) + 1;
       continue;
     }
+    // A lead the owner marked won or lost here stays so while its CRM card still says prospect.
     const res = await db.query(
       `UPDATE clients SET name = $2, market = $3::market,
-              status = COALESCE($4::client_status, status),
+              status = CASE WHEN $4::text = 'lead' AND stage IN ('won', 'lost') THEN status ELSE COALESCE($4::client_status, status) END,
               lost_reason = CASE WHEN $4::text = 'lost' THEN COALESCE(lost_reason, 'Marked as no longer a client in the CRM') ELSE lost_reason END,
               reach = $5, crm_synced_at = now()
-        WHERE id = $1 AND (name <> $2 OR market <> $3::market OR ($4::client_status IS NOT NULL AND status <> $4::client_status)
+        WHERE id = $1 AND (name <> $2 OR market <> $3::market
+                           OR ($4::client_status IS NOT NULL AND status <> $4::client_status AND NOT ($4::text = 'lead' AND stage IN ('won', 'lost')))
                            OR reach IS DISTINCT FROM $5)
         RETURNING id`, [cur.id, name, market, status, reach]);
     if (res.rows.length) out.updated++;
     else await db.query('UPDATE clients SET crm_synced_at = now() WHERE id = $1', [cur.id]);
+    // The lead's stage from the CRM (its qualifier, a booking, won or lost on its board), and a prospect that became
+    // a client there is won. Forward only (src/pipeline.js); a lead that never had a stage is left alone.
+    try {
+      const { moveStage } = await import('./pipeline.js');
+      const crmStage = String(c.custom_fields?.lead_stage || '').trim().toLowerCase();
+      const turned = cur.status === 'lead' && status === 'active' ? 'won' : status === 'lost' && cur.status === 'lead' ? 'lost' : null;
+      const move = turned || (['qualified', 'booked', 'won', 'lost'].includes(crmStage) ? crmStage : null);
+      if (move) {
+        const has = (await db.query(`SELECT stage FROM clients WHERE id = $1`, [cur.id])).rows[0];
+        if (has?.stage || cur.status === 'lead') {
+          const m = await moveStage(db, cur.id, move, { source: 'crm', note: turned === 'won' ? 'Active client in the CRM.' : `CRM lead stage: ${move}.` });
+          if (m?.moved) out.stages = (out.stages || 0) + 1;
+        }
+      }
+    } catch (err) { if (err.code !== '42703') throw err; }      // before migration 023
   }
   // An email draft waiting for someone who can only be reached on Instagram or Facebook would go to a placeholder
   // address: it is dropped, and the next run drafts a message for the right channel.
@@ -886,7 +903,7 @@ export const OWNER_ACTIONS = {
     await journal(db, `Replied in the CRM inbox at the owner's word (conversation ${id.slice(0, 8)}).`);
     return { sent: true, conversationId: id };
   },
-  // When to get in touch next. outreach: true starts the four-touch sequence on that day for a prospect.
+  // When to get in touch next. outreach: true starts the five-touch sequence on that day for a prospect.
   async auti_schedule_contact(db, crm, { clientId, date, note, outreach }) {
     const id = needId(clientId, 'clientId');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) throw new Error('date must be YYYY-MM-DD');
@@ -989,7 +1006,7 @@ export const CRM_TOOL_DEFS = [
   { name: 'crm_reply', description: 'Reply NOW in an existing CRM inbox conversation (whatever channel it is on). Read it first with crm_conversation. Only when the owner asked and has seen or dictated the words. conversationId from crm_inbox or crm_conversations_for.',
     input_schema: { type: 'object', additionalProperties: false, required: ['conversationId', 'message'], properties: {
       conversationId: { type: 'string' }, message: { type: 'string' } } } },
-  { name: 'auti_schedule_contact', description: "Schedule when to get in touch with a CRM client next (Auti drafts it that day). outreach: true starts the four-touch outreach sequence on that day for a prospect who never heard from us. When the owner asks to follow someone up later or to reach out to a list on a date.",
+  { name: 'auti_schedule_contact', description: "Schedule when to get in touch with a CRM client next (Auti drafts it that day). outreach: true starts the five-touch outreach sequence on that day for a prospect who never heard from us. When the owner asks to follow someone up later or to reach out to a list on a date.",
     input_schema: { type: 'object', additionalProperties: false, required: ['clientId', 'date'], properties: {
       clientId: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD, today or later' }, note: { type: 'string' }, outreach: { type: 'boolean' } } } },
   { name: 'crm_propose_change', description: `Propose a change in the CRM. It does NOT happen now: it waits on the owner's Approvals tab and runs only if they approve. Kinds: ${Object.keys(CRM_CHANGES).join(', ')}. create_client payload: companyName and email (required), contactName, phone, country, city, website, notes, tags (the auti tag and source Auti are always added). create_opportunity payload: name, pipelineId, stageId (from crm_overview's pipelines), value, contactId (a CRM client id), source. update_client_status payload: clientId, clientName, status. send_onboarding_form payload: clientId, clientName, and optionally sections (business, website, email, social, crm, callcatch), language (pt or en) and a note; it sets the form up if the client has none and emails the link.`,

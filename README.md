@@ -123,7 +123,7 @@ Natural voice (optional): set one key in the Vercel project and replies are spok
 - Projects tab: link each project to its GitHub repository. Before every coordinator run, Auti reads each repo's latest push into `last_activity_at`, so "going cold" reflects real work. The workflow's built-in token reads this repo and public ones; add a read-only `SYNAUT_GITHUB_TOKEN` secret for your other private repos.
 - Retention agent: after every coordinator run it drafts one follow-up (email, WhatsApp or call notes) per client due or overdue for contact, in Portuguese for Portugal and Angola. Drafts wait on the Approvals tab. Auti never sends anything: you edit, send it yourself, then tap Mark sent, which logs the contact and sets the next date. No Claude call happens when nobody is due.
 - CRM tab: connects Auti to your CRM's API. Give Auti its own CRM user (the Sales role is enough), never your admin account, so every change is logged under its name and you can switch it off by disabling that user. Set `CRM_API_URL` (the API base, ending in `/api`, https only), `CRM_EMAIL` and `CRM_PASSWORD` in Vercel and as GitHub secrets for the coordinator workflow. The tab shows recurring revenue, renewals due, overdue invoices, open opportunities and your clients, and lets you add a client or opportunity or change a client's status yourself. The coordinator reads the same picture before each run; Auti chat can look things up and propose a change, which waits under "CRM changes" on Approvals until you tap Approve. A section the Auti user has no permission for is simply left out. Before each coordinator run, every CRM client is also copied into the Clients tab (matched by CRM id, or once by name for a client you added by hand), so the retention agent follows them up too. Only the name, country and status come from the CRM; your notes and contact dates stay Auti's own, and nothing is written back to the CRM. New clients get a first contact date spread over the next weeks so drafts arrive a few at a time. The Clients tab shows only active clients. Every other client record (prospects from the CRM, leads you are following up, paused and lost clients) is listed under "In CRM" on the Leads tab with its status; once one is made active it moves to Clients. Client counts on the menu and the Today tab count active clients only.
-- Leads tab: once a day, after the overnight run, the leads agent searches the web for small and medium businesses in Angola, the UK, Portugal and Namibia that need a website, CRM, domains, business email, hosting or an answer to missed calls (software second). Each day takes one market and one angle from the `lead_angle` table (a weight of 2 comes up twice as often; edit it in SQL to steer the agent). Before you see a lead, its evidence is checked in code, for free: the website's HTTPS, whether it works on a phone, a free email address on the site, whether the domain receives email and who hosts it. Confirmed needs raise the fit, contradicted ones lower it or drop the lead, and the same website under another name is not saved twice. Every lead shows what was observed, a fit score, a suggested opening and the pages it came from; leads with no source are dropped in code. Track as lead adds it to the Clients tab and starts a four-touch outreach sequence (opener, value, observation, last note), each drafted on its day for you to send; They replied stops it. With the CRM connected and an email in the lead's public contact, it also proposes adding it to the CRM as a prospect; Add to CRM creates it in the CRM once you give a business contact; Dismiss asks why, and the next run learns from it. It never contacts anyone, skips the search while 30 new leads wait, and uses at most 8 web searches a run (`SYNAUT_LEADS_SEARCHES`). Its brief is the `leads_focus` row in `coordinator_config`; switch it off from the Leads tab.
+- Leads tab: once a day, after the overnight run, the leads agent searches the web for small and medium businesses in Angola, the UK, Portugal and Namibia that need a website, CRM, domains, business email, hosting or an answer to missed calls (software second). Each day takes one market and one angle from the `lead_angle` table (a weight of 2 comes up twice as often; edit it in SQL to steer the agent). Before you see a lead, its evidence is checked in code, for free: the website's HTTPS, whether it works on a phone, a free email address on the site, whether the domain receives email and who hosts it. Confirmed needs raise the fit, contradicted ones lower it or drop the lead, and the same website under another name is not saved twice. Every lead shows what was observed, a fit score, a suggested opening and the pages it came from; leads with no source are dropped in code. Track as lead adds it to the Clients tab and starts the five-touch outreach sequence (see [How Auti turns leads into clients](#how-auti-turns-leads-into-clients)), each touch drafted on its day for you to send; a reply stops it. With the CRM connected and an email in the lead's public contact, it also proposes adding it to the CRM as a prospect; Add to CRM creates it in the CRM once you give a business contact; Dismiss asks why, and the next run learns from it. It never contacts anyone, skips the search while 30 new leads wait, and uses at most 8 web searches a run (`SYNAUT_LEADS_SEARCHES`). Its brief is the `leads_focus` row in `coordinator_config`; switch it off from the Leads tab.
 - Accounts agent: after every run, overdue CRM invoices become reminders (friendly up to 14 days late, firm to 45, then final) and services ending in 45 days without auto-renew become renewal notes. Same invoice at most once a week. New enquiries that arrive in the CRM (website form, quiz, missed calls) are due the same day, so a reply draft is waiting within hours.
 - Send from the CRM: an email draft to a client that is in the CRM has a Send from the CRM button, which emails it from the CRM as Auti's CRM user and logs it; a WhatsApp draft has Send by WhatsApp from the CRM, which sends it through the client's thread in the CRM inbox. An email address is checked first (the CRM's own check, or Auti's: well formed, not a test or throwaway domain, the domain takes mail); one that cannot take mail is never sent to, and outreach to it stops. Payment reminders go as WhatsApp when the client has a mobile in the CRM, and a partly paid invoice is thanked for what came in and asked only for what is left. That user needs the Inbox permission to send; reading invoices needs Invoices (view) and the ads numbers in reports need Social (view). Nothing is ever sent without your tap.
 - Reports: Mondays the weekly report and the 1st the monthly one (Documents tab, Reports): leads found and taken on, messages sent and replies, tasks and milestones, money owed and renewals, ads spend and cost per lead (with ads that spent without a lead), and Auti's own AI spend, with what needs you and the next three things. Counted in code; Claude only writes the story (`AUTI_REPORT_MODEL`, default Haiku). Force one with `REPORT=week node src/run.js report`.
@@ -131,11 +131,44 @@ Natural voice (optional): set one key in the Vercel project and replies are spok
 - Chat stores only token counts (`agent_usage`), never what was said.
 - Icons are drawn by `python3 scripts/make-icons.py`.
 
+## How Auti turns leads into clients
+
+The playbook lives in `src/pipeline.js` (stages, rhythm, styles), `src/retention.js` (the drafts) and
+`src/replies.js` (reading answers). Nothing reaches a lead without you, except outreach touches to CRM prospects when
+you switch `outreach_autosend` on.
+
+- **Three styles, two options.** Every message to a lead is drafted three ways: *What we noticed* (one specific thing
+  seen on their business and what it costs them), *A free tip* (a fix they could make this week) and *Straight to the
+  point* (two or three sentences). On the Approvals card you switch between them; the one marked ★ is recommended.
+  Each message has one goal and ends with a choice of two easy next steps, never "let me know". No link in a first
+  message, and every follow-up adds something new.
+- **Learning which style works.** A lead keeps the style its sequence started with, so each sequence tests one style.
+  Until every style has 8 sends Auti tries the least used; then it recommends the one with the most answers over the
+  last 120 days (a no is counted apart), and every fifth pick tries the runner-up. Pin one style, or Auto, under
+  *What gets answers* on the Leads tab (`outreach_style` in `coordinator_config`).
+- **The cold sequence.** Five touches on days 0, 3, 7, 12 and 19: an opener with no link or price, a useful idea, a
+  different observation with the free 15-minute call (the booking link from the CRM's lead capture settings), a quick
+  question they can answer with 1, 2 or 3, and a last note. No answer: nurture, a useful note every two months, and
+  lost after the third.
+- **Answers.** Before drafting, every run reads the CRM inbox for leads Auti has written to. A no or "remove me" ends
+  it, not now waits until the date they gave (or two months), out of office changes nothing, and anything else stops
+  the sequence and moves the lead to Replied. When they are waiting for us, the answer is drafted in the three styles,
+  in their language, answering their question first. On a card, *They replied…* records an answer you saw elsewhere.
+- **Stages.** New, Contacted, Replied, Qualified, Call booked, Proposal sent, Won, with Nurture and Lost on the side.
+  Each stage has its own rhythm (an enquiry is answered the same day; after a proposal: 2 days, 2 weeks, 2 months).
+  The CRM's own lead stage (qualified, booked, won, lost) arrives with the client sync; you move a lead from its card
+  on the Clients tab, and Won makes it a client in the CRM too. Automatic moves only go forward.
+- **Numbers.** The Leads tab shows where every lead stands, the last 90 days from new to won, answers per style and
+  per touch, and the leads agent's angles that got answers (which it reads before its next search).
+
 ## Cold outreach from your own lists
 
-Two ways to hand Auti a list of businesses to approach. Either way each one gets the four-touch outreach sequence:
-every touch is a draft on the Approvals tab that you send yourself, and a reply stops it. New sequences start a few
-a day (the `outreach_per_day` standing instruction, 5 to begin with), strongest first.
+Two ways to hand Auti a list of businesses to approach. Either way each one gets the five-touch outreach sequence:
+every touch is a draft on the Approvals tab that you send yourself, and a reply stops it. New sequences start at the
+pace you set on the Agents tab (*New businesses a day*, the `outreach_per_day` standing instruction, 5 to begin
+with), strongest first; only sequences still waiting for their first touch count against it. With *Outreach emails
+send themselves* on, the touches to CRM prospects go out by themselves on working days in office hours, up to five a
+day per new business (never more than 50), and answers to replies still wait for you.
 
 - **In the CRM:** import or add them as prospects with a tag starting `outreach-` (for example `outreach-oct26`).
   The next run picks them up. Tag one `outreach-sent-1` (or 2, 3) if you already sent that touch, or `no-outreach`

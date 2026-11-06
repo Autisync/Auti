@@ -118,4 +118,35 @@ await check('the coordinator and the chat are told what the systems do now', asy
   assert.match(s, /Onboarding form/); assert.match(s, /crm\.delivery/); assert.match(s, /outreach-sent-N/);
 });
 
+await check('the pace counts new businesses: sequences under way never push the next start back', async () => {
+  const pdb = new PGlite();
+  await migrate(pdb, () => {});
+  const seq = (name, step) => pdb.query(
+    `INSERT INTO clients (name, market, status, outreach_step, next_contact_due) VALUES ($1, 'uk', 'lead', $2, current_date + 2)`, [name, step]);
+  for (let i = 0; i < 12; i++) await seq(`Running ${i}`, 2 + (i % 4));          // twelve sequences past their first touch
+  assert.equal(await outreach.nextSlot(pdb, 5), 0);                               // a new business can start today
+  for (let i = 0; i < 7; i++) await seq(`Waiting ${i}`, 1);                     // seven still waiting for touch 1
+  assert.equal(await outreach.nextSlot(pdb, 5), 1);                               // five today, the next ones tomorrow
+  assert.equal(await outreach.nextSlot(pdb, 5, 3), 2);
+  await pdb.query(`INSERT INTO clients (name, market, status, outreach_step, outreach_ended) VALUES ('Ended', 'uk', 'lead', 1, 'replied')`);
+  assert.equal(await outreach.nextSlot(pdb, 5), 1);                               // an ended one holds no day
+});
+
+await check('the owner sets new businesses a day on the Agents tab; the instructions say what autosend does', async () => {
+  const pdb = new PGlite();
+  await migrate(pdb, () => {});
+  const value = async (key) => (await pdb.query(`SELECT value FROM coordinator_config WHERE key = $1`, [key])).rows[0].value;
+  assert.match(await value('outreach_per_day'), /^5: .*Set it on the Agents tab/);
+  assert.match(await value('outreach_autosend'), /up to five a day for each new business a day \(outreach_per_day\).*Answers to replies are always drafts/);
+  assert.deepEqual(await outreach.setOutreachPerDay(pdb, 2), { outreach_per_day: 2 });
+  assert.match(await value('outreach_per_day'), /^2: at most this many new cold-outreach sequences start each day/);
+  assert.equal(await outreach.outreachPerDay(pdb), 2);
+  for (const bad of [0, 11, 2.5, 'two', null]) await assert.rejects(outreach.setOutreachPerDay(pdb, bad), /whole number from 1 to 10/);
+  const web = await import('../src/web.js');
+  assert.equal((await web.getDashboard(pdb)).outreachPerDay, 2);
+  const { PAGE } = await import('../src/page.js');
+  assert.match(PAGE, /New businesses a day:/); assert.match(PAGE, /setting: 'outreach_per_day'/);
+  new Function(PAGE.match(/<script>([\s\S]*?)<\/script>/)[1]);
+});
+
 console.log(`\n${passed} passed`);
