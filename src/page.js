@@ -2242,6 +2242,9 @@ function leadCard(l) {
     const ck = $('div', 'detail checks');
     (l.checks.confirmed || []).forEach((x) => ck.append($('span', 'tag ok', '✓ ' + x)));
     (l.checks.contradicted || []).forEach((x) => ck.append($('span', 'tag bad', '✗ ' + x)));
+    // Auti looked for an email on their own site and found none: it stays here for you, but no longer holds up the search.
+    const es = l.checks.email_search;
+    if (es && !es.email && es.reason === 'no address on the site' && !/@/.test(l.contact_route || '')) ck.append($('span', 'tag', 'no email on their website'));
     if (ck.children.length) el.append(ck);
   }
   if (l.pitch) { const p = $('div', 'detail'); p.append($('b', null, 'Opening: '), document.createTextNode(l.pitch)); el.append(p); }
