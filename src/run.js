@@ -1,4 +1,4 @@
-// Entry point for the scheduler:  node src/run.js nightly|standup|learn|retention|accounts|leads|report|daily|import-leads <file>|import-docs <file>
+// Entry point for the scheduler:  node src/run.js nightly|standup|learn|retention|accounts|leads|audit|report|daily|import-leads <file>|import-docs <file>
 // In CI (GitHub Actions) logs can be public, so the brief's content is never
 // printed there; only counts. Read the brief with `npm run brief` instead.
 import { connect } from './db.js';
@@ -19,6 +19,7 @@ import { importPack } from './documents.js';
 import { readReplies } from './replies.js';
 import { bookingLinkFrom } from './pipeline.js';
 import { recordPayments, runLearning } from './learning.js';
+import { runAudits } from './audit.js';
 import fs from 'node:fs';
 
 const mode = process.argv[2] || 'nightly';
@@ -185,6 +186,18 @@ async function leads() {
   await leadsIntoCrm();
 }
 
+// After the leads agent, each night: the online presence of leads that could use what we sell (src/audit.js): their
+// website, booking and CRM tools, enquiries and calls, social media, Google profile and reviews, the gaps, and which
+// product fixes each. The cheaper model with a few web searches per lead. The summary goes on the lead, and for leads
+// in the CRM into a note on their client there. Research only; counts only in the log, never a business's name.
+async function audit() {
+  const crm = crmConfigured() ? crmClient() : null;
+  const researcher = claudeResearcher({ model: process.env.AUTI_AUDIT_MODEL || CHEAP, maxSearches: Number(process.env.AUTI_AUDIT_SEARCHES) || 3 });
+  const out = await runAudits({ db, researcher, crm, max: Number(process.env.AUTI_AUDITS_PER_RUN) || 20, speed: process.env.AUTI_PAGESPEED === 'off' ? null : 'auto' });
+  console.log(`[${new Date().toISOString()}] lead audits ` + (out.skipped ? `skipped: ${out.skipped}`
+    : `considered=${out.considered} done=${out.done} unidentified=${out.unidentified} not_business=${out.not_business} failed=${out.failed} next_run=${out.later} searches=${out.searches} crm_notes=${out.noted}${out.note_failed ? ` crm_notes_failed=${out.note_failed}` : ''}`));
+}
+
 // Leads with a business email go straight into the CRM and the outreach queue (leads_to_crm). Counts only.
 async function leadsIntoCrm() {
   if (!crmConfigured()) return;
@@ -226,7 +239,7 @@ async function importDocsFile() {
 }
 
 try {
-  const MODES = { learn, retention, leads, accounts, report, daily, 'import-leads': importLeadsFile, 'import-docs': importDocsFile };
+  const MODES = { learn, retention, leads, audit, accounts, report, daily, 'import-leads': importLeadsFile, 'import-docs': importDocsFile };
   await (MODES[mode] ? MODES[mode]() : coordinator());
 } catch (err) {
   console.error(`[${new Date().toISOString()}] ${mode} run failed: ${err.message}`);

@@ -502,6 +502,13 @@ ${FONTS}
   .lead .links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 13px; }
   .lead .links a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
   .lead form.card { margin-top: 10px; }
+  details.audit { margin-top: 8px; border-left: 2px solid var(--gold); padding-left: 10px; }
+  details.audit summary { cursor: pointer; line-height: 1.45; }
+  details.audit summary b { color: var(--gold); }
+  details.audit .audit-h { margin-top: 10px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  details.audit .checks { margin-top: 8px; }
+  details.audit .links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 13px; }
+  details.audit .links a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
   /* the lead playbook: where leads stand, and the three ways to say a message */
   .pipeline { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
   .pipe-step { border: 1px solid var(--line); border-radius: 12px; padding: 10px; position: relative; }
@@ -1537,6 +1544,7 @@ function clientCard(c) {
   if (c.next_contact_due) meta.append($('div', null, 'next ' + day(c.next_contact_due)));
   if (c.contact_every_days) meta.append($('div', null, 'every ' + c.contact_every_days + ' d'));
   el.append(t, meta, $('div', 'desc', [human(c.market), c.sector, c.owner, c.lost_reason ? 'lost: ' + c.lost_reason : null].filter(Boolean).join(' · ')));
+  if (c.audit) { const audit = auditBox(c.audit); if (audit) el.append(audit); }
   if (c.contacts?.length) {
     const ul = $('ul', 'contacts');
     c.contacts.forEach((x) => { const li = $('li'); li.append($('span', 'when', day(x.happened_at) + (x.channel ? ' · ' + x.channel : '')), document.createTextNode(x.summary)); ul.append(li); });
@@ -1692,7 +1700,7 @@ function viewAgents(root) {
     const use = $('div', 'usage');
     [['day', '24 h'], ['week', '7 days'], ['month', '30 days']].forEach(([k, label]) => {
       const u = a.usage[k]; const box = $('div', 'use');
-      box.append($('div', 'w', label), $('div', 't', fmtTok(u.input + u.output)), $('div', 'c', fmtUsd(u.cost) + ' · ' + u.calls + (a.id === 'coordinator' ? ' runs' : ' replies')));
+      box.append($('div', 'w', label), $('div', 't', fmtTok(u.input + u.output)), $('div', 'c', fmtUsd(u.cost) + ' · ' + u.calls + (a.id === 'coordinator' ? ' runs' : a.id === 'audit' ? ' audits' : ' replies')));
       use.append(box);
     });
     const meter = $('div', 'meter'); const bar = $('i'); bar.style.width = Math.round(100 * (a.usage.month.input + a.usage.month.output) / max) + '%'; meter.append(bar);
@@ -1713,6 +1721,16 @@ function viewAgents(root) {
       c.append(mem);
     }
     if (a.id === 'companion') { const vb = voiceUseBox(data.voice, 'detail'); if (vb) c.append(vb); }
+    // The nightly lead audits; switching them off keeps the audits already made on the leads.
+    if (a.id === 'audit') {
+      const val = data.leadAudit;
+      const b = $('button', 'more', val == null ? 'Audits leads: after the next run' : 'Audits leads: ' + (val ? 'on' : 'off'));
+      b.setAttribute('aria-pressed', String(val === true));
+      b.title = val == null ? 'The next scheduled run sets this up' : val ? 'Tap to stop the nightly audits; the ones already made stay on the leads' : 'Tap to audit leads each night and add the findings to their CRM notes';
+      b.disabled = val == null;
+      b.onclick = async () => { b.disabled = true; try { await post('/api/autonomy', { setting: 'lead_audit', enabled: !val }); await load(); } catch (e) { b.disabled = false; b.textContent = e.message; } };
+      c.append(b);
+    }
     // Only the two chat agents can be talked to; for the others, Auti answers questions about their work.
     if (AGENT_INFO[a.id]) { const t = $('button', 'more', 'Talk to ' + a.name + ' →'); t.onclick = () => openChat(a.id); c.append(t); }
     else if (a.id !== 'coordinator') { const t = $('button', 'more', 'Ask Auti about ' + a.name + ' →'); t.onclick = () => openChat('assistant', 'What has the ' + a.name + ' agent done lately, and what has it learned?'); c.append(t); }
@@ -2247,6 +2265,7 @@ function leadCard(l) {
     if (es && !es.email && es.reason === 'no address on the site' && !/@/.test(l.contact_route || '')) ck.append($('span', 'tag', 'no email on their website'));
     if (ck.children.length) el.append(ck);
   }
+  const audit = auditBox(l.audit); if (audit) el.append(audit);
   if (l.pitch) { const p = $('div', 'detail'); p.append($('b', null, 'Opening: '), document.createTextNode(l.pitch)); el.append(p); }
   if (l.contact_route) el.append($('div', 'detail', 'Public contact: ' + l.contact_route));
   if (l.dismiss_reason) el.append($('div', 'detail', 'Dismissed: ' + l.dismiss_reason));
@@ -2277,6 +2296,44 @@ function leadCard(l) {
       'Dismiss', (v) => decide({ action: 'dismiss', reason: v.reason }), () => { leadForm[l.id] = null; draw(); }));
   }
   return el;
+}
+
+// What Auti found when it audited the business online (src/audit.js): the summary, a few measured facts, then (opened)
+// what they use now, the gaps and what we can offer, the line to open with, and the pages it used.
+const AUDIT_NOW = [['website', 'Website'], ['booking_crm', 'Booking and CRM'], ['enquiries_calls', 'Enquiries and calls'], ['social', 'Social media'], ['google_business', 'Google profile and reviews']];
+function auditBox(a) {
+  if (!a) return null;
+  if (a.status === 'unidentified') return $('div', 'detail', 'Online audit ' + ago(a.created_at) + ': Auti could not be sure it found this business online, so nothing was noted.');
+  const box = $('details', 'audit');
+  const head = $('summary'); head.append($('b', null, 'Online audit: '), document.createTextNode(a.summary || '')); box.append(head);
+  const f = a.facts || {};
+  const tags = $('div', 'detail checks');
+  const tag = (txt, cls) => tags.append($('span', 'tag' + (cls ? ' ' + cls : ''), txt));
+  if (f.own_site === false) tag(f.social_page ? 'only a ' + f.social_page + ' page' : 'no website', 'bad');
+  if (f.site && f.site !== 'up') tag('website ' + f.site, 'bad');
+  if (f.platform) tag(f.platform);
+  const ps = f.pagespeed || {};
+  if (ps.performance != null) tag('speed ' + ps.performance + '/100 on phones', ps.performance < 50 ? 'bad' : ps.performance >= 90 ? 'ok' : '');
+  else if (f.answered_s != null) tag('answered in ' + f.answered_s + ' s', f.answered_s > 3 ? 'bad' : '');
+  if (ps.seo != null) tag('SEO ' + ps.seo + '/100', ps.seo < 70 ? 'bad' : ps.seo >= 90 ? 'ok' : '');
+  if (f.mobile === false) tag('not built for phones', 'bad');
+  if (f.https === false && f.site === 'up') tag('no HTTPS', 'bad');
+  if (f.rating && f.rating.value) tag('rated ' + f.rating.value + (f.rating.count ? ' from ' + f.rating.count : '') + ' on their site');
+  if (tags.children.length) box.append(tags);
+  const au = a.audit || {};
+  const line = (label, txt) => { const d = $('div', 'detail'); if (label) d.append($('b', null, label + ': ')); d.append(document.createTextNode(txt || '')); return d; };
+  const part = (title, rows) => { if (rows.length) { box.append($('div', 'audit-h', title)); rows.forEach((r) => box.append(r)); } };
+  part('What they use now', AUDIT_NOW.filter(([k]) => au.current && au.current[k]).map(([k, label]) => line(label, au.current[k])));
+  part('Gaps', (au.gaps || []).map((g) => line(g.gap, [g.impact, g.evidence ? '(' + g.evidence + ')' : null].filter(Boolean).join(' '))));
+  part('What we can offer', (au.offers || []).map((o) => line(SERVICE_NAME[o.service] || o.service, o.benefit)));
+  if (a.opener) { box.append($('div', 'audit-h', 'Open with')); box.append(line(null, a.opener)); }
+  box.append($('div', 'detail', ['Audited ' + ago(a.created_at), a.crm_noted_at ? 'noted in the CRM ' + ago(a.crm_noted_at) : null].filter(Boolean).join(' · ')));
+  if ((a.sources || []).length) {
+    const links = $('div', 'links');
+    a.sources.forEach((s, i) => { let host = s; try { host = new URL(s).hostname.replace(/^www\\./, ''); } catch (e) {} const x = $('a', null, 'Page ' + (i + 1) + ': ' + host); x.href = s; x.target = '_blank'; x.rel = 'noopener noreferrer'; links.append(x); });
+    box.append(links);
+  }
+  return box;
 }
 
 // A change in the CRM that Auti proposed. Approving runs it in the CRM straight away.

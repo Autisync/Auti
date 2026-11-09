@@ -46,6 +46,12 @@ export const AGENTS = [
     schedule: 'Daily, after the overnight run',
   },
   {
+    id: 'audit',
+    name: 'Lead audits',
+    role: 'Audits the online presence of every lead that could use what we sell: their website (the platform it runs on, how fast it is, whether it works on phones, the SEO basics), booking and CRM tools, how they take enquiries and calls, social media, and their Google profile and reviews. It reads their own site for free (with Google\'s PageSpeed scores), then a few web searches for what a site cannot show. For each one it lists the gaps that lose them clients and which of our products fixes each, with the benefit for them, and keeps a short summary on the lead and in a note on its client in the CRM. The first messages to them open with something specific from it. It never contacts anyone; each lead is audited again after four months.',
+    schedule: 'Daily, after the leads agent (up to 20 leads a night)',
+  },
+  {
     id: 'assistant',
     name: 'Auti (chat)',
     role: 'Answers your questions about the company, with the same view of it as the coordinator, and can look at your GitHub repos. It can advise but never approve or change anything.',

@@ -36,7 +36,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45          # the leads agent (15 min at most) and the lead audits (20) are the long steps
     env:
       CI: 'true'
       JARVIS_QUIET: '1'          # logs are public: never print the brief itself
@@ -112,6 +112,20 @@ jobs:
         env:
           LEADS_FOCUS: ${{ inputs.focus || 'rotation' }}   # uk-trades: UK trades losing calls, for CallCatch
         run: node src/run.js leads
+      # Then the online presence of leads that could use what we sell: their website (platform, speed, phones, SEO),
+      # booking and CRM tools, how they take enquiries and calls, social media, Google profile and reviews; the gaps,
+      # and which product fixes each (src/audit.js). The cheaper model, at most 3 web searches a lead, up to 20 leads a
+      # night. The summary goes on the lead (Leads tab) and into a note on its client in the CRM. Research only; it never
+      # contacts anyone, and the log shows counts only. Switch it off on the Agents tab. An optional PAGESPEED_API_KEY
+      # secret raises Google's free PageSpeed quota; without it Auti uses the shared one while it lasts.
+      - name: Lead audits
+        if: steps.mode.outputs.mode == 'nightly'
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          AUTI_AUDIT_MODEL: ${{ vars.AUTI_AUDIT_MODEL }}
+          PAGESPEED_API_KEY: ${{ secrets.PAGESPEED_API_KEY }}
+        run: node src/run.js audit
       # Mondays the weekly report, the 1st the monthly one. Saved in the database (Documents tab); nothing is printed.
       - name: Reports
         if: steps.mode.outputs.mode == 'nightly'
