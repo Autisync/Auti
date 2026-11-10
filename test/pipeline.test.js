@@ -12,7 +12,7 @@ const db = new PGlite();
 await migrate(db, () => {});
 const pipeline = await import('../src/pipeline.js');
 const { runRetention, clientsDue } = await import('../src/retention.js');
-const { readReplies, REPLIES_TOOL } = await import('../src/replies.js');
+const { readReplies, REPLIES_TOOL, daysUntil } = await import('../src/replies.js');
 const web = await import('../src/web.js');
 const crm = await import('../src/crm.js');
 
@@ -362,6 +362,19 @@ await check('the leads agent records its angle and hears which angles got answer
   const { user } = await leadsRequest(db, { focus });
   assert.match(user, /per angle \(contacted, replied, won\)/);
   assert.match(user, /missed calls: trades answering by mobile only","contacted":1,"replied":1/);
+});
+
+await check('a date the lead names is that many calendar days away, whatever the hour of the run', async () => {
+  // A run before noon UTC used to land a day late (295 days became 296).
+  assert.equal(daysUntil('2027-09-01', new Date('2026-11-10T00:51:00Z')), 295);
+  assert.equal(daysUntil('2027-09-01', new Date('2026-11-10T11:59:00Z')), 295);
+  assert.equal(daysUntil('2027-09-01', new Date('2026-11-10T23:59:00Z')), 295);
+  assert.equal(daysUntil('2026-11-11', new Date('2026-11-10T00:01:00Z')), 1);
+  assert.equal(daysUntil('2026-11-10', new Date('2026-11-10T18:00:00Z')), 0);
+  assert.equal(daysUntil('2026-11-01', new Date('2026-11-10T18:00:00Z')), -9);   // in the past: the 60-day default applies
+  assert.equal(daysUntil('after the summer'), null);
+  assert.equal(daysUntil('2026-13-45'), null);
+  assert.equal(daysUntil(undefined), null);
 });
 
 console.log(`\n${passed} passed`);
