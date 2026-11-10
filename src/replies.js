@@ -13,6 +13,15 @@ export const INTENT_WORDS = {
   wrong_person: 'wrong person', auto_reply: 'automatic reply', other: 'a reply',
 };
 const ANSWERED = ['interested', 'question', 'wrong_person', 'other', 'not_now'];   // these get an answer drafted
+
+// Whole calendar days from today to a YYYY-MM-DD date the lead named, at any hour of the run. Today is the UTC
+// date, the database's current_date, which next_contact_due counts from. null when it is not a date.
+export function daysUntil(date, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return null;
+  const day = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(day)) return null;
+  return Math.round((day - Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())) / 864e5);
+}
 const CHANNELS = ['email', 'whatsapp', 'instagram', 'facebook'];                    // what a draft can be sent on
 const MAX = 12;
 
@@ -206,7 +215,7 @@ Call ${REPLIES_TOOL.name} once, with one entry per lead.`;
       await markReplied(tx, id, at, intent);
       // A draft written before they answered no longer fits.
       await tx.query(`UPDATE follow_up SET status = 'dropped', decided_at = now() WHERE client_id = $1 AND status = 'awaiting_approval'`, [id]);
-      const later = /^\d{4}-\d{2}-\d{2}$/.test(String(r.later || '')) ? Math.ceil((Date.parse(`${r.later}T12:00:00Z`) - now.getTime()) / 864e5) : null;
+      const later = daysUntil(r.later, now);
       const days = later >= 1 && later <= 365 ? later : null;
       const stage = ['not_interested', 'unsubscribe'].includes(intent) ? 'lost' : intent === 'not_now' ? 'nurture' : 'replied';
       // Waiting for us: the answer is drafted now. Already answered (in the CRM inbox): a follow-up in two days if it stalls.
