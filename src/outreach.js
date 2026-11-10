@@ -6,6 +6,7 @@
 // A business already contacted (tag outreach-sent-N, or touch_sent in an imported list) carries on from the next touch.
 import { GAP, TOUCHES } from './pipeline.js';
 import { LEAD_SERVICES, decideLead, leadNotes, COUNTRY } from './leads.js';
+import { bounceOf, checkPause, hardBounced } from './bounces.js';
 
 const DEFAULT_PER_DAY = 5;
 const MARKETS = ['angola', 'uk', 'portugal', 'namibia'];
@@ -227,7 +228,8 @@ export async function outreachForContext(db) {
            count(*) FILTER (WHERE outreach_step IS NOT NULL AND outreach_ended IS NULL AND next_contact_due > current_date)::int AS queued,
            count(*) FILTER (WHERE outreach_ended = 'replied')::int AS replied,
            count(*) FILTER (WHERE outreach_ended = 'finished')::int AS finished,
-           count(*) FILTER (WHERE outreach_ended = 'bad_email')::int AS bad_email
+           count(*) FILTER (WHERE outreach_ended = 'bad_email')::int AS bad_email,
+           count(*) FILTER (WHERE outreach_ended = 'bounced')::int AS bounced
       FROM clients`).catch(() => ({ rows: [{}] }))).rows[0];
   return { ...r, per_day: await outreachPerDay(db).catch(() => DEFAULT_PER_DAY) };
 }
@@ -259,7 +261,9 @@ export async function leadsToCrm(db, crm, { max = 20, resolver, checkEmail } = {
   for (const l of rows) {
     const email = String(l.contact_route || '').match(EMAIL)?.[0];
     if (!email) { out.no_email++; continue; }
-    const v = await check(email, { resolver }).catch(() => ({ valid: null }));
+    let v = await check(email, { resolver }).catch(() => ({ valid: null }));
+    // An address an email of ours already bounced from (src/bounces.js) is not tried again.
+    if (v.valid !== false && await hardBounced(db, email).catch(() => null)) v = { valid: false, reason: 'an email to it bounced before' };
     if (v.valid === false) {
       out.bad_email++;
       // Said once on the lead's card (✗ in its checks), so the owner sees why it did not go to the CRM.
@@ -307,7 +311,8 @@ export async function repliedSince(crm, crmId, since) {
   for (const c of (list?.conversations || []).filter((x) => String(x.contact_id) === String(crmId))) {
     if (since && c.last_message_at && new Date(c.last_message_at) < since) continue;
     const one = await crm.get(`/conversations/${c.id}`);
-    if ((one?.messages || []).some((m) => m.direction === 'inbound' && (!since || new Date(m.created_at) >= since))) return true;
+    // A bounce notice filed as theirs is the mail system, not them (src/bounces.js).
+    if ((one?.messages || []).some((m) => m.direction === 'inbound' && (!since || new Date(m.created_at) >= since) && !bounceOf(m))) return true;
   }
   return false;
 }
@@ -318,10 +323,14 @@ export async function repliedSince(crm, crmId, since) {
  * of the sequences under way keeps its day), never more than AUTOSEND_MAX. Never a follow-up to an existing client, never WhatsApp (a first
  * WhatsApp to a business needs an approved template), and never to someone who wrote back: that ends their sequence.
  * Nor to an address that cannot take mail (the CRM's check, or src/emailcheck.js): that touch is dropped and the
- * sequence ends as bad_email, with a line in the journal. An address that could not be checked is sent to.
+ * sequence ends as bad_email, with a line in the journal. An address that could not be checked is sent to; one an
+ * email already bounced from is not. Bounces first (src/bounces.js): too many since the owner switched it on, or one
+ * that says our own mail was held back, and autosend switches itself off before sending anything.
  */
 export async function autoSendOutreach(db, crm, { resolver } = {}) {
   if (!(await settingOn(db, 'outreach_autosend'))) return { skipped: 'switched off', sent: 0 };
+  const guard = await checkPause(db);
+  if (guard.pause) return { skipped: 'paused', paused: true, sent: 0, bounced: guard.bounced, blocked: guard.blocked, window_sent: guard.sent };
   const { decideFollowUp } = await import('./web.js');
   const { checkClientEmail, sendFollowUpViaCrm } = await import('./crm.js');
   // A day's total, not a run's: the scheduled runs come several times a day.
@@ -345,7 +354,7 @@ export async function autoSendOutreach(db, crm, { resolver } = {}) {
         continue;
       }
       if (!String(f.subject || '').trim() || !String(f.body || '').trim()) { out.failed++; continue; }
-      const chk = await checkClientEmail(crm, f.crm_id, { resolver });
+      const chk = await checkClientEmail(crm, f.crm_id, { resolver, db });
       if (chk.valid === false) {
         await decideFollowUp(db, { id: f.id, decision: 'drop', by: 'auti', reason: 'the address cannot take mail' });
         const why = `${chk.email || 'their email address'} cannot receive email (${chk.reason})`;

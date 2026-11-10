@@ -11,6 +11,7 @@ import { outreachPerDay } from './outreach.js';
 import { milestonesByProject, openCheckins, projectHealth, ymd } from './projects.js';
 import { listLeads, leadsAgentOn } from './leads.js';
 import { latestAudits } from './audit.js';
+import { bounceStats } from './bounces.js';
 import { learningReady } from './learning.js';
 
 // Two ways in, both checked against DASHBOARD_PASSWORD:
@@ -147,11 +148,13 @@ export async function getDashboard(db) {
   const outreachStyle = await fixedStyle(db).catch(() => null);
   const agents = await agentsSummary(db);
   const voice = await voiceUsage(db).catch(() => null);      // the natural voice's characters this month, if set up
+  // Bounces against the autosend switch (src/bounces.js): the guard's numbers, and why Auti paused it if it did.
+  const bounces = await bounceStats(db).catch(() => null);
   return {
     latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools(),
     actions, autonomy: autonomy ? autonomy.enabled : null,   // null: not set up yet
     crmRequests, crmOn: crmConfigured(), leads, leadsOn, voice, checkins, pipeline, outreachStyle,
-    leadsToCrm: sw.leads_to_crm ?? null, outreachAutosend: sw.outreach_autosend ?? null, leadAudit: sw.lead_audit ?? null,
+    leadsToCrm: sw.leads_to_crm ?? null, outreachAutosend: sw.outreach_autosend ?? null, leadAudit: sw.lead_audit ?? null, bounces,
     outreachPerDay: await outreachPerDay(db).catch(() => null),
   };
 }
@@ -451,7 +454,7 @@ export async function sendFollowUpFromCrm(db, crm, { id, subject, body, next_con
   if (b.length > 8000) throw fail('message is too long');
   if (f.channel === 'email') {
     if (!s) throw fail('An email needs a subject and a message.');
-    const chk = await checkClientEmail(crm, f.crm_id, { resolver });
+    const chk = await checkClientEmail(crm, f.crm_id, { resolver, db });
     if (chk.valid === false) throw Object.assign(fail(badEmailMessage(chk, chk.phone), 422), { email_check: chk });
   }
   const sent = await sendFollowUpViaCrm(crm, { channel: f.channel, crmId: f.crm_id, subject: s, body: b });

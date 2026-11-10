@@ -407,14 +407,14 @@ await check('invoices paid after a reminder are found in the CRM, and clients wh
     throw new Error('the CRM said: not found');
   } };
   const out = await readReplies({ db, crm: inbox, brain: failing });           // no lead answered: the model is never asked
-  assert.deepEqual(out, { checked: 0, replies: 0, drafted: 0, auto: 0, answered: 1 });
+  assert.deepEqual(out, { checked: 0, replies: 0, drafted: 0, auto: 0, answered: 1, bounced: 0 });
   const f = await fu(db, msg);
   assert.equal(f.reply_intent, 'answered'); assert.equal(new Date(f.replied_at).toISOString(), at);
   assert.equal((await db.query(`SELECT count(*)::int AS n FROM follow_up WHERE client_id = $1 AND status = 'awaiting_approval'`, [k])).rows[0].n, 0);
   assert.equal((await db.query(`SELECT count(*)::int AS n FROM journal WHERE client_id = $1`, [k])).rows[0].n, 0);
   assert.equal((await db.query(`SELECT status::text AS s FROM clients WHERE id = $1`, [k])).rows[0].s, 'active');
   // Read once: the next run has nothing to read for them.
-  assert.deepEqual(await readReplies({ db, crm: inbox, brain: failing }), { checked: 0, replies: 0, drafted: 0, auto: 0, answered: 0 });
+  assert.deepEqual(await readReplies({ db, crm: inbox, brain: failing }), { checked: 0, replies: 0, drafted: 0, auto: 0, answered: 0, bounced: 0 });
 });
 
 await check('the Approvals cards ask why on drop, the Agents tab shows what Auti learned, and the nightly run studies first', async () => {

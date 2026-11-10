@@ -712,10 +712,21 @@ function dmRefusal(channel, lastInboundMs, now = Date.now()) {
 /**
  * Can this CRM client's email address take mail? The CRM's own check first (GET /clients/:id/email-check, which
  * answers { valid, reason }); where the CRM has none (404) or it fails, the address on the card is checked here
- * (src/emailcheck.js). Returns { email, valid: true | false | null, reason, source: 'crm' | 'local', phone? }.
- * phone is set when the card was read (so a refusal can offer WhatsApp without another call).
+ * (src/emailcheck.js). Returns { email, valid: true | false | null, reason, source: 'crm' | 'local' | 'bounce', phone? }.
+ * phone is set when the card was read (so a refusal can offer WhatsApp without another call). Given db, an address
+ * an email of ours bounced from because it does not exist (src/bounces.js) is refused too (source 'bounce').
  */
-export async function checkClientEmail(crm, crmId, { email, resolver } = {}) {
+export async function checkClientEmail(crm, crmId, { email, resolver, db } = {}) {
+  const out = await addressCheck(crm, crmId, { email, resolver });
+  // With the database: an address an email of ours bounced from (it does not exist) is not sent to again.
+  if (!db || out.valid === false || !out.email) return out;
+  const { hardBounced } = await import('./bounces.js');
+  const b = await hardBounced(db, out.email).catch(() => null);
+  if (!b) return out;
+  return { ...out, valid: false, reason: `an email to it bounced on ${new Date(b.bounced_at).toISOString().slice(0, 10)}: the address does not exist or cannot take mail`, source: 'bounce' };
+}
+
+async function addressCheck(crm, crmId, { email, resolver } = {}) {
   const id = needId(crmId, 'clientId');
   const placeholder = (address, extra = {}) => {
     const route = socialRouteOf(address);
@@ -834,7 +845,7 @@ export const OWNER_ACTIONS = {
   async crm_send_email(db, crm, { clientId, subject, body }, { resolver } = {}) {
     const id = needId(clientId, 'clientId');
     const s = needText(subject, 'subject', 300), b = needText(body, 'body', 8000);
-    const chk = await checkClientEmail(crm, id, { resolver });
+    const chk = await checkClientEmail(crm, id, { resolver, db });
     if (chk.valid === false) {
       const phone = chk.phone !== undefined ? chk.phone : (await clientCard(crm, id))?.phone || null;
       const instead = chk.social ? 'crm_send_dm' : phone ? 'crm_send_whatsapp' : null;
@@ -1025,7 +1036,7 @@ export function crmTools(db, { client = () => crmClient(), resolver } = {}) {
         return checkEmail(email, { resolver });
       }
       if (!clientId) throw new Error('give an email address or a clientId');
-      const { phone, ...out } = await checkClientEmail(client(), clientId, { resolver });
+      const { phone, ...out } = await checkClientEmail(client(), clientId, { resolver, db });
       return out;
     },
     check_phone: async ({ clientId }) => checkClientPhone(client(), clientId),

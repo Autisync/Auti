@@ -107,7 +107,8 @@ async function retention() {
   if (crm) {
     try {
       const r = await withModel('retention', (model) => claudeBrain({ model }), (brain) => readReplies({ db, crm, brain, bookingLink }));
-      console.log(`replies: leads_checked=${r.checked} answers=${r.replies} drafted=${r.drafted}${r.auto ? ` automatic=${r.auto}` : ''}${r.answered ? ` client_answers=${r.answered}` : ''}`);
+      console.log(`replies: leads_checked=${r.checked} answers=${r.replies} drafted=${r.drafted}${r.auto ? ` automatic=${r.auto}` : ''}${r.answered ? ` client_answers=${r.answered}` : ''}`
+        + `${r.bounced ? ` bounced=${r.bounced}` : ''}${r.bounce_failed ? ` bounce_check_failed=${r.bounce_failed}` : ''}`);
     } catch (err) { console.error(`reply check skipped: ${err.message}`); }
   }
   const out = await withModel('retention', (model) => claudeBrain({ model }), (brain) => runRetention({ db, brain, bookingLink }));
@@ -120,7 +121,9 @@ async function retention() {
         return;
       }
       const a = await autoSendOutreach(db, crmClient());
-      if (!a.skipped) console.log(`outreach autosend: sent=${a.sent} replied=${a.replied} bad_email=${a.bad_email} failed=${a.failed}`);
+      // Paused on bounces (src/bounces.js): counts only; the owner switches it back on from the Agents tab.
+      if (a.paused) console.log(`outreach autosend: paused itself on bounces (bounced=${a.bounced} held_back=${a.blocked} of sent=${a.window_sent})`);
+      else if (!a.skipped) console.log(`outreach autosend: sent=${a.sent} replied=${a.replied} bad_email=${a.bad_email} failed=${a.failed}`);
     } catch (err) { console.error(`outreach autosend skipped: ${err.message}`); }
   }
 }
