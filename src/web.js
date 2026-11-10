@@ -10,6 +10,7 @@ import { CADENCE, ENTRY, GAP, STAGES, STAGE_NAME, STYLES, TOUCHES, markReplied, 
 import { outreachPerDay } from './outreach.js';
 import { milestonesByProject, openCheckins, projectHealth, ymd } from './projects.js';
 import { listLeads, leadsAgentOn } from './leads.js';
+import { latestAudits } from './audit.js';
 import { learningReady } from './learning.js';
 
 // Two ways in, both checked against DASHBOARD_PASSWORD:
@@ -128,13 +129,18 @@ export async function getDashboard(db) {
   for (const t of tasks) t.by_synaut = bySynaut.has(t.id);
   const autonomy = (await db.query(`SELECT enabled FROM coordinator_config WHERE key = 'autonomy'`)).rows[0] || null;
   // The two switches from migration 018: leads straight into the CRM, and outreach that sends itself. null until it runs.
-  const sw = Object.fromEntries((await db.query(`SELECT key, enabled FROM coordinator_config WHERE key IN ('leads_to_crm', 'outreach_autosend')`)).rows.map((r) => [r.key, r.enabled]));
+  // And the lead audits' switch (migration 025).
+  const sw = Object.fromEntries((await db.query(`SELECT key, enabled FROM coordinator_config WHERE key IN ('leads_to_crm', 'outreach_autosend', 'lead_audit')`)).rows.map((r) => [r.key, r.enabled]));
   // CRM changes Auti proposed, waiting for the owner. Missing until migration 007 runs.
   const crmRequests = (await db.query(`
     SELECT id, kind, summary, reason, proposed_by, error, created_at FROM crm_request
      WHERE status = 'awaiting_approval' ORDER BY created_at`).catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;
   // Businesses the leads agent found. Missing until migration 008 runs.
   const leads = await listLeads(db);
+  // What Auti found when it audited each lead online (src/audit.js), on its card. Nothing before migration 025.
+  const audits = await latestAudits(db).catch(() => ({ byLead: {}, byClient: {} }));
+  for (const l of leads) l.audit = audits.byLead[l.id] || null;
+  for (const c of clients) if (c.status === 'lead') c.audit = audits.byClient[c.id] || null;
   const leadsOn = await leadsAgentOn(db);
   // The lead playbook: how far leads get, what gets replies, and the style the owner fixed (null: Auti picks).
   const pipeline = await pipelineStats(db);
@@ -145,7 +151,7 @@ export async function getDashboard(db) {
     latest, approvals, lastRun, projects, clients, journal, agents, tasks, people, followUps, tools: connectedTools(),
     actions, autonomy: autonomy ? autonomy.enabled : null,   // null: not set up yet
     crmRequests, crmOn: crmConfigured(), leads, leadsOn, voice, checkins, pipeline, outreachStyle,
-    leadsToCrm: sw.leads_to_crm ?? null, outreachAutosend: sw.outreach_autosend ?? null,
+    leadsToCrm: sw.leads_to_crm ?? null, outreachAutosend: sw.outreach_autosend ?? null, leadAudit: sw.lead_audit ?? null,
     outreachPerDay: await outreachPerDay(db).catch(() => null),
   };
 }

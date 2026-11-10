@@ -61,7 +61,7 @@ export function claudeResearcher({
   const client = new Anthropic({ apiKey, ...(fetch ? { fetch } : {}) });
 
   return {
-    model,
+    model, maxSearches,
     async research({ system, user, tool }) {
       const search = webSearchTool(model, maxSearches);
       const usage = { input: 0, output: 0, searches: 0 };
