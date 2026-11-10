@@ -2,7 +2,7 @@
 // sells, and records each one with the evidence it saw. The evidence is then checked in code (src/verify.js) before
 // the owner sees it. Research only: it never contacts anyone, and every lead waits for the owner, who tracks it as a
 // lead, adds it to the CRM, or dismisses it (the reason teaches the next run).
-import { adjustedFit, checkAll, domainOf } from './verify.js';
+import { adjustedFit, checkAll, domainOf, EMAIL_IN, findContactEmail, pooled } from './verify.js';
 import { AUTI_LEADS } from './crm.js';
 import { pipelineStats } from './pipeline.js';
 import { lessonsBlock, lessonsFor } from './learning.js';
@@ -100,9 +100,44 @@ Standing instructions from the owner:
 ${standing}${learned ? `\n\n${learned}` : ''}`;
 }
 
+// An email somewhere in a lead's public contact (the same test as leadsToCrm's, in SQL).
+const HAS_EMAIL = `COALESCE(contact_route, '') ~ '[[:alnum:]._+-]+@[[:alnum:]-]+[.][[:alnum:]]'`;
+
+// The leads that wait for the owner and hold up the next search. One with no email anywhere (Auti looked on its own
+// website and found none) stays on the Leads tab for the owner, but no longer holds up the search.
 export async function waitingLeads(db) {
-  return Number((await db.query(`SELECT count(*)::int AS n FROM lead WHERE status = 'new'`)).rows[0].n);
+  return Number((await db.query(`
+    SELECT count(*)::int AS n FROM lead
+     WHERE status = 'new'
+       AND NOT (checks->'email_search' IS NOT NULL AND checks->'email_search'->>'email' IS NULL AND NOT ${HAS_EMAIL})`)).rows[0].n);
 }
+
+// The leads still waiting without an email: Auti looks on each one's own website (src/verify.js), once per lead, at
+// most `max` a run. A found address is added to the lead's public contact, so leadsToCrm (src/outreach.js) can put
+// the lead in the CRM. The search is kept in its checks either way. It never contacts anyone.
+export async function findMissingEmails(db, { max = 12, finder = findContactEmail, fetch, now = new Date() } = {}) {
+  if (!(await leadsAgentOn(db))) return { skipped: 'switched off', checked: 0, found: 0 };
+  const rows = (await db.query(`
+    SELECT id, website, contact_route FROM lead
+     WHERE status = 'new' AND checks->'email_search' IS NULL AND NOT ${HAS_EMAIL}
+     ORDER BY found_at DESC LIMIT $1`, [max])).rows;
+  const results = await pooled(rows, (l) => finder(l, fetch ? { fetch } : {}));
+  let checked = 0, found = 0;
+  for (const [i, l] of rows.entries()) {
+    const r = results[i];
+    if (!r) continue;                                          // the search itself failed: tried again next run
+    const search = { at: now.toISOString(), email: r.email || null, page: r.page || null, checked: r.checked || 0, ...(r.reason ? { reason: r.reason } : {}) };
+    await db.query(`
+      UPDATE lead SET checks = COALESCE(checks, '{}'::jsonb) || jsonb_build_object('email_search', $2::jsonb),
+                      contact_route = CASE WHEN $3::text IS NULL THEN contact_route ELSE concat_ws(' · ', NULLIF(contact_route, ''), $3::text) END
+       WHERE id = $1`, [l.id, JSON.stringify(search), r.email ? withSite(r.email) : null]);
+    checked++;
+    if (r.email) found++;
+  }
+  return { checked, found };
+}
+
+const withSite = (email) => `${email} (on their website)`;
 
 // What the researcher is asked, read from the database without changing anything (npm run compare uses it too).
 export async function leadsRequest(db, { now = new Date(), focus = null } = {}) {
@@ -158,12 +193,15 @@ export async function runLeads({ db, researcher, now = new Date(), focus = null,
     // A lead the checks flatly contradict, with nothing confirmed, is not worth the owner's time.
     if (c && c.contradicted.length && !c.confirmed.length && fit <= 2) { dropped++; continue; }
     const domain = c?.domain ?? domainOf(l.website);
+    // An email the checks found on the business's own site joins its public contact (leadsToCrm reads it there).
+    const siteEmail = !EMAIL_IN.test(String(l.contact_route || '')) && c?.email_search?.email;
+    const contact = siteEmail ? [l.contact_route, withSite(siteEmail)].filter(Boolean).join(' · ') : l.contact_route;
     const res = await db.query(`
       INSERT INTO lead (company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources, model, domain, checks, checked_at, angle)
       SELECT $1, $2::market, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, CASE WHEN $14::jsonb IS NULL THEN NULL ELSE now() END, $15
        WHERE NOT EXISTS (SELECT 1 FROM clients WHERE lower(name) = lower($1) AND market = $2::market)
       ON CONFLICT DO NOTHING RETURNING id`,
-      [l.company, l.market, l.city, l.sector, l.website, l.services, fit, l.signals, l.pitch, l.contact_route, l.sources, model ?? null,
+      [l.company, l.market, l.city, l.sector, l.website, l.services, fit, l.signals, l.pitch, contact, l.sources, model ?? null,
         domain, c ? JSON.stringify(c) : null, focus.angle ?? null]);
     saved += res.rows.length;
   }

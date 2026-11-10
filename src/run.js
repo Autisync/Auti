@@ -6,7 +6,7 @@ import { claudeBrain, claudeResearcher } from './llm.js';
 import { runCoordinator } from './coordinator.js';
 import { syncGithub } from './github.js';
 import { runRetention } from './retention.js';
-import { focusByChoice, leadAngles, runLeads } from './leads.js';
+import { findMissingEmails, focusByChoice, leadAngles, runLeads } from './leads.js';
 import { crmClient, crmConfigured, crmSnapshot, syncCrmClients } from './crm.js';
 import { chooseModel, agentModels } from './models.js';
 import { askCheckins } from './projects.js';
@@ -169,19 +169,29 @@ async function report() {
 }
 
 async function leads() {
-  // Research only; nothing is ever sent. Counts only, never company names.
+  // Research only; nothing is ever sent. Counts only, never company names or addresses.
+  // First the leads still waiting without an email: Auti looks on their own website (at most 12 a run, src/verify.js).
+  // Those with an email then go to the CRM before the search, so a slow search never holds them up.
+  try {
+    const m = await findMissingEmails(db);
+    if (m.checked) console.log(`lead emails: checked=${m.checked} found=${m.found}`);
+  } catch (err) { console.error(`lead email search skipped: ${err.message}`); }
+  await leadsIntoCrm();
   // LEADS_FOCUS (the workflow's "focus" input) can point one run at an angle, e.g. UK trades for CallCatch.
   const focus = focusByChoice(process.env.LEADS_FOCUS, new Date(), await leadAngles(db));
   if (focus) console.log(`[${new Date().toISOString()}] leads focus: ${focus.market} (chosen)`);
   const out = await withModel('leads', (model) => claudeResearcher({ model }), (researcher) => runLeads({ db, researcher, focus }));
   console.log(`[${new Date().toISOString()}] leads done. ` + (out.skipped ? `skipped: ${out.skipped}` : `found=${out.found} saved=${out.saved} searches=${out.searches}${out.dropped ? ` dropped_by_checks=${out.dropped}` : ''}`));
-  // Leads with a business email go straight into the CRM and the outreach queue (leads_to_crm). Counts only.
-  if (crmConfigured()) {
-    try {
-      const c = await leadsToCrm(db, crmClient());
-      if (!c.skipped) console.log(`leads to crm: added=${c.added} no_email=${c.no_email} bad_email=${c.bad_email} refused=${c.refused}`);
-    } catch (err) { console.error(`leads to crm skipped: ${err.message}`); }
-  }
+  await leadsIntoCrm();
+}
+
+// Leads with a business email go straight into the CRM and the outreach queue (leads_to_crm). Counts only.
+async function leadsIntoCrm() {
+  if (!crmConfigured()) return;
+  try {
+    const c = await leadsToCrm(db, crmClient());
+    if (!c.skipped && c.considered) console.log(`leads to crm: added=${c.added} no_email=${c.no_email} bad_email=${c.bad_email} refused=${c.refused}`);
+  } catch (err) { console.error(`leads to crm skipped: ${err.message}`); }
 }
 
 // After the overnight run: the day's report to the team's WhatsApp group, through the CRM. Never prints the text.

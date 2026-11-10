@@ -261,4 +261,79 @@ await check('a run can be pointed at UK trades for CallCatch, or at one market, 
   assert.equal(leads.focusByChoice('namibia', day(3), angles), null);                                   // nothing to match: the rotation
 });
 
+await check('a lead without an email gets the one on its own website, and one with none stops holding up the search', async () => {
+  const { emailsOn, contactLinks, findContactEmail, checkLead } = await import('../src/verify.js');
+  // Only the business's own domain or the free address it shows; role addresses first; no images, no-replies or other sites.
+  const html = `<a href="mailto:Maria.Silva@Padaria.example?subject=Ola">Maria</a> geral&#64;padaria.example <img src="logo@2x.png">
+    noreply@padaria.example webdesign@agency.example loja [at] padaria [dot] example padaria.braga@gmail.com`;
+  assert.deepEqual(emailsOn(html, 'padaria.example'), ['geral@padaria.example', 'loja@padaria.example', 'maria.silva@padaria.example', 'padaria.braga@gmail.com']);
+  assert.deepEqual(emailsOn('<p>Escreva: info@loja.padaria.example.</p>', 'padaria.example'), ['info@loja.padaria.example']);
+  assert.deepEqual(emailsOn('<p>Site by studio@agency.example</p>', 'padaria.example'), []);
+  assert.deepEqual(emailsOn('<a href="mailto:vendas@padaria.example;%20info@padaria.example">Escreva</a>', 'padaria.example'), ['vendas@padaria.example', 'info@padaria.example']);
+  assert.deepEqual(contactLinks('<a href="/sobre">Sobre nós</a> <a href="https://www.bakery.example/contactos#form">Contactos</a> <a href="https://other.example/contact">Partner</a> <a href="tel:+351">Contact us</a>', 'https://bakery.example/'),
+    ['https://www.bakery.example/contactos', 'https://bakery.example/sobre']);
+
+  // A site with no address on its home page and one on its contact page. Other sites are never fetched.
+  const asked = [];
+  const pages = {
+    'https://bakery.example/': '<a href="/sobre">Sobre</a> <a href="/contactos">Contactos</a> <a href="https://other.example/contact">Parceiro</a>',
+    'https://bakery.example/contactos': '<p>Escreva para geral [at] bakery [dot] example</p>',
+    'https://quiet.example/': '<a href="/contact">Contact</a>', 'https://quiet.example/contact': '<form>Use the form</form>',
+  };
+  const fetch = async (url) => { asked.push(url); return new Response(pages[url] || '', { status: pages[url] ? 200 : 404 }); };
+  assert.deepEqual(await findContactEmail({ website: 'https://bakery.example/menu' }, { fetch }), { email: 'geral@bakery.example', page: 'https://bakery.example/contactos', checked: 2 });
+  assert.deepEqual(asked, ['https://bakery.example/', 'https://bakery.example/contactos']);
+  assert.deepEqual(await findContactEmail({ website: 'https://quiet.example' }, { fetch }), { email: null, checked: 2, reason: 'no address on the site' });
+  assert.equal((await findContactEmail({ website: 'https://gone.example' }, { fetch })).reason, 'website does not load');
+  assert.equal((await findContactEmail({ website: null }, { fetch })).reason, 'no website');
+  assert.ok(!asked.some((u) => u.includes('other.example')));
+  // The checks on a new lead look too, unless its public contact already has an email.
+  const c = await checkLead({ website: 'https://bakery.example', services: ['email'], contact_route: 'Contact form' }, { fetch, resolveMx: async () => [] });
+  assert.equal(c.email_search.email, 'geral@bakery.example');
+  asked.length = 0;
+  const known = await checkLead({ website: 'https://bakery.example', services: ['email'], contact_route: 'ola@bakery.example' }, { fetch, resolveMx: async () => [] });
+  assert.equal(known.email_search, undefined);
+  assert.deepEqual(asked, ['https://bakery.example/']);                 // only the home page the checks always read
+
+  // In the database: each lead is looked up once; a found address joins its public contact; none found stops
+  // holding up the search, though the lead stays on the Leads tab.
+  const db2 = new PGlite();
+  await migrate(db2, () => {});
+  const add = (company, website, contact) => db2.query(`INSERT INTO lead (company, market, website, services, fit, signals, sources, contact_route)
+    VALUES ($1, 'portugal', $2, '{email}', 3, 'x', '{https://src.example}', $3)`, [company, website, contact]);
+  await add('Bakery', 'https://bakery.example', 'Contact form on the website');
+  await add('Quiet', 'https://quiet.example', 'Phone +351 912 345 678');
+  await add('Known', 'https://known.example', 'ola@known.example');
+  assert.equal(await leads.waitingLeads(db2), 3);
+  assert.deepEqual(await leads.findMissingEmails(db2, { fetch }), { checked: 2, found: 1 });
+  const rows = Object.fromEntries((await db2.query(`SELECT company, contact_route, checks->'email_search' AS es FROM lead`)).rows.map((r) => [r.company, r]));
+  assert.equal(rows.Bakery.contact_route, 'Contact form on the website · geral@bakery.example (on their website)');
+  assert.equal(rows.Bakery.es.page, 'https://bakery.example/contactos');
+  assert.equal(rows.Quiet.es.email, null);
+  assert.equal(rows.Quiet.es.reason, 'no address on the site');
+  assert.equal(rows.Quiet.contact_route, 'Phone +351 912 345 678');
+  assert.equal(rows.Known.es, null);
+  assert.deepEqual(await leads.findMissingEmails(db2, { fetch }), { checked: 0, found: 0 });
+  assert.equal(await leads.waitingLeads(db2), 2);                      // Quiet no longer holds up the search
+  assert.equal((await leads.listLeads(db2)).filter((l) => l.status === 'new').length, 3);
+
+  // A new lead whose checks found an address is saved with it in its public contact.
+  const r = fakeResearcher({ leads: [good({ company: 'Cafe Novo', website: 'https://cafe.example', contact_route: 'Contact form' })] });
+  const checker = async (ls) => ls.map(() => ({ domain: 'cafe.example', confirmed: [], contradicted: [], email_search: { email: 'ola@cafe.example', page: 'https://cafe.example/' } }));
+  assert.equal((await leads.runLeads({ db: db2, researcher: r, focus: FOCUS, checker })).saved, 1);
+  assert.equal((await db2.query(`SELECT contact_route FROM lead WHERE company = 'Cafe Novo'`)).rows[0].contact_route, 'Contact form · ola@cafe.example (on their website)');
+
+  // Thirty leads nobody can write to don't stop the search; thirty with an email still do.
+  for (let i = 0; i < 30; i++) {
+    await db2.query(`INSERT INTO lead (company, market, services, fit, signals, sources, checks)
+      VALUES ($1, 'portugal', '{website}', 3, 'x', '{https://src.example}', '{"email_search": {"email": null, "reason": "no address on the site"}}')`, [`Unreachable ${i}`]);
+  }
+  assert.equal((await leads.runLeads({ db: db2, researcher: fakeResearcher({ leads: [] }), focus: FOCUS, checker: noCheck })).skipped, undefined);
+  await db2.query(`UPDATE lead SET contact_route = 'info@reachable.example' WHERE company LIKE 'Unreachable%'`);
+  assert.match((await leads.runLeads({ db: db2, researcher: fakeResearcher({ leads: [] }), focus: FOCUS, checker: noCheck })).skipped, /^33 leads already wait/);
+  // The Leads tab says when Auti looked and found nothing.
+  const { PAGE } = await import('../src/page.js');
+  assert.match(PAGE, /no email on their website/);
+});
+
 console.log(`\n${passed} passed`);
