@@ -175,7 +175,7 @@ await check('answers in the CRM inbox stop the sequence, move the lead and get o
     { client: 'Away Lda', intent: 'auto_reply', summary: 'Out of office.' },
     { client: 'Handled Lda', intent: 'interested', summary: 'Wants to talk.', variants: three('Handled Lda') },
   ] }, seen) });
-  assert.deepEqual(out, { checked: 6, replies: 4, drafted: 2, auto: 1, answered: 0 });
+  assert.deepEqual(out, { checked: 6, replies: 4, drafted: 2, auto: 1, answered: 0, bounced: 0 });
   assert.equal(seen.length, 1);
   assert.equal(seen[0].tool.name, REPLIES_TOOL.name);
   assert.match(seen[0].user, /how much is it/); assert.match(seen[0].user, /book\.example/);

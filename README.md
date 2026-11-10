@@ -158,6 +158,19 @@ you switch `outreach_autosend` on.
   it, not now waits until the date they gave (or two months), out of office changes nothing, and anything else stops
   the sequence and moves the lead to Replied. When they are waiting for us, the answer is drafted in the three styles,
   in their language, answering their question first. On a card, *They replied…* records an answer you saw elsewhere.
+- **Bounces** (`src/bounces.js`, migration `026_email_bounce.sql`). Neither the CRM nor Microsoft can confirm an email
+  arrived: a dead address comes back minutes later as a notice from the mail server ("Undeliverable: ..."), which the
+  CRM files in its inbox, usually in the lead's own conversation. Auti reads those notices on every run, apart from
+  real answers (the model never sees them), and works out what failed from the server's code and words: the address
+  does not exist, their server refused it, their mailbox is full, or our own mail was held back (a sending limit, our
+  reputation or our email authentication). A bounce stops that lead's outreach, drops its waiting email drafts and
+  leaves a line in the journal and on the client's notes. An address that does not exist is not emailed again for
+  six months, by autosend, the Approvals tab, the chat or the leads agent. A notice that does not come in the lead's
+  conversation is matched by the address it names. Autosend pauses itself (the switch goes off and the journal says
+  why) when 3 of the emails sent since you last switched it on bounce and they are at least 3% of them (seven days
+  back at most), or at once when a notice says our own mail was held back. The Agents tab shows the count under the
+  switch; switch it back on when you are ready, and the count starts again. A message that bounced is not counted as
+  unanswered when Auti learns, nor against its style.
 - **Stages.** New, Contacted, Replied, Qualified, Call booked, Proposal sent, Won, with Nurture and Lost on the side.
   Each stage has its own rhythm (an enquiry is answered the same day; after a proposal: 2 days, 2 weeks, 2 months).
   The CRM's own lead stage (qualified, booked, won, lost) arrives with the client sync; you move a lead from its card

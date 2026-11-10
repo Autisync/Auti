@@ -4,6 +4,9 @@
 // styles. Nothing is sent from here: an answer to a person always waits for the owner on the Approvals tab.
 // Clients who are not leads are read too, but only to learn: when one answers a message of ours, that message is
 // marked answered (src/learning.js counts it), and nothing else changes.
+// A bounce notice met on the way is the mail system, not the lead: it never counts as an answer and never reaches
+// the model. It is recorded (src/bounces.js) before anything else, and too many pause autosend.
+import { bounceOf, checkPause, readStrayNotices, recordNotices } from './bounces.js';
 import { STYLES, STYLE_GUIDE, cleanVariants, ensureStages, fixedStyle, markReplied, moveStage, pickStyle, styleStats } from './pipeline.js';
 import { examplesBlock, examplesFor, lessonsBlock, lessonsFor } from './learning.js';
 
@@ -81,7 +84,7 @@ ${standing}${learned ? `\n\n${learned}` : ''}`;
 /** Leads Auti wrote to and has not closed, with a CRM card. A lead who said no is still read: they may write again. */
 async function waitingLeads(db) {
   return (await db.query(`
-    SELECT c.id, c.name, c.market::text AS market, c.crm_id, c.stage, c.outreach_style,
+    SELECT c.id, c.name, c.status::text AS status, c.market::text AS market, c.crm_id, c.stage, c.outreach_style,
            COALESCE(c.replies_checked_at, (SELECT min(f.decided_at) FROM follow_up f WHERE f.client_id = c.id AND f.status = 'sent')) AS since,
            (SELECT json_build_object('subject', f.subject, 'body', left(f.body, 700), 'channel', f.channel) FROM follow_up f
              WHERE f.client_id = c.id AND f.status = 'sent' ORDER BY f.decided_at DESC LIMIT 1) AS last
@@ -96,19 +99,20 @@ const textOf = (m) => String(m?.content || '').trim().slice(0, 1500);
 /** Clients (not leads) with a message of ours from the last 21 days that has no answer recorded yet. */
 async function answersAwaited(db) {
   return (await db.query(`
-    SELECT c.id AS client_id, c.crm_id, min(f.decided_at) AS since
+    SELECT c.id AS client_id, c.name, c.status::text AS status, c.crm_id, min(f.decided_at) AS since
       FROM follow_up f JOIN clients c ON c.id = f.client_id
      WHERE f.status = 'sent' AND f.replied_at IS NULL AND c.crm_id IS NOT NULL AND c.status <> 'lead'
        AND NOT (c.status = 'lost' AND c.stage IS NOT DISTINCT FROM 'lost')
        AND f.decided_at > now() - interval '21 days'
-     GROUP BY c.id, c.crm_id`)).rows;
+     GROUP BY c.id, c.name, c.status, c.crm_id`)).rows;
 }
 
 /**
  * A client who wrote to us after our message answered it: the message is marked answered ('answered'), for learning
  * only. No draft, no stage, no journal line: the owner answers clients in the CRM inbox. At most MAX reads a run.
+ * Bounce notices found on the way go into notices.
  */
-async function recordClientAnswers(db, crm, list, awaited) {
+async function recordClientAnswers(db, crm, list, awaited, notices = []) {
   if (!awaited.length) return 0;
   const byCrm = new Map(awaited.map((a) => [String(a.crm_id), a]));
   let reads = 0, answered = 0;
@@ -121,7 +125,12 @@ async function recordClientAnswers(db, crm, list, awaited) {
     reads++;
     try {
       const one = await crm.get(`/conversations/${conv.id}`);
-      const first = (one?.messages || []).filter((m) => m.direction === 'inbound' && when(m) > since && textOf(m)).sort((x, y) => when(x) - when(y))[0];
+      const msgs = one?.messages || [];
+      for (const m of msgs) {
+        const notice = when(m) > since ? bounceOf(m) : null;
+        if (notice && notice.kind !== 'delay') notices.push({ client: { id: a.client_id, name: a.name, status: a.status }, conv, m, notice });
+      }
+      const first = msgs.filter((m) => m.direction === 'inbound' && when(m) > since && textOf(m) && !bounceOf(m)).sort((x, y) => when(x) - when(y))[0];
       if (!first) continue;
       await markReplied(db, a.client_id, new Date(when(first)), 'answered');
       byCrm.delete(String(conv.contact_id));
@@ -140,11 +149,20 @@ export async function readReplies({ db, crm, brain, now = new Date(), bookingLin
   await ensureStages(db);
   const leads = await waitingLeads(db);
   const awaited = await answersAwaited(db);
-  const out = { checked: leads.length, replies: 0, drafted: 0, auto: 0, answered: 0 };
+  const out = { checked: leads.length, replies: 0, drafted: 0, auto: 0, answered: 0, bounced: 0 };
   if (!leads.length && !awaited.length) return out;
   const list = await crm.get('/conversations?limit=100');
-  out.answered = await recordClientAnswers(db, crm, list, awaited);
-  if (!leads.length) return out;
+  const notices = [];
+  out.answered = await recordClientAnswers(db, crm, list, awaited, notices);
+  // The bounces, kept before the model is asked anything: a failed model call must not lose them. A failure here
+  // never stops the answers being read.
+  const bounces = async () => {
+    try {
+      out.bounced = await recordNotices(db, notices) + await readStrayNotices(db, crm, list, { now });
+      if (out.bounced) await checkPause(db, now);
+    } catch (err) { out.bounce_failed = String(err?.code || 'error').slice(0, 12); }     // a code only: a row could hold an address
+  };
+  if (!leads.length) { await bounces(); return out; }
   const byCrm = new Map(leads.map((l) => [String(l.crm_id), l]));
   const found = new Map();                                    // lead id -> its newest answer
   // How far each lead's conversations were read, by the CRM's own clock, so nothing is read twice or missed. A lead
@@ -160,7 +178,14 @@ export async function readReplies({ db, crm, brain, now = new Date(), bookingLin
     const one = await crm.get(`/conversations/${conv.id}`);
     const msgs = [...(one?.messages || [])].sort((a, b) => when(a) - when(b));
     seen.set(lead.id, Math.max(seen.get(lead.id) || since, when(msgs.at(-1))));
-    const fresh = msgs.filter((m) => m.direction === 'inbound' && when(m) > since && textOf(m));
+    // Bounce notices apart: filed as ours or as theirs, they are the mail system writing.
+    const real = [];
+    for (const m of msgs) {
+      const notice = bounceOf(m);
+      if (!notice) { real.push(m); continue; }
+      if (when(m) > since && notice.kind !== 'delay') notices.push({ client: { id: lead.id, name: lead.name, status: lead.status }, conv, m, notice });
+    }
+    const fresh = real.filter((m) => m.direction === 'inbound' && when(m) > since && textOf(m));
     if (!fresh.length) continue;
     const at = when(fresh.at(-1));
     if (found.has(lead.id) && found.get(lead.id).at >= at) continue;
@@ -168,7 +193,7 @@ export async function readReplies({ db, crm, brain, now = new Date(), bookingLin
       lead, at, conversationId: conv.id, channel: conv.channel || one?.conversation?.channel || null,
       texts: fresh.slice(-3).map(textOf),
       // Somebody (the owner in the CRM inbox, or its automation) may have answered since: then no draft.
-      waitingForUs: msgs.at(-1)?.direction === 'inbound',
+      waitingForUs: real.at(-1)?.direction === 'inbound',
     });
   }
   const advance = async () => {
@@ -176,6 +201,7 @@ export async function readReplies({ db, crm, brain, now = new Date(), bookingLin
       if (!skipped.has(id)) await db.query(`UPDATE clients SET replies_checked_at = $2 WHERE id = $1`, [id, new Date(at)]);
     }
   };
+  await bounces();
   if (!found.size) { await advance(); return out; }
 
   const config = (await db.query(`SELECT key, value FROM coordinator_config WHERE enabled ORDER BY key`)).rows;

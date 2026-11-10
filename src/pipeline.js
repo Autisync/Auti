@@ -127,7 +127,7 @@ const WINDOW = '120 days';
 export async function styleStats(db) {
   const rows = (await db.query(
     `SELECT style, count(*)::int AS sent, count(*) FILTER (WHERE ${GOOD_SQL})::int AS replied, count(*) FILTER (WHERE ${NO_SQL})::int AS said_no
-       FROM follow_up WHERE status = 'sent' AND style IS NOT NULL AND decided_at > now() - interval '${WINDOW}' GROUP BY style`)
+       FROM follow_up WHERE status = 'sent' AND style IS NOT NULL AND outcome IS DISTINCT FROM 'bounced' AND decided_at > now() - interval '${WINDOW}' GROUP BY style`)
     .catch((err) => { if (err.code === '42703') return { rows: [] }; throw err; })).rows;
   return Object.fromEntries(STYLES.map((s) => {
     const r = rows.find((x) => x.style === s) || { sent: 0, replied: 0, said_no: 0 };

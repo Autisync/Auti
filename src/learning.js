@@ -84,10 +84,14 @@ function originalOf(f) {
   return option ? { subject: option.subject ?? f.draft_subject, body: option.message } : { subject: f.draft_subject, body: f.draft_body };
 }
 
-/** What came back (pure): good (an answer that wasn't a no), no, none (nothing after a week) or waiting. */
+/**
+ * What came back (pure): good (an answer that wasn't a no), no, bounced (it never arrived: src/bounces.js), none
+ * (nothing after a week) or waiting.
+ */
 export function answerOf(f, now = new Date()) {
   if (f.status !== 'sent') return null;
   if (f.replied_at) return NO_ANSWERS.includes(f.reply_intent) ? 'no' : 'good';
+  if (f.outcome === 'bounced') return 'bounced';
   return new Date(f.decided_at) <= new Date(now.getTime() - NO_ANSWER_DAYS * 864e5) ? 'none' : 'waiting';
 }
 
@@ -107,7 +111,7 @@ async function draftRows(db, agents, from) {
 
 /** The numbers for a set of drafts (pure): what the owner did with them and what came back. */
 export function draftNumbers(rows, now = new Date()) {
-  const n = { decided: 0, as_written: 0, edited: 0, other_style: 0, dropped: 0, sent: 0, auto_sent: 0, answered: 0, said_no: 0, no_answer: 0, paid: 0, drop_reasons: {} };
+  const n = { decided: 0, as_written: 0, edited: 0, other_style: 0, dropped: 0, sent: 0, auto_sent: 0, answered: 0, said_no: 0, no_answer: 0, bounced: 0, paid: 0, drop_reasons: {} };
   for (const f of rows) {
     const fate = draftFate(f);
     if (fate === 'dropped') {
@@ -120,7 +124,7 @@ export function draftNumbers(rows, now = new Date()) {
     if (fate === 'auto_sent') n.auto_sent++;
     else if (fate) { n.decided++; n[fate]++; }
     const a = answerOf(f, now);
-    if (a === 'good') n.answered++; else if (a === 'no') n.said_no++; else if (a === 'none') n.no_answer++;
+    if (a === 'good') n.answered++; else if (a === 'no') n.said_no++; else if (a === 'none') n.no_answer++; else if (a === 'bounced') n.bounced++;
     if (f.outcome === 'paid') n.paid++;
   }
   return n;
@@ -159,7 +163,7 @@ async function draftSignals(db, scope, since, now) {
     if (f.outcome === 'paid' && f.outcome_at && new Date(f.outcome_at) > since) {
       lists.answers.push({ what: 'the invoice was paid after the reminder', days_after: days(f.decided_at, f.outcome_at), ...about(f), message: text(f.subject, f.body, 250) });
     }
-    if (f.status === 'sent' && !f.replied_at && f.outcome !== 'paid' && new Date(f.decided_at) > from && new Date(f.decided_at) <= cut) {
+    if (f.status === 'sent' && !f.replied_at && f.outcome !== 'paid' && f.outcome !== 'bounced' && new Date(f.decided_at) > from && new Date(f.decided_at) <= cut) {
       lists.silent.push({ what: `no answer after ${NO_ANSWER_DAYS} days`, ...(f.sent_via === 'auto' ? { sent: 'by itself' } : {}), ...about(f), message: text(f.subject, f.body, 250) });
     }
   }
