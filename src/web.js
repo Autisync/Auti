@@ -11,6 +11,7 @@ import { outreachPerDay } from './outreach.js';
 import { milestonesByProject, openCheckins, projectHealth, ymd } from './projects.js';
 import { listLeads, leadsAgentOn } from './leads.js';
 import { latestAudits } from './audit.js';
+import { listingStats } from './maps.js';
 import { learningReady } from './learning.js';
 
 // Two ways in, both checked against DASHBOARD_PASSWORD:
@@ -153,6 +154,8 @@ export async function getDashboard(db) {
     crmRequests, crmOn: crmConfigured(), leads, leadsOn, voice, checkins, pipeline, outreachStyle,
     leadsToCrm: sw.leads_to_crm ?? null, outreachAutosend: sw.outreach_autosend ?? null, leadAudit: sw.lead_audit ?? null,
     outreachPerDay: await outreachPerDay(db).catch(() => null),
+    // The uploaded Google Maps lists: how many businesses wait, and the last few lists. null before migration 026.
+    listings: await listingStats(db).catch(() => null),
   };
 }
 

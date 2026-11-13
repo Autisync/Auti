@@ -1,4 +1,4 @@
-// Entry point for the scheduler:  node src/run.js nightly|standup|learn|retention|accounts|leads|audit|report|daily|import-leads <file>|import-docs <file>
+// Entry point for the scheduler:  node src/run.js nightly|standup|learn|retention|accounts|leads|audit|report|daily|import-leads <file>|import-maps <file> <market> <search>|import-docs <file>
 // In CI (GitHub Actions) logs can be public, so the brief's content is never
 // printed there; only counts. Read the brief with `npm run brief` instead.
 import { connect } from './db.js';
@@ -20,6 +20,7 @@ import { readReplies } from './replies.js';
 import { bookingLinkFrom } from './pipeline.js';
 import { recordPayments, runLearning } from './learning.js';
 import { runAudits } from './audit.js';
+import { promoteListings, readListing, saveListing, BATCH_MAX } from './maps.js';
 import fs from 'node:fs';
 
 const mode = process.argv[2] || 'nightly';
@@ -177,6 +178,12 @@ async function leads() {
     const m = await findMissingEmails(db);
     if (m.checked) console.log(`lead emails: checked=${m.checked} found=${m.found}`);
   } catch (err) { console.error(`lead email search skipped: ${err.message}`); }
+  // Then the uploaded Google Maps lists: the strongest few waiting businesses become leads (src/maps.js). No model.
+  try {
+    const p = await promoteListings(db, { max: Number(process.env.AUTI_MAPS_PER_RUN) || undefined });
+    if (p.skipped) console.log(`maps lists: skipped, ${p.skipped.replace(/^\d+ businesses/, 'the call list is full:')}`);
+    else if (p.promoted || p.dropped || p.duplicates) console.log(`maps lists: leads=${p.promoted} to_call=${p.to_call} with_email=${p.with_email} dropped=${p.dropped} duplicates=${p.duplicates}`);
+  } catch (err) { console.error(`maps lists skipped: ${err.message}`); }
   await leadsIntoCrm();
   // LEADS_FOCUS (the workflow's "focus" input) can point one run at an angle, e.g. UK trades for CallCatch.
   const focus = focusByChoice(process.env.LEADS_FOCUS, new Date(), await leadAngles(db));
@@ -228,6 +235,24 @@ async function importLeadsFile() {
   console.log(`import: ${out.seen} in the file, ${out.added} added (${out.tracking} into the outreach sequence, ${out.waiting} waiting on the Leads tab), ${out.skipped} skipped${out.problems.length ? `; ${out.problems.length} rows had problems: ${out.problems.slice(0, 5).join('; ')}` : ''}`);
 }
 
+// A Google Maps list too large for the Leads tab's upload, kept outside the repository:
+//   npm run import:maps -- seed/plumbers-bolton.csv uk "plumbers in Bolton"
+// The same import as the Leads tab's. Counts only in the output, never names.
+async function importMapsFile() {
+  const [file, market, ...words] = process.argv.slice(3);
+  if (!file || !market || !words.length) throw new Error('give the file, the market and what you searched for: npm run import:maps -- path/to/list.csv uk "plumbers in Bolton"');
+  const rows = readListing(fs.readFileSync(file, 'utf8'));
+  if (!rows.length) throw new Error('no businesses found in that file');
+  const total = { rows: 0, kept: 0, strong: 0, duplicates: 0, skipped: 0 };
+  let upload_id;
+  for (let i = 0; i < rows.length; i += BATCH_MAX) {
+    const out = await saveListing(db, { market, label: words.join(' '), filename: file.split(/[\\/]/).pop(), rows: rows.slice(i, i + BATCH_MAX), upload_id });
+    upload_id = out.upload_id;
+    for (const k of Object.keys(total)) total[k] += out[k];
+  }
+  console.log(`maps list: ${total.rows} in the file, ${total.kept} waiting (${total.strong} strong), ${total.duplicates} already known, ${total.skipped} not prospects. The strongest join the leads on the next run.`);
+}
+
 // The business document pack, kept outside the repository (company text is never published):
 //   npm run import:docs -- ~/Downloads/document-pack.md
 // The same import as the Documents tab's. Counts only in the output, never titles.
@@ -239,7 +264,7 @@ async function importDocsFile() {
 }
 
 try {
-  const MODES = { learn, retention, leads, audit, accounts, report, daily, 'import-leads': importLeadsFile, 'import-docs': importDocsFile };
+  const MODES = { learn, retention, leads, audit, accounts, report, daily, 'import-leads': importLeadsFile, 'import-docs': importDocsFile, 'import-maps': importMapsFile };
   await (MODES[mode] ? MODES[mode]() : coordinator());
 } catch (err) {
   console.error(`[${new Date().toISOString()}] ${mode} run failed: ${err.message}`);

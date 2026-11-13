@@ -4,11 +4,16 @@
 // POST /api/leads {client_id, stage, reason?, until?}            : the owner moves a lead along (booked, proposal,
 //                                                                  won, nurture until a date, lost with the reason).
 // POST /api/leads {style: auto|observation|helpful|direct}       : the style messages to leads lead with.
+// POST /api/leads {listing: {market, label, filename, rows, upload_id?}} : rows of a Google Maps list into the waiting
+//                                                                  list (src/maps.js); a long file comes in several.
+// POST /api/leads {promote_listings: true}                       : the strongest waiting businesses become leads now.
+// POST /api/leads {id, action: 'called', note?, undo?}           : the owner rang a lead on the call list.
 import { guard, getDb } from './_shared.js';
 import { decideLead, setLeadsAgent, leadNotes, COUNTRY } from '../src/leads.js';
 import { applyCrmChange, crmClient, crmConfigured, proposeCrmChange, AUTI_LEADS } from '../src/crm.js';
 import { setLeadStage } from '../src/web.js';
 import { setFixedStyle } from '../src/pipeline.js';
+import { markCalled, promoteListings, saveListing } from '../src/maps.js';
 
 // Served through api/ops.js (60 s); kept in step for clarity.
 export const config = { maxDuration: 60 };
@@ -32,6 +37,16 @@ export default async function handler(req, res) {
         catch (err) { out.crm_error = `Marked won here, but the CRM said: ${String(err.message).replace(/^the CRM said: /, '')}`; }
       }
       return res.status(200).json(out);
+    }
+    if (body.listing !== undefined) {
+      const l = body.listing || {};
+      return res.status(200).json(await saveListing(db, { market: l.market, label: l.label, filename: l.filename, rows: l.rows, upload_id: l.upload_id }));
+    }
+    // A few now, inside the function's 60 seconds; the scheduled run takes the rest, ten at a time.
+    if (body.promote_listings) return res.status(200).json(await promoteListings(db, { max: 6, budgetMs: 35000 }));
+    if (body.action === 'called') {
+      const out = await markCalled(db, { id: body.id, note: body.note, undo: body.undo === true });
+      return out ? res.status(200).json(out) : res.status(404).json({ error: 'No such lead.' });
     }
     let crmId = null;
     if (body.action === 'crm') {

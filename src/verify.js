@@ -246,7 +246,7 @@ const GOOGLE_PROFILE = /^https?:\/\/(?:(?:www\.)?google\.[a-z.]+\/maps|maps\.goo
 const GOOGLE_REVIEW = /search\.google\.com\/local\/writereview|g\.page\/r\/\S+\/review/i;
 const WHATSAPP = /^(?:https?:\/\/(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com|wa\.link)\/|whatsapp:)/i;
 // A "website" that is only a page on a social network or a link list: the business has no site of its own.
-const SOCIAL_SITE = [[/(^|\.)(facebook|fb)\.com$/, 'Facebook'], [/(^|\.)instagram\.com$/, 'Instagram'], [/(^|\.)linktr\.ee$/, 'Linktree'],
+export const SOCIAL_SITE = [[/(^|\.)(facebook|fb)\.com$/, 'Facebook'], [/(^|\.)instagram\.com$/, 'Instagram'], [/(^|\.)linktr\.ee$/, 'Linktree'],
   [/(^|\.)linkedin\.com$/, 'LinkedIn'], [/(^|\.)tiktok\.com$/, 'TikTok'], [/(^|\.)(x|twitter)\.com$/, 'X'], [/(^|\.)wa\.me$/, 'WhatsApp']];
 
 const pick = (list, text) => list.filter(([, re]) => re.test(text)).map(([name]) => name);

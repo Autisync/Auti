@@ -91,6 +91,7 @@ How to work:
 - Always give the business's own website when it has one: its site, email and DNS are checked automatically afterwards, and a claim the check contradicts lowers the lead.
 - Only real, currently operating businesses. Never invent a company, a website, a fact or a source. If you are not sure, leave it out.
 - Small and medium businesses, not multinationals, banks, government bodies or businesses that sell these services themselves.
+- For a local business the strongest signs are that people clearly use it (recent reviews, posts, opening hours) and that it has no website of its own or only a social page; a weak website is a fair sign; a good website with nothing else missing is not a lead. Leave out closed businesses and a chain's branches.
 - Skip any business in the "already known" list.
 - Record business-level facts only. No private individuals' names, emails or phone numbers.
 - You never contact anyone. The owner decides what to do with every lead.
@@ -232,11 +233,14 @@ export function cleanLead(l, market) {
 export async function listLeads(db) {
   return (await db.query(`
     SELECT id, company, market, city, sector, website, services, fit, signals, pitch, contact_route, sources,
-           status, dismiss_reason, client_id, found_at, decided_at, to_jsonb(lead)->'checks' AS checks
+           status, dismiss_reason, client_id, found_at, decided_at, to_jsonb(lead)->'checks' AS checks,
+           -- From a Google Maps list (src/maps.js, migration 026): where it came from, its phone and the owner's call.
+           COALESCE(to_jsonb(lead)->>'source', 'agent') AS source, to_jsonb(lead)->>'phone' AS phone, to_jsonb(lead)->'listing' AS listing,
+           (to_jsonb(lead)->>'called_at')::timestamptz AS called_at, to_jsonb(lead)->>'call_note' AS call_note
       FROM lead
      WHERE status = 'new' OR decided_at > now() - interval '30 days'
      ORDER BY (status = 'new') DESC, fit DESC, found_at DESC
-     LIMIT 200`)
+     LIMIT 300`)
     .catch((err) => { if (err.code === '42P01') return { rows: [] }; throw err; })).rows;
 }
 

@@ -1,4 +1,5 @@
 import { STAGE_NAME, STYLE_NAME } from './pipeline.js';
+import { parseCsv, pickListing, readListing, PER_RUN as MAPS_PER_RUN } from './maps.js';
 
 // The dashboard page. One self-contained file: no build step. The only outside request is the brand
 // fonts (Poppins, Roboto) from Google Fonts; everything else is served from here.
@@ -499,6 +500,8 @@ ${FONTS}
   .lead > .meta { grid-column: 2; }
   .lead .services { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
   .tag.svc { color: var(--gold); }
+  .lead a.tel { color: var(--gold); text-decoration: none; font-weight: 500; }
+  .form input[type=file] { padding: 8px 0; border: 0; background: none; color: var(--muted); }
   .lead .links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 13px; }
   .lead .links a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
   .lead form.card { margin-top: 10px; }
@@ -2127,7 +2130,73 @@ const MARKET_NAME = { angola: 'Angola', uk: 'UK', portugal: 'Portugal', namibia:
 const STAGE_NAME = ${JSON.stringify(STAGE_NAME)};
 const STYLE_NAME = ${JSON.stringify(STYLE_NAME)};
 const SERVICE_NAME = { crm: 'CRM', domain: 'Domain', email: 'Business email', hosting: 'Hosting', software: 'Software', website: 'Website', missed_calls: 'Missed calls' };
-let leadForm = {};   // lead id -> 'crm' | 'dismiss'
+let leadForm = {};   // lead id -> 'crm' | 'dismiss' | 'called'
+// Reading a Google Maps list here, in the browser, with the server's own code (src/maps.js): only the few fields a
+// lead needs ever leave this device.
+${parseCsv.toString()}
+${pickListing.toString()}
+${readListing.toString()}
+let listForm = false;     // the upload form on the Leads tab
+let listResult = null;    // what the last upload did
+// A lead for the call list: still new, with a phone and no email (one with an email goes to the CRM and the sequence).
+const toCall = (l) => !l.client && l.status === 'new' && Boolean(l.phone) && !/@/.test(l.contact_route || '');
+function listingForm() {
+  const f = $('form', 'card form'); f.noValidate = true;
+  const field = (label, el, wide) => { const l = $('label', wide ? 'wide' : null, label); l.append(el); f.append(l); return el; };
+  const market = field('Market', $('select'));
+  Object.keys(MARKET_NAME).forEach((k) => { const o = $('option', null, MARKET_NAME[k]); o.value = k; market.append(o); });
+  market.value = 'uk';
+  const label = field('What you searched for', $('input')); label.type = 'text'; label.maxLength = 120; label.placeholder = 'e.g. plumbers in Bolton';
+  const file = field('The list (CSV or JSON)', $('input'), true); file.type = 'file'; file.accept = '.csv,.json,.txt,text/csv,application/json';
+  const actions = $('div', 'actions'); const go = $('button', 'act approve', 'Upload'); go.type = 'submit';
+  const x = $('button', 'act', 'Cancel'); x.type = 'button'; x.onclick = () => { listForm = false; draw(); };
+  const hint = $('span', 'hint', 'Only the name, category, address, phone, website, rating and number of reviews of each business are sent.');
+  actions.append(go, x, hint); f.append(actions);
+  const say = (cls, t) => { hint.className = cls; hint.textContent = t; };
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const picked = file.files && file.files[0];
+    if (!label.value.trim()) { say('error', 'Say what you searched for.'); label.focus(); return; }
+    if (!picked) { say('error', 'Choose the file.'); return; }
+    if (picked.size > 40e6) { say('error', 'That file is too large to read here. Use: npm run import:maps'); return; }
+    go.disabled = true;
+    try {
+      say('hint', 'Reading the file…');
+      const rows = readListing(await picked.text());
+      if (!rows.length) throw new Error('No businesses found in that file. It needs a column with each name (title or name).');
+      const total = { rows: 0, kept: 0, strong: 0, duplicates: 0, skipped: 0, reasons: {} };
+      let upload_id;
+      for (let i = 0; i < rows.length; i += 200) {
+        say('hint', 'Sending ' + Math.min(i + 200, rows.length) + ' of ' + rows.length + '…');
+        const out = await post('/api/leads', { listing: { market: market.value, label: label.value.trim(), filename: picked.name, rows: rows.slice(i, i + 200), upload_id } });
+        upload_id = out.upload_id;
+        ['rows', 'kept', 'strong', 'duplicates', 'skipped'].forEach((k) => { total[k] += out[k] || 0; });
+        Object.keys(out.reasons || {}).forEach((k) => { total.reasons[k] = (total.reasons[k] || 0) + out.reasons[k]; });
+      }
+      say('hint', 'Checking the strongest…');
+      let first;
+      try { first = await post('/api/leads', { promote_listings: true }); } catch (err) { first = { error: err.message }; }
+      listResult = Object.assign({ label: label.value.trim(), first }, total);
+      listForm = false;
+      await load();
+    } catch (err) { say('error', err.message); go.disabled = false; }
+  };
+  return f;
+}
+function listResultCard(r) {
+  const c = $('div', 'card');
+  c.append($('div', 'item-title', 'List uploaded: ' + r.label));
+  const why = Object.keys(r.reasons).map((k) => r.reasons[k] + ' ' + k).join(', ');
+  c.append($('div', 'desc', r.rows + ' businesses in the file: ' + r.kept + ' wait as prospects (' + r.strong + ' strong), ' + r.duplicates + ' already known, '
+    + r.skipped + ' not prospects' + (why ? ' (' + why + ')' : '') + '.'));
+  const f = r.first || {};
+  c.append($('div', 'detail', f.error ? 'The first check did not finish (' + f.error + '). The next scheduled run takes it up.'
+    : f.skipped ? 'None joined the leads yet: ' + f.skipped + '.'
+    : (f.promoted || 0) + ' joined the leads just now: ' + (f.to_call || 0) + ' for your call list, ' + (f.with_email || 0) + ' with an email.'
+      + (r.kept > (f.promoted || 0) + (f.dropped || 0) + (f.duplicates || 0) ? ' The rest follow, strongest first, ' + ${MAPS_PER_RUN} + ' each run.' : '')));
+  const acts = $('div', 'acts'); const x = $('button', 'mini', 'Close'); x.onclick = () => { listResult = null; draw(); }; acts.append(x); c.append(acts);
+  return c;
+}
 function viewLeads(root) {
   const leads = data.leads || [];
   const bar = rise($('div', 'toolbar'));
@@ -2137,13 +2206,28 @@ function viewLeads(root) {
   t.disabled = data.leadsOn == null;
   t.onclick = async () => { t.disabled = true; try { await post('/api/leads', { enabled: !on }); await load(); } catch (e) { t.disabled = false; t.textContent = e.message; } };
   const ask = $('button', 'more', 'Ask Auti about leads'); ask.onclick = () => openChat('assistant', 'Looking at the leads the leads agent found, ');
-  bar.append(t, ask); root.append(bar);
+  const up = $('button', 'more', listForm ? 'Close' : 'Upload a Maps list');
+  up.title = 'A list of businesses from Google Maps (CSV or JSON). Auti scores each one and the strongest become leads.';
+  up.disabled = data.listings == null;
+  up.onclick = () => { listForm = !listForm; draw(); };
+  bar.append(t, up, ask); root.append(bar);
+  if (listForm) root.append(rise(listingForm()));
+  if (listResult) root.append(rise(listResultCard(listResult)));
+  const ls = data.listings;
+  if (ls && ls.waiting) {
+    root.append($('p', 'empty small', ls.waiting + ' businesses from your Maps lists wait (' + ls.strong + ' strong). '
+      + (ls.calls >= ls.call_list_max ? 'None join while ' + ls.calls + ' wait on your call list.' : 'The strongest ' + ls.per_run + ' join the leads each run.')));
+  }
 
+  // On the call list, the ones not rung yet come first.
+  leads.sort((a, b) => Number(Boolean(a.called_at)) - Number(Boolean(b.called_at)));
   const fresh = leads.filter((l) => l.status === 'new');
+  const calls = leads.filter((l) => toCall(l) && !l.called_at).length;
   const stats = rise($('div', 'stats six'));
   const count = (f) => leads.filter(f).length;
   stats.append(
     stat(fresh.length, 'New leads', fresh.length > 0, 'leads'),
+    stat(calls, 'To call', calls > 0, 'leads'),
     stat(count((l) => l.status === 'new' && l.fit >= 4), 'Strong (4-5)', false, 'leads'),
     stat(count((l) => l.status === 'new' && l.market === 'angola'), 'Angola', false, 'leads'),
     stat(count((l) => l.status === 'new' && l.market === 'portugal'), 'Portugal', false, 'leads'),
@@ -2164,8 +2248,8 @@ function viewLeads(root) {
     return;
   }
   filtered(root, 'Leads', [...leads, ...others],
-    [['new', 'New'], ['angola', 'Angola'], ['portugal', 'Portugal'], ['uk', 'UK'], ['namibia', 'Namibia'], ['tracking', 'Tracking'], ['in_crm', 'In CRM (' + (others.length + count((l) => l.status === 'in_crm')) + ')'], ['dismissed', 'Dismissed'], ['all', 'All']],
-    (l, k) => l.client ? k === 'in_crm' : MARKET_NAME[k] ? l.status === 'new' && l.market === k : l.status === k,
+    [['new', 'New'], ['calls', 'Call list (' + calls + ')'], ['angola', 'Angola'], ['portugal', 'Portugal'], ['uk', 'UK'], ['namibia', 'Namibia'], ['tracking', 'Tracking'], ['in_crm', 'In CRM (' + (others.length + count((l) => l.status === 'in_crm')) + ')'], ['dismissed', 'Dismissed'], ['all', 'All']],
+    (l, k) => k === 'calls' ? toCall(l) : l.client ? k === 'in_crm' : MARKET_NAME[k] ? l.status === 'new' && l.market === k : l.status === k,
     (l) => l.client ? clientCard(l) : leadCard(l), 'new');
 }
 // The lead playbook at a glance: where every lead stands, how far the last 90 days' leads got, and which way of
@@ -2249,12 +2333,30 @@ function leadCard(l) {
   const t = $('div', 'item-title', l.company);
   t.append($('span', 'tag', MARKET_NAME[l.market] || l.market), $('span', 'tag' + (l.fit >= 4 ? ' ok' : ''), 'fit ' + l.fit + '/5'));
   if (l.status !== 'new') t.append($('span', 'tag' + (l.status === 'dismissed' ? ' bad' : ' ok'), l.status === 'in_crm' ? 'in CRM' : l.status));
+  if (l.source === 'maps') t.append($('span', 'tag', 'Maps list'));
+  if (l.called_at) t.append($('span', 'tag ok', 'called'));
   el.append(t);
   const meta = $('div', 'meta', [l.sector, l.city].filter(Boolean).join(' · ') || ' ');
   meta.append($('div', null, 'found ' + ago(l.found_at)));
   el.append(meta);
   const chips = $('div', 'services'); (l.services || []).forEach((s) => chips.append($('span', 'tag svc', SERVICE_NAME[s] || s))); el.append(chips);
   el.append($('div', 'desc', l.signals));
+  if (l.listing) {
+    // What its Google Maps listing showed when the list was made (src/maps.js).
+    const g = $('div', 'detail checks'); const m = l.listing;
+    if (m.reviews != null) g.append($('span', 'tag', m.reviews + ' Google review' + (m.reviews === 1 ? '' : 's') + (m.rating ? ', rated ' + m.rating : '')));
+    if (m.site === 'none') g.append($('span', 'tag bad', 'no website on Maps'));
+    if (m.site === 'social' && m.page) g.append($('span', 'tag bad', 'links to ' + m.page));
+    if (m.mobile_only) g.append($('span', 'tag', 'mobile number'));
+    if (g.children.length) el.append(g);
+  }
+  if (l.phone) {
+    const d = $('div', 'detail'); d.append($('b', null, 'Call: '));
+    const a = $('a', 'tel', l.phone); a.href = 'tel:' + l.phone.replace(/[^+\\d]/g, ''); d.append(a);
+    if (l.listing && l.listing.address) d.append(document.createTextNode(' · ' + l.listing.address));
+    el.append(d);
+  }
+  if (l.called_at) el.append($('div', 'detail', 'Called ' + ago(l.called_at) + (l.call_note ? ': ' + l.call_note : '')));
   if (l.checks) {
     // What Auti checked on the business's own site, email and DNS before showing it.
     const ck = $('div', 'detail checks');
@@ -2271,7 +2373,7 @@ function leadCard(l) {
   if (l.dismiss_reason) el.append($('div', 'detail', 'Dismissed: ' + l.dismiss_reason));
   const links = $('div', 'links');
   const link = (href, label) => { const a = $('a', null, label); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; links.append(a); };
-  if (l.website) link(l.website, 'Website ↗');
+  if (l.website) link(l.website, l.listing && l.listing.site === 'social' ? (l.listing.page || 'Their page') + ' ↗' : 'Website ↗');
   (l.sources || []).forEach((s, i) => { let host = s; try { host = new URL(s).hostname.replace(/^www\\./, ''); } catch (e) {} link(s, 'Source ' + (i + 1) + ': ' + host); });
   el.append(links);
 
@@ -2281,6 +2383,7 @@ function leadCard(l) {
   const toggle = (k) => async () => { leadForm[l.id] = leadForm[l.id] === k ? null : k; draw(); };
   if (l.status === 'new') act('Track as lead', 'go', () => decide({ action: 'track' }));
   if (data.crmOn && (l.status === 'new' || l.status === 'tracking')) act(leadForm[l.id] === 'crm' ? 'Close' : 'Add to CRM', null, toggle('crm'));
+  if (l.status === 'new' && l.phone) act(leadForm[l.id] === 'called' ? 'Close' : l.called_at ? 'Called again' : 'Called', null, toggle('called'));
   if (l.status === 'new') act(leadForm[l.id] === 'dismiss' ? 'Close' : 'Dismiss', null, toggle('dismiss'));
   if (l.status === 'dismissed') act('Reopen', null, () => decide({ action: 'reopen' }));
   act('Ask Auti', null, async () => openChat('assistant', 'About the lead ' + l.company + ' (' + (MARKET_NAME[l.market] || l.market) + ', needs ' + (l.services || []).join(', ') + '): '));
@@ -2290,6 +2393,11 @@ function leadCard(l) {
     const found = String(l.contact_route || '').match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
     el.append(formCard([['email', 'Email', 'text', null, { required: true, value: found ? found[0] : '' }], ['contactName', 'Contact name', 'text'], ['phone', 'Phone', 'text']],
       'Add to CRM', (v) => decide({ action: 'crm', ...v }), () => { leadForm[l.id] = null; draw(); }));
+  }
+  if (leadForm[l.id] === 'called') {
+    el.append(formCard([['note', 'What was said, or when to ring again', 'text', null, { wide: true, placeholder: 'e.g. no answer, try after 5 · wants a quote for a website' }]],
+      'Save the call', (v) => decide({ action: 'called', note: v.note }), () => { leadForm[l.id] = null; draw(); }));
+    if (l.called_at) { const u = $('button', 'mini', 'Not called after all'); u.onclick = () => decide({ action: 'called', undo: true }); el.append(u); }
   }
   if (leadForm[l.id] === 'dismiss') {
     el.append(formCard([['reason', 'Why not? (the agent learns from it)', 'text', null, { wide: true, placeholder: 'e.g. too big, already a competitor\\'s client, wrong sector' }]],
