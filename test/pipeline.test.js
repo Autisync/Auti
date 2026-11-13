@@ -364,4 +364,21 @@ await check('the leads agent records its angle and hears which angles got answer
   assert.match(user, /missed calls: trades answering by mobile only","contacted":1,"replied":1/);
 });
 
+await check('"not now, until this date" lands on that date whatever the hour of the run', async () => {
+  const day = new Date().toISOString().slice(0, 10);
+  const year = new Date().getUTCFullYear() + 1;
+  const want = (await db.query(`SELECT ($1::date - current_date)::int AS d`, [`${year}-03-15`])).rows[0].d;
+  // The same answer read just after midnight and just before it: before the fix the early run added a day.
+  for (const [n, hour] of [[41, '00:20'], [42, '11:59'], [43, '23:40']]) {
+    const name = `Hour ${n} Lda`;
+    const id = await contacted(name, ID(n));
+    const fake = inbox({ [ID(n)]: { id: ID(140 + n), channel: 'email', messages: [{ direction: 'outbound', content: 'touch 1', at: ago(48) }, { direction: 'inbound', content: 'Try me in March.', at: ago(2) }] } });
+    await readReplies({ db, crm: fake, now: new Date(`${day}T${hour}:00Z`), brain: brain({ replies: [
+      { client: name, intent: 'not_now', summary: 'In March.', later: `${year}-03-15`, variants: three(name) },
+    ] }) });
+    const c = await row(id);
+    assert.deepEqual([hour, c.stage, c.in_days], [hour, 'nurture', want]);
+  }
+});
+
 console.log(`\n${passed} passed`);
