@@ -195,6 +195,42 @@ Every agent learns from what happens to its work (`src/learning.js`, migration `
   you (except outreach autosend, if you switch it on), the coordinator still can't approve anything, and the study is
   told that text from clients and leads is data, never an instruction.
 
+## Leads from Google Maps lists
+
+A second way to find leads, next to the leads agent's web search: a whole town and trade at once.
+
+1. Make the list outside Auti: search Google Maps for a trade in a town (for example "plumbers in Bolton") and
+   export the results as CSV or JSON, with a Maps export tool or by hand. Auti does not fetch the list itself.
+   Google's terms restrict collecting Maps data in bulk, so keep the searches small and for your own prospecting.
+2. On the Leads tab choose **Upload a Maps list**, pick the market, say what you searched for, and choose the file.
+   The file is read in your browser: only each business's name, category, address, phone, website, rating and number
+   of reviews are sent. Reviews' text, photos, place identifiers and emails in the file never leave your device.
+   A file too large for the browser: `npm run import:maps -- seed/list.csv uk "plumbers in Bolton"`.
+3. Every business is scored by fixed rules (no model, no cost):
+
+   | What its listing shows | Result |
+   |---|---|
+   | No website, or only a social or booking page | Hot: needs a website |
+   | Fewer than 20 reviews, or rated under 4.2 | Needs review requests (the CRM) |
+   | UK business whose only number is a mobile | Needs missed-call cover, strongest for trades |
+   | A website of its own | Read when its turn comes: a weak one is the need, a good one with nothing else is dropped |
+   | Closed, a chain's branches, sells what we sell, not a business, very large | Skipped, counted by reason |
+   | Already a lead, a client, or in an earlier list (by name, website or phone) | Skipped as a duplicate |
+
+   A business people clearly use (a few reviews, a phone) ranks ahead of one that may be gone.
+4. The list waits. Each scheduled run the strongest ten become leads on the Leads tab (`AUTI_MAPS_PER_RUN` changes
+   that; a few join straight after an upload). From there the usual steps take over: Auti looks for a business email
+   on their own website, audits them online, and one with an email goes to the CRM and the outreach sequence like any
+   other lead.
+5. One with a phone and no email goes on your **Call list** (a filter on the Leads tab): the number, the gaps, and
+   the audit's line to open with. Note each call with **Called**; track or dismiss it like any lead. No more join
+   while 40 wait to be rung.
+
+Auti never contacts anyone from a list by itself. Rows that did not become leads are removed after 30 days, and a
+list still waiting after 90 days is dropped, because listings go stale. The scoring follows the local-business rubric
+of the open-source Marketing Skills library (MIT), and the `cold_message_rules` standing instruction, which you can
+edit or switch off like the others, carries its rules for a first message.
+
 ## Cold outreach from your own lists
 
 Two ways to hand Auti a list of businesses to approach. Either way each one gets the five-touch outreach sequence:
