@@ -95,8 +95,16 @@ export async function chooseModel(db, agent, { env = process.env, rng = Math.ran
   const other = family(lead) === family(m.cheap) ? m.strong : m.cheap;
   const otherDecided = scores[family(other)]?.decided || 0;
   const share = otherDecided < MIN_DECIDED ? 0.25 : 0.1;
-  if (rng() < share) return { model: other, trial: true, reason: `trial run of ${other} to keep the comparison fresh` };
+  if (rng() < share) return { model: other, trial: true, lead, reason: `trial run of ${other} to keep the comparison fresh` };
   return { model: lead, trial: false, reason: 'current choice' };
+}
+
+// The model for the second attempt when the first one failed outright, so the owner still gets the work:
+// a failed trial goes back to the model that normally does the work; a failed cheaper model goes to the
+// stronger one; and when that was already the model, it is asked once more (a sloppy answer rarely repeats).
+export function secondModel(pick, strong) {
+  if (pick.trial && pick.lead && pick.lead !== pick.model) return pick.lead;
+  return pick.model === strong ? pick.model : strong;
 }
 
 // For the Agents tab: the current choice, the evidence, and the last switches.

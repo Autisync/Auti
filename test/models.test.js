@@ -39,6 +39,7 @@ await check('each agent starts where expected, and a repository variable pins it
 await check('while the other model has little evidence, about a quarter of runs try it', async () => {
   const t = await models.chooseModel(db, 'coordinator', { env: ENV, rng: () => 0.2 });
   assert.deepEqual([t.model, t.trial], ['claude-sonnet-5', true]);
+  assert.equal(t.lead, 'claude-haiku-5-5');                       // a trial says which model normally does the work
   assert.equal((await models.chooseModel(db, 'coordinator', { env: ENV, rng: () => 0.3 })).trial, false);
 });
 
@@ -154,6 +155,16 @@ await check('a stand-up with nothing new is skipped without calling the model; a
   assert.ok(!changed.skipped);
   assert.equal(seen.length, 3);
   assert.doesNotMatch(seen[2].user, /\n {1,}"/);              // compact JSON: no pretty-print indentation
+});
+
+await check('a run that fails outright gets one more attempt, on the model that normally does the work', async () => {
+  const strong = 'claude-sonnet-5', cheap = 'claude-haiku-5-5';
+  // The run of 3 November: a trial of the stronger model failed. Before, nothing was tried again and the whole run stopped.
+  assert.equal(models.secondModel({ model: strong, trial: true, lead: cheap }, strong), cheap);
+  assert.equal(models.secondModel({ model: cheap, trial: true, lead: strong }, strong), strong);
+  assert.equal(models.secondModel({ model: cheap, trial: false }, strong), strong);        // the cheaper one failed: the stronger one
+  assert.equal(models.secondModel({ model: strong, trial: false }, strong), strong);       // already the stronger one: once more
+  assert.equal(models.secondModel({ model: 'claude-opus-5-5', trial: false }, strong), strong);   // a pinned model that failed
 });
 
 console.log(`\n${passed} passed`);

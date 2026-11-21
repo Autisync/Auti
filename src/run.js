@@ -8,7 +8,7 @@ import { syncGithub } from './github.js';
 import { runRetention } from './retention.js';
 import { findMissingEmails, focusByChoice, leadAngles, runLeads } from './leads.js';
 import { crmClient, crmConfigured, crmSnapshot, syncCrmClients } from './crm.js';
-import { chooseModel, agentModels } from './models.js';
+import { chooseModel, agentModels, secondModel } from './models.js';
 import { askCheckins } from './projects.js';
 import { runAccounts } from './accounts.js';
 import { runReport, reportsDue } from './reports.js';
@@ -27,18 +27,18 @@ const mode = process.argv[2] || 'nightly';
 const quiet = process.env.CI === 'true' || process.env.JARVIS_QUIET === '1';
 const db = connect();
 
-// Each agent's model is learned from what the owner does with its work (src/models.js). If a trial of the
-// other model fails outright, the run is repeated once on the stronger model so the owner still gets the work.
+// Each agent's model is learned from what the owner does with its work (src/models.js). If a run fails
+// outright it is repeated once (models.secondModel says on which model), so the owner still gets the work:
+// before, a trial of the stronger model that failed took the whole run down with it, and every step after it.
 async function withModel(agent, make, work) {
   const pick = await chooseModel(db, agent);
   console.log(`${agent}: ${pick.model} (${pick.reason})`);
   try {
     return await work(make(pick.model));
   } catch (err) {
-    const { strong } = agentModels(agent);
-    if (pick.model === strong) throw err;
-    console.error(`${agent}: ${pick.model} failed (${err.message}); running again on ${strong}`);
-    return work(make(strong));
+    const next = secondModel(pick, agentModels(agent).strong);
+    console.error(`${agent}: ${pick.model} failed (${err.message}); running again on ${next}`);
+    return work(make(next));
   }
 }
 
