@@ -102,6 +102,11 @@ export async function chooseModel(db, agent, { env = process.env, rng = Math.ran
 // The model for the second attempt when the first one failed outright, so the owner still gets the work:
 // a failed trial goes back to the model that normally does the work; a failed cheaper model goes to the
 // stronger one; and when that was already the model, it is asked once more (a sloppy answer rarely repeats).
+// A key the API refuses (401) is not a model's failure: every model would be refused the same way,
+// so there is no second attempt, and the run says what to do instead of printing the API's error.
+export const keyRefused = (err) => Number(err?.status) === 401;
+export const KEY_REFUSED = 'The Claude API refused the key (401). Put a working key in ANTHROPIC_API_KEY: in the repository secrets for the scheduled runs, and in Vercel for the app. Nothing was run.';
+
 export function secondModel(pick, strong) {
   if (pick.trial && pick.lead && pick.lead !== pick.model) return pick.lead;
   return pick.model === strong ? pick.model : strong;

@@ -165,6 +165,10 @@ await check('a run that fails outright gets one more attempt, on the model that 
   assert.equal(models.secondModel({ model: cheap, trial: false }, strong), strong);        // the cheaper one failed: the stronger one
   assert.equal(models.secondModel({ model: strong, trial: false }, strong), strong);       // already the stronger one: once more
   assert.equal(models.secondModel({ model: 'claude-opus-5-5', trial: false }, strong), strong);   // a pinned model that failed
+  // The run of 21 November: the key was refused. No model can help, so it is not tried again and the run says what to do.
+  assert.equal(models.keyRefused({ status: 401, message: '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}' }), true);
+  for (const other of [{ status: 429 }, { status: 500 }, { status: 403 }, new Error('Brief has no weakest_link.headline.'), null]) assert.equal(models.keyRefused(other), false);
+  assert.match(models.KEY_REFUSED, /ANTHROPIC_API_KEY/);
 });
 
 console.log(`\n${passed} passed`);
