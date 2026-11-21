@@ -21,6 +21,8 @@ export function worldFingerprint(c) {
   return createHash('sha256').update(JSON.stringify(world)).digest('hex').slice(0, 32);
 }
 
+const BRIEF_TOKENS = 8000;
+
 export async function runCoordinator({ db, brain, mode = 'nightly', timezone = 'Europe/Lisbon', now = new Date(), crm = null, skipUnchanged = true }) {
   if (!['nightly', 'standup'].includes(mode)) throw new Error(`Unknown mode '${mode}'. Use nightly or standup.`);
 
@@ -42,6 +44,9 @@ export async function runCoordinator({ db, brain, mode = 'nightly', timezone = '
       system: systemPrompt(context.config),
       user: userPrompt(context, mode),
       tool: BRIEF_TOOL,
+      // The brief carries a running summary of up to 6,000 characters besides priorities, plans, questions and
+      // actions. A fuller answer did not fit in the default 4,096 tokens and arrived with its last parts missing.
+      maxTokens: BRIEF_TOKENS,
     });
     const brief = normalise(output);
 
@@ -133,8 +138,15 @@ export function repairWeakestLink(w) {
   if (typeof w === 'string') w = { headline: w, why: '' };
   if (!w || typeof w !== 'object') return w;
   const t = untag(w.headline);
-  if (!t) return w;
-  return { headline: t.headline || Object.values(t)[0], why: t.why || w.why || '' };
+  if (t) return { headline: t.headline || Object.values(t)[0], why: t.why || w.why || '' };
+  if (typeof w.headline === 'string' && w.headline.trim()) return w;
+  // The sentence is there under another name, or only the evidence came: its first sentence is the headline.
+  const text = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+  const named = text(w.title) || text(w.summary) || text(w.name) || text(w.text);
+  const why = text(w.why) || text(w.reason) || text(w.evidence);
+  if (named) return { headline: named, why };
+  const first = why.match(/^[\s\S]*?[.!?](?=\s|$)/);
+  return why ? { headline: (first ? first[0] : why).slice(0, 300), why } : w;
 }
 
 function normalise(raw) {
@@ -146,7 +158,7 @@ function normalise(raw) {
   for (const i of Array.isArray(o.proposed_initiatives) ? o.proposed_initiatives : []) {
     if (i && typeof i === 'object') { i.steps = unstring(i.steps); i.risks = unstring(i.risks); }
   }
-  if (!o.weakest_link?.headline) throw new Error('Brief has no weakest_link.headline.');
+  if (typeof o.weakest_link?.headline !== 'string' || !o.weakest_link.headline.trim()) throw new Error('Brief has no weakest_link.headline.');
   if (!o.one_thing_today) throw new Error('Brief has no one_thing_today.');
   const arr = (x) => (Array.isArray(x) ? x : []);
   return {

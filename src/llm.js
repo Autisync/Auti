@@ -27,11 +27,14 @@ export function claudeBrain({
     async think({ system, user, tool, maxTokens }) {
       const usage = { input: 0, output: 0 };
       let messages = [{ role: 'user', content: forcesTools(model) ? user : `${user}\n\nAnswer only by calling ${tool.name}.` }];
+      // Thinking can't be switched off on the models that refuse a forced tool call, so leave them room.
+      let room = Math.max(forcesTools(model) ? 4096 : 16000, Number(maxTokens) || 0);
+      const ceiling = forcesTools(model) ? 16000 : 32000;
+      let cut = false;
       for (let attempt = 0; attempt < 2; attempt++) {
         const res = await client.messages.create({
           model,
-          // Thinking can't be switched off on the models that refuse a forced tool call, so leave them room.
-          max_tokens: Math.max(forcesTools(model) ? 4096 : 16000, Number(maxTokens) || 0),
+          max_tokens: room,
           system,
           tools: [tool],
           tool_choice: toolChoice(model, tool.name),
@@ -39,6 +42,15 @@ export function claudeBrain({
         });
         usage.input += res.usage?.input_tokens || 0;
         usage.output += res.usage?.output_tokens || 0;
+        // Stopped at the limit: what arrived is the start of an answer, with whatever came last missing, even
+        // when it parses. It is never used. Asked again once with twice the room; cut again, the run fails saying so.
+        if (res.stop_reason === 'max_tokens') {
+          if (cut || room >= ceiling) throw new Error(`The answer was cut off at ${room} tokens${cut ? ', even with twice the room' : ''}. Nothing was saved.`);
+          cut = true;
+          room = Math.min(ceiling, room * 2);
+          attempt -= 1;
+          continue;
+        }
         const call = res.content.find((b) => b.type === 'tool_use' && b.name === tool.name);
         if (call) return { output: call.input, model: res.model, usage };
         if (forcesTools(model) || attempt) throw new Error(`Model did not call ${tool.name} (stop_reason: ${res.stop_reason}).`);
@@ -82,6 +94,8 @@ export function claudeResearcher({
         usage.output += res.usage?.output_tokens || 0;
         usage.searches += res.usage?.server_tool_use?.web_search_requests || 0;
         const call = res.content.find((b) => b.type === 'tool_use' && b.name === tool.name);
+        // Stopped at the limit while recording: the list is incomplete, so it is not used (see think above).
+        if (call && res.stop_reason === 'max_tokens') throw new Error('The answer was cut off at 8000 tokens. Nothing was saved.');
         if (call) return { output: call.input, model: served, usage };
         messages = [...messages, { role: 'assistant', content: res.content }];
         if (res.stop_reason === 'pause_turn') continue;           // a long search turn; let it carry on

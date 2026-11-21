@@ -622,6 +622,51 @@ await check('leaked tool-call markup in the weakest link is cleaned, in new runs
   assert.equal((await web.getDashboard(db)).latest.brief.weakest_link.headline, 'Zero clients tracked.');
 });
 
+await check('a weakest link under another name, or with only its evidence, is still read; an empty one fails the run', async () => {
+  const run = (weakest_link) => runCoordinator({ db, mode: 'standup', skipUnchanged: false,
+    brain: { model: 'fake', async think() { return { output: { ...answer, weakest_link }, model: 'f', usage: {} }; } } });
+  assert.deepEqual((await run({ title: 'No client has been called this month.', why: 'The log is empty.' })).brief.weakest_link,
+    { headline: 'No client has been called this month.', why: 'The log is empty.' });
+  assert.deepEqual((await run({ why: 'Two invoices are 30 days late. Nobody has chased them.' })).brief.weakest_link,
+    { headline: 'Two invoices are 30 days late.', why: 'Two invoices are 30 days late. Nobody has chased them.' });
+  for (const empty of [{}, { headline: '  ', why: '' }, null, undefined, 42]) {
+    await assert.rejects(run(empty), /no weakest_link\.headline/);
+  }
+});
+
+await check('an answer cut off at the token limit is never used: it is asked for again with twice the room', async () => {
+  const { claudeBrain } = await import('../src/llm.js');
+  const reply = (stop_reason, input) => new Response(JSON.stringify({
+    id: 'msg_cut', type: 'message', role: 'assistant', model: 'claude-sonnet-5', stop_reason, stop_sequence: null,
+    usage: { input_tokens: 1000, output_tokens: stop_reason === 'max_tokens' ? 8000 : 5200 },
+    content: [{ type: 'tool_use', id: 'toolu_1', name: 'write_morning_brief', input }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  // What the failed run of 3 November looked like: the answer stopped part-way, so the parts written last never came.
+  const partial = { working_summary: 'A long running summary that used up the room', one_thing_today: answer.one_thing_today, priorities: answer.priorities };
+  const rooms = [];
+  let replies = [reply('max_tokens', partial), reply('tool_use', { ...answer, one_thing_today: 'The whole answer.' })];
+  const fetch = async (url, init) => { rooms.push(JSON.parse(init.body).max_tokens); return replies.shift(); };
+  const out = await runCoordinator({ db, brain: claudeBrain({ apiKey: 'test-key', model: 'claude-sonnet-5', fetch }), mode: 'standup', skipUnchanged: false });
+  assert.deepEqual(rooms, [8000, 16000]);                          // the brief starts with room for all its parts
+  assert.equal(out.brief.one_thing_today, 'The whole answer.');
+  assert.equal(out.brief.weakest_link.headline, answer.weakest_link.headline);
+  const used = (await db.query(`SELECT input_tokens, output_tokens FROM coordinator_run WHERE id = $1`, [out.runId])).rows[0];
+  assert.deepEqual(used, { input_tokens: 2000, output_tokens: 13200 });   // both requests are counted
+
+  // Cut off again with twice the room: the run fails and says why, and nothing of the partial answer is saved.
+  rooms.length = 0;
+  replies = [reply('max_tokens', partial), reply('max_tokens', partial), reply('tool_use', answer)];
+  const before = (await db.query(`SELECT count(*)::int AS n FROM journal`)).rows[0].n;
+  await assert.rejects(
+    runCoordinator({ db, brain: claudeBrain({ apiKey: 'test-key', model: 'claude-sonnet-5', fetch }), mode: 'standup', skipUnchanged: false }),
+    /cut off at 16000 tokens, even with twice the room/);
+  assert.deepEqual(rooms, [8000, 16000]);                          // asked twice, not three times
+  assert.equal((await db.query(`SELECT count(*)::int AS n FROM journal`)).rows[0].n, before);
+  const failed = (await db.query(`SELECT error, brief FROM coordinator_run ORDER BY started_at DESC LIMIT 1`)).rows[0];
+  assert.match(failed.error, /cut off/);
+  assert.equal(failed.brief, null);
+});
+
 await check('lists over 12 items are paged 12 at a time; 12 or fewer show no pager', async () => {
   const { PAGE } = await import('../src/page.js');
   const script = PAGE.match(/<script>([\s\S]*?)<\/script>/)[1];
