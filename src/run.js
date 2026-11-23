@@ -8,7 +8,7 @@ import { syncGithub } from './github.js';
 import { runRetention } from './retention.js';
 import { findMissingEmails, focusByChoice, leadAngles, runLeads } from './leads.js';
 import { crmClient, crmConfigured, crmSnapshot, syncCrmClients } from './crm.js';
-import { chooseModel, agentModels, secondModel } from './models.js';
+import { chooseModel, agentModels, secondModel, keyRefused, KEY_REFUSED } from './models.js';
 import { askCheckins } from './projects.js';
 import { runAccounts } from './accounts.js';
 import { runReport, reportsDue } from './reports.js';
@@ -36,6 +36,7 @@ async function withModel(agent, make, work) {
   try {
     return await work(make(pick.model));
   } catch (err) {
+    if (keyRefused(err)) throw new Error(KEY_REFUSED);
     const next = secondModel(pick, agentModels(agent).strong);
     console.error(`${agent}: ${pick.model} failed (${err.message}); running again on ${next}`);
     return work(make(next));
