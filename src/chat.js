@@ -194,3 +194,14 @@ export async function chat(db, brain, { agent, messages, voice = false, mood = '
     [agent, out.model, out.usage.input, out.usage.output, out.usage.searches || 0]);
   return { reply: out.text, usage: out.usage, ...(agent === 'companion' ? { voice: MOODS[mood].voice } : {}) };
 }
+
+// Why a chat request failed, in words the owner can act on. The API's own error text stays in the server log.
+// A refused key, a busy service and an empty balance each need something different; anything else is "try again".
+export function chatFailure(err) {
+  const status = Number(err?.status);
+  const text = String(err?.message || '');
+  if (status === 401) return { status: 503, error: 'The Claude API refused the key. Put a working ANTHROPIC_API_KEY in the Vercel project, then redeploy.' };
+  if (status === 400 && /credit balance/i.test(text)) return { status: 503, error: 'The Claude account has no credit left. Add funds in the Claude Console.' };
+  if (status === 429 || status === 503 || status === 529) return { status: 503, error: 'Claude is busy right now. Try again in a minute.' };
+  return { status: 502, error: 'Auti could not answer just now. Try again.' };
+}

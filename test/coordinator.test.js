@@ -589,6 +589,19 @@ await check('the companion plays the mood the owner picks, and refuses made-up m
   await assert.rejects(chatMod.chat(db, brain, { agent: 'companion', mood: 'sexy', messages: [{ role: 'user', content: 'hi' }] }), /unknown mood/);
 });
 
+await check('when the chat fails, the owner is told why: a refused key, no credit, or a busy service', async () => {
+  const say = (status, message = '') => chatMod.chatFailure(Object.assign(new Error(message), { status }));
+  // 23 November: the app's key had been replaced in the scheduled runs but not in Vercel, and the chat only said "try again".
+  assert.deepEqual([say(401, '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}').status, /ANTHROPIC_API_KEY in the Vercel project/.test(say(401).error)], [503, true]);
+  assert.match(say(400, 'Your credit balance is too low to access the Anthropic API.').error, /no credit left/);
+  for (const busy of [429, 503, 529]) assert.match(say(busy).error, /busy right now/);
+  for (const other of [say(500), say(400, 'messages: text content blocks must be non-empty'), chatMod.chatFailure(new Error('fetch failed')), chatMod.chatFailure(null)]) {
+    assert.deepEqual(other, { status: 502, error: 'Auti could not answer just now. Try again.' });
+  }
+  // Nothing of the API's own error reaches the page.
+  assert.doesNotMatch(JSON.stringify(say(401, 'invalid x-api-key req_011abc')), /x-api-key|req_/);
+});
+
 await check('an unknown agent is refused', async () => {
   await assert.rejects(chatMod.systemFor('root', db), /unknown agent/);
 });

@@ -1,6 +1,6 @@
 // POST /api/chat {agent: "assistant"|"companion", messages: [{role, content}], voice?: bool, mood?: companion mood}
 import { guard, getDb } from './_shared.js';
-import { chat, chatBrain } from '../src/chat.js';
+import { chat, chatBrain, chatFailure } from '../src/chat.js';
 
 // Replies that search the web can take a while.
 export const config = { maxDuration: 60 };
@@ -22,6 +22,7 @@ export default async function handler(req, res) {
     if (/messages must|each message|last message|unknown mood/.test(err.message)) return res.status(400).json({ error: err.message });
     if (/ANTHROPIC_API_KEY/.test(err.message)) return res.status(503).json({ error: 'Chat is not set up yet: add ANTHROPIC_API_KEY in Vercel.' });
     console.error('chat failed:', err.status || '', err.message);
-    res.status(502).json({ error: 'Auti could not answer just now. Try again.' });
+    const why = chatFailure(err);
+    res.status(why.status).json({ error: why.error });
   }
 }
