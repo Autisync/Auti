@@ -594,6 +594,8 @@ await check('when the chat fails, the owner is told why: a refused key, no credi
   // 23 November: the app's key had been replaced in the scheduled runs but not in Vercel, and the chat only said "try again".
   assert.deepEqual([say(401, '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}').status, /ANTHROPIC_API_KEY in the Vercel project/.test(say(401).error)], [503, true]);
   assert.match(say(400, 'Your credit balance is too low to access the Anthropic API.').error, /no credit left/);
+  // The same evening: the new key was accepted but belonged to no workspace, and the chat still only said "try again".
+  assert.match(say(400, '400 {"type":"error","error":{"type":"invalid_request_error","message":"This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header"}}').error, /not tied to a workspace/);
   for (const busy of [429, 503, 529]) assert.match(say(busy).error, /busy right now/);
   for (const other of [say(500), say(400, 'messages: text content blocks must be non-empty'), chatMod.chatFailure(new Error('fetch failed')), chatMod.chatFailure(null)]) {
     assert.deepEqual(other, { status: 502, error: 'Auti could not answer just now. Try again.' });
